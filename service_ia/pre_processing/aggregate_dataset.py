@@ -5,8 +5,10 @@ Step 3: Aggregherò con il dataset di statistiche -> VEDERE ALTRI STEP IN odds_s
 """
 import logging
 import re
+from datetime import datetime
 
 import pandas as pd
+import unicodedata
 from dateutil.parser import isoparse
 from rapidfuzz import fuzz
 
@@ -17,9 +19,7 @@ logging.basicConfig(level=logging.DEBUG)
 # =============================================== STEP 3 ===============================================
 base_dataset = '../dataset'
 name_statistics_history = f'{base_dataset}/dataset_statistics_history.csv'  # DT storico di statistiche partite
-name_statistics_history_updated = f'{base_dataset}/dataset_statistics_updated.csv'  # DT storico di statistiche partite con id event di odds
-name_odds_replace = f'{base_dataset}/odds/odds_dataset_replace.csv'  # DT di odds
-name_odds_replace_updated = f'{base_dataset}/odds/odds_dataset_updated.csv'  # DT di odds con id fixture di statistics
+name_odds_history = f'{base_dataset}/odds/odds_dataset.csv'  # DT storico di odds
 
 
 def aggregate_ids_into_dataset(partial=False):
@@ -33,12 +33,9 @@ def aggregate_ids_into_dataset(partial=False):
                             con il DT di statistics (Infatti è utile SOLO se viene aggiornato il DT di statistics)
        :return: nuovi dataset con colonne
        """
-    if not partial:
-        dataset_statistics = pd.read_csv(name_statistics_history)
-        dataset_odds = pd.read_csv(name_odds_replace)
-    else:
-        dataset_statistics = pd.read_csv(name_statistics_history_updated)
-        dataset_odds = pd.read_csv(name_odds_replace_updated)
+
+    dataset_statistics = pd.read_csv(name_statistics_history, low_memory=False)
+    dataset_odds = pd.read_csv(name_odds_history, low_memory=False)
 
     dict_dataset_statistics = dataset_statistics.to_dict(orient='records')
     dict_data_odds_updated = dataset_odds.to_dict(orient='records')
@@ -63,7 +60,12 @@ def aggregate_ids_into_dataset(partial=False):
                 :return: Nome squadra normalizzata
                 """
                 name = name.lower()
-                for r in ["fc", "bc", "calcio", "football", ".", ",", "-", "ssd", "asd", "club"]:
+                # Rimuove gli accenti
+                name = ''.join(
+                    c for c in unicodedata.normalize('NFD', name)
+                    if unicodedata.category(c) != 'Mn'
+                )
+                for r in ["fc", "bc", "calcio", "football", ".", ",", "-", "ssd", "asd", "club", "1899", "1929"]:
                     name = name.replace(r, "")
                 return " ".join(name.split()).strip()
 
@@ -109,6 +111,8 @@ def aggregate_ids_into_dataset(partial=False):
                     statistics.append((statistic, check_date_result[1]))
         return statistics
 
+    container = []
+
     for index_odds, row_odds in enumerate(dict_data_odds_updated):
         check_id_fix_partial = True if not partial else pd.isna(row_odds['id_fixture_from_stat'])
         if check_id_fix_partial:
@@ -118,6 +122,11 @@ def aggregate_ids_into_dataset(partial=False):
             data_match = isoparse(row_odds['commence_time'])
 
             match_statistics = search_statistics()
+
+            # Todo : per test
+            if len(match_statistics) == 1:
+                id_f = match_statistics[0][0]['id_fixture']
+                [container.append(stat) for stat in dict_dataset_statistics if stat['id_fixture'] == id_f]
 
             if len(match_statistics) == 2:
                 dataset_odds.at[index_odds, 'id_fixture_from_stat'] = match_statistics[0][0]['id_fixture']
@@ -135,24 +144,65 @@ def aggregate_ids_into_dataset(partial=False):
                         else:
                             dataset_statistics.loc[idx_stat, 'match_id_from_odds'] = match_statistics[0][1]
 
-    # Aggiorno
-    dataset_odds.to_csv(name_odds_replace_updated, index=False)
-    dataset_statistics.to_csv(name_statistics_history_updated, index=False)
+    # Update
+    dataset_odds.to_csv(name_odds_history, index=False)
+    dataset_statistics.to_csv(name_statistics_history, index=False)
+
+    container = pd.DataFrame(container)
+    container.to_excel('../dataset/analyze_statistics.xlsx')
 
     # Check valori
-    df_odds = pd.read_csv(name_odds_replace_updated, low_memory=False)
-    df_stat = pd.read_csv(name_statistics_history_updated, low_memory=False)
+    count_ids_analyze()
+
+
+def count_ids_analyze():
+    df_odds = pd.read_csv(name_odds_history, low_memory=False)
+
+    # Converte in datetime con timezone (se serve), poi rimuove timezone per sicurezza
+    df_odds['commence_time'] = pd.to_datetime(df_odds['commence_time'], errors='coerce').dt.tz_localize(None)
+    df_odds_filters = df_odds[df_odds['commence_time'].dt.date < datetime.today().date()].sort_values(
+        by='commence_time', ascending=True)
+    # Analyze odds Dataset
+    analyze_none_id(df_odds_filters)
+
+    df_stat = pd.read_csv(name_statistics_history, low_memory=False)
     print('ODDS - Con valore : ', count_row_not_na(df_odds, 'id_fixture_from_stat'))  # 7421
-    print('ODDS - Senza valore : ', count_row_is_na(df_odds, 'id_fixture_from_stat'))  # 1365
+    print('ODDS - Senza valore alla data odierna : ', count_row_is_na(df_odds_filters, 'id_fixture_from_stat'))  # 1365
     print('STATISTICS - Con valore : ', count_row_not_na(df_stat, 'match_id_from_odds') / 2)  # 7421
     print('STATISTICS - Senza valore : ', count_row_is_na(df_stat, 'match_id_from_odds') / 2)  # 46854
 
 
+def analyze_none_id(dataset=pd.read_csv(name_odds_history, low_memory=False)):
+    dataset_ = dataset[['id', 'commence_time', 'home_team', 'away_team', 'ids_dates', 'id_fixture_from_stat']]
+    dataset_ = dataset_.loc[dataset_['id_fixture_from_stat'].isna()]
+    dataset_.to_excel('../dataset/analyze_none_id.xlsx', index=False)
+
+
 # TODO 17/07 : CI SONO ANCORA MATCH SENZA CORRISPONDEZA DOVUTI DA ALCUNE PARTITE DE DF ODDS NON HANNO L'ALTERNATIVA E CORRISPONDEZA PRINCIPALE..
 #  DA PROVARE SE I LORO ID SONO STATI DISABILITATI
-aggregate_ids_into_dataset()
+aggregate_ids_into_dataset(partial=True)
+# count_ids_analyze()
 
-# convert_excel_to_csv('../dataset/odds/odds_dataset_updated.xlsx')
-# convert_csv_to_exel('../dataset/odds/odds_dataset_updated.csv')
-# convert_csv_to_exel('../dataset/dataset_statistics_updated.csv')
+# def normalize_(name):
+#     """
+#     Normalizza il nome della squadra togliendo alcuni path non idonei
+#     :param name: Nome della squadra
+#     :return: Nome squadra normalizzata
+#     """
+#     name = name.lower()
+#     # Rimuove gli accenti
+#     name = ''.join(
+#         c for c in unicodedata.normalize('NFD', name)
+#         if unicodedata.category(c) != 'Mn'
+#     )
+#     for r in ["fc", "bc", "calcio", "football", ".", ",", "-", "ssd", "asd", "club", "1899", "1929"]:
+#         name = name.replace(r, "")
+#     return " ".join(name.split()).strip()
+#
+#
+# print(max(fuzz.ratio(normalize_('US Catanzaro 1929'), normalize_('Catanzaro')),
+#           fuzz.partial_ratio(normalize_('US Catanzaro 1929'), normalize_('Catanzaro'))))
+
+# convert_excel_to_csv('../dataset/odds/odds_dataset_replace.xlsx')
+# convert_excel_to_csv('../dataset/dataset_statistics_history.xlsx')
 # convert_csv_to_exel('../dataset/dataset_statistics_history.csv')
