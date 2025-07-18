@@ -40,13 +40,12 @@ import pandas as pd
 from dateutil.relativedelta import relativedelta
 
 from service_ia.utility.request_api import base_api_odds
-from service_ia.utility.utils import convert_csv_to_exel
 
 base_dataset = '../dataset/odds'
 name_id_odds_h2h_totals = f'{base_dataset}/id_odds_h2h_totals.csv'  # Dataset ancora "grezzo" dove chiama solo API Odds per recuperare principalmente gli id e poi i primi odds h2h e totals
 name_odds_bookmakers = f'{base_dataset}/odds_h2h_totals_bookmakers.csv'  # Dataset conseguenza del precedente dove prende i bookmakers(colonna) che è solo json e crea un dataset solo con quote
-name_odds_base = f'{base_dataset}/odds_dataset.csv'  # Dataset che unisce il primo e il secondo precedenti
-name_odds_replace = f'{base_dataset}/odds_dataset_replace.csv'  # Dataset che ripulisce il precedente perché ci sono dei duplicati per match e NON per id
+name_odds_base = f'{base_dataset}/odds_dataset.csv'  # Dataset che unisce il primo e il secondo precedenti ripuliti per duplicati
+
 markets_base = 'h2h,totals'
 markets_events = 'alternate_totals,btts,team_totals'  # TODO ci saranno da inserire gli altri non appena scatterà il nuovo abbonamento :  https://the-odds-api.com/sports-odds-data/betting-markets.html#featured-betting-markets -> qui ci sono tutte:leggere anche "Soccer Player Props API" e "Other soccer betting markets" per cartellini e angoli
 # Data iniziale
@@ -77,26 +76,26 @@ while current <= end_date:
     current += relativedelta(months=1)
 
 dat_match = [
-    {
-        'key_sports': 'soccer_italy_serie_a',
-        'date_match': dates
-    },
-    {
-        'key_sports': 'soccer_italy_serie_b',
-        'date_match': dates
-    },
-    {
-        'key_sports': 'soccer_epl',
-        'date_match': dates
-    },
-    {
-        'key_sports': 'soccer_germany_bundesliga',
-        'date_match': dates
-    },
-    {
-        'key_sports': 'soccer_spain_la_liga',
-        'date_match': dates
-    },
+    # {
+    #     'key_sports': 'soccer_italy_serie_a',
+    #     'date_match': dates
+    # },
+    # {
+    #     'key_sports': 'soccer_italy_serie_b',
+    #     'date_match': dates
+    # },
+    # {
+    #     'key_sports': 'soccer_epl',
+    #     'date_match': dates
+    # },
+    # {
+    #     'key_sports': 'soccer_germany_bundesliga',
+    #     'date_match': dates
+    # },
+    # {
+    #     'key_sports': 'soccer_spain_la_liga',
+    #     'date_match': dates
+    # },
     {
         'key_sports': 'soccer_france_ligue_one',
         'date_match': dates
@@ -263,8 +262,7 @@ def remove_duplicate_match_by_names():
 
     final_dataset = pd.DataFrame(dict_dat)
     final_dataset.drop_duplicates(subset='id', keep='last', inplace=True)
-    final_dataset.to_csv(name_odds_replace, index=False)
-    convert_csv_to_exel(name_odds_replace)
+    final_dataset.to_csv(name_odds_base, index=False)
 
 
 # create_odds_dataset()
@@ -277,7 +275,7 @@ remove_duplicate_match_by_names()
 
 # =============================================== STEP 2 ===============================================
 def aggregate_events_into_dataset():
-    dataset_odds = pd.read_csv(name_odds_replace)
+    dataset_odds = pd.read_csv(name_odds_base)
 
     for index, row in dataset_odds.iterrows():
         home_team, away_team = row['home_team'], row['away_team']
@@ -294,7 +292,7 @@ def aggregate_events_into_dataset():
             dataset_odds.at[index, f'away_{title}'] = search_price_name(out_alternate_totals, away_team)
 
     # Salva il DataFrame aggiornato
-    dataset_odds.to_csv(name_odds_replace, index=False)
+    dataset_odds.to_csv(name_odds_base, index=False)
 
 # aggregate_events_into_dataset()
 

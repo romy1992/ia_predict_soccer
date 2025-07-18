@@ -7,7 +7,7 @@ import pandas as pd
 from service_ia.utility.request_api import base_api_statistics
 
 LEAGUES = [136]
-SEASONS = [2019, 2020, 2021, 2022, 2023, 2024]
+SEASONS = [2023, 2024]
 INDEX = 0
 
 
