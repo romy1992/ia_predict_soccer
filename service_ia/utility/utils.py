@@ -1,6 +1,10 @@
 import os
-
+import json
 import pandas as pd
+import unicodedata
+
+with open('../dataset/black_name.json', 'r', encoding='utf-8') as file:
+    black_names = json.load(file)
 
 
 def convert_excel_to_csv(path_file):
@@ -31,3 +35,25 @@ def count_row_not_na(df, value):
 
 def count_row_is_na(df, value):
     return df[value].isna().sum()
+
+
+def normalize_(name):
+    """
+    Normalizza il nome della squadra togliendo alcuni path non idonei
+    :param name: Nome della squadra
+    :return: Nome squadra normalizzata
+    """
+    name = name.lower()
+    # Rimuove gli accenti
+    name = ''.join(
+        c for c in unicodedata.normalize('NFD', name)
+        if unicodedata.category(c) != 'Mn'
+    )
+    for r in ["fc", "bc", "calcio", "football", ".", ",", "-", "ssd", "asd", "club", "1899", "1929"]:
+        name = name.replace(r, "").strip()
+
+    black_name = [n for n in black_names if n['original'] == name]
+    if len(black_name) > 0:
+        name = black_name[0]['replace']
+
+    return " ".join(name.split()).strip()

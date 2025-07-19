@@ -8,11 +8,10 @@ import re
 from datetime import datetime
 
 import pandas as pd
-import unicodedata
 from dateutil.parser import isoparse
 from rapidfuzz import fuzz
 
-from service_ia.utility.utils import count_row_not_na, count_row_is_na
+from service_ia.utility.utils import count_row_not_na, count_row_is_na, normalize_
 
 logging.basicConfig(level=logging.DEBUG)
 
@@ -52,22 +51,6 @@ def aggregate_ids_into_dataset(partial=False):
             :return: Booleano se il match è stato trovato secondo i nomi delle squadre
             """
             soglia = 87
-
-            def normalize_(name):
-                """
-                Normalizza il nome della squadra togliendo alcuni path non idonei
-                :param name: Nome della squadra
-                :return: Nome squadra normalizzata
-                """
-                name = name.lower()
-                # Rimuove gli accenti
-                name = ''.join(
-                    c for c in unicodedata.normalize('NFD', name)
-                    if unicodedata.category(c) != 'Mn'
-                )
-                for r in ["fc", "bc", "calcio", "football", ".", ",", "-", "ssd", "asd", "club", "1899", "1929"]:
-                    name = name.replace(r, "")
-                return " ".join(name.split()).strip()
 
             score_home = max(fuzz.ratio(normalize_(stat['team_name']), normalize_(home_odds)),
                              fuzz.partial_ratio(normalize_(stat['team_name']), normalize_(home_odds)))
@@ -134,8 +117,9 @@ def aggregate_ids_into_dataset(partial=False):
                 ) for stat in match_statistics]
 
             # Se è di 2 partite, ci troviamo nel caso base.
+            # Se è di 3 ??
             # Mentre se è 4 è perchè può avere 2 partite con le stesse squadre ma di un range annuo ma che fanno riferimento a 2 stagioni differenti
-            if len(match_statistics) == 2 or len(match_statistics) == 4:
+            if 2 <= len(match_statistics) < 5:
 
                 def added_match_into_dataset(match_event):
                     """
@@ -156,11 +140,17 @@ def aggregate_ids_into_dataset(partial=False):
                                 dataset_statistics.loc[idx_stat, 'match_id_from_odds'] = match_event[0][1]
 
                 if len(match_statistics) == 4:
-                    list_id = set([m['id_fixture'] for m in match_statistics])
+                    list_id = set([m[0]['id_fixture'] for m in match_statistics])
                     for id_match in list_id:
-                        match = [m for m in match_statistics if m['id_fixture'] == id_match]
+                        match = [m for m in match_statistics if m[0]['id_fixture'] == id_match]
                         added_match_into_dataset(match)
-                else: # Caso base con soli 2 elementi
+                elif len(match_statistics) == 3:
+                    list_round = set([m[0]['round_fixture'] for m in match_statistics])
+                    for r in list_round:
+                        match = [m for m in match_statistics if m[0]['round_fixture'] == r]
+                        if len(match) == 2:
+                            added_match_into_dataset(list(match))
+                elif len(match_statistics) == 2:  # Caso base con soli 2 elementi
                     added_match_into_dataset(match_statistics)
 
     # Update
@@ -200,27 +190,11 @@ def analyze_none_id(dataset=pd.read_csv(name_odds_history, low_memory=False)):
 # TODO 17/07 : CI SONO ANCORA MATCH SENZA CORRISPONDEZA DOVUTI DA ALCUNE PARTITE DE DF ODDS NON HANNO L'ALTERNATIVA E CORRISPONDEZA PRINCIPALE..
 #  DA PROVARE SE I LORO ID SONO STATI DISABILITATI
 aggregate_ids_into_dataset(partial=True)
+
 # count_ids_analyze()
 
-# def normalize_(name):
-#     """
-#     Normalizza il nome della squadra togliendo alcuni path non idonei
-#     :param name: Nome della squadra
-#     :return: Nome squadra normalizzata
-#     """
-#     name = name.lower()
-#     # Rimuove gli accenti
-#     name = ''.join(
-#         c for c in unicodedata.normalize('NFD', name)
-#         if unicodedata.category(c) != 'Mn'
-#     )
-#     for r in ["fc", "bc", "calcio", "football", ".", ",", "-", "ssd", "asd", "club", "1899", "1929"]:
-#         name = name.replace(r, "")
-#     return " ".join(name.split()).strip()
-
-
-# print(max(fuzz.ratio(normalize_('Lecco'), normalize_('Lecce')),
-#           fuzz.partial_ratio(normalize_('Lecco'), normalize_('Lecce'))))
+# print(max(fuzz.ratio(normalize_('Elche CF'), normalize_('Elche CF')),
+#           fuzz.partial_ratio(normalize_('Elche CF'), normalize_('Elche CF'))))
 
 # convert_excel_to_csv('../dataset/odds/odds_dataset_replace.xlsx')
 # convert_excel_to_csv('../dataset/dataset_statistics_history.xlsx')

@@ -25,8 +25,7 @@ Step 2: Dopo aver recuperato le partite, gli id e le quote basilari, inizierò a
             2 - "btts": goal o no goal
             3 - team_totals: under/over per singola squadra
             https://the-odds-api.com/sports-odds-data/betting-markets.html#featured-betting-markets -> qui ci sono tutte:
-                    leggere anche "Soccer Player Props API" e "Other soccer betting markets" per cartellini e angoli
-        )
+                    leggere anche "Soccer Player Props API" e "Other soccer betting markets" per cartellini e angoli)
 
 Step 3: Aggregherò con il dataset di statistiche (classe totalmente dedicate per l'unione di 2 dataset di servizi diversi: @aggregate_dataset.py)
 
