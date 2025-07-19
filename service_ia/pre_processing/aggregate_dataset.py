@@ -116,9 +116,9 @@ def aggregate_ids_into_dataset(partial=False):
                     }
                 ) for stat in match_statistics]
 
-            # Se è di 2 partite, ci troviamo nel caso base.
-            # Se è di 3 ??
-            # Mentre se è 4 è perchè può avere 2 partite con le stesse squadre ma di un range annuo ma che fanno riferimento a 2 stagioni differenti
+            # Se è di 2 partite, ci troviamo nel caso base
+            # Se è di 3 Solitamente è perchè o i nomi non fanno match bene o c'è un round che è un'eliminazione diretta
+            # Se è 4 è perchè può avere 2 partite con le stesse squadre ma di un range annuo ma che fanno riferimento a 2 stagioni differenti
             if 2 <= len(match_statistics) < 5:
 
                 def added_match_into_dataset(match_event):
@@ -187,7 +187,7 @@ def analyze_none_id(dataset=pd.read_csv(name_odds_history, low_memory=False)):
     dataset_.to_excel('../dataset/analyze_none_id.xlsx', index=False)
 
 
-# TODO 17/07 : CI SONO ANCORA MATCH SENZA CORRISPONDEZA DOVUTI DA ALCUNE PARTITE DE DF ODDS NON HANNO L'ALTERNATIVA E CORRISPONDEZA PRINCIPALE..
+# TODO 19/07 : CI SONO ANCORA MATCH SENZA CORRISPONDEZA DOVUTI DA ALCUNE PARTITE DEL DF ODDS NON HANNO L'ALTERNATIVA E CORRISPONDEZA PRINCIPALE..
 #  DA PROVARE SE I LORO ID SONO STATI DISABILITATI
 aggregate_ids_into_dataset(partial=True)
 
