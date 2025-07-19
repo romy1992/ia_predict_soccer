@@ -46,12 +46,12 @@ def aggregate_ids_into_dataset(partial=False):
         :return: Lista di 2 elementi che sono le squadre avversarie con tutte le sue statistiche
         """
 
-        def check_name():
+        def check_name(stat):
             """
             Cerca la corrispondenza dei nomi simili tra squadra di fuori casa e casa
             :return: Booleano se il match è stato trovato secondo i nomi delle squadre
             """
-            soglia = 90
+            soglia = 87
 
             def normalize_(name):
                 """
@@ -69,17 +69,13 @@ def aggregate_ids_into_dataset(partial=False):
                     name = name.replace(r, "")
                 return " ".join(name.split()).strip()
 
-            return (
-                    (max
-                     (fuzz.ratio(normalize_(statistic['team_name']), normalize_(home_odds)),
-                      fuzz.partial_ratio(normalize_(statistic['team_name']), normalize_(home_odds))) >= soglia
-                     and statistic['home_away'] == 1)
-                    or
-                    (max(fuzz.ratio(normalize_(statistic['team_name']), normalize_(away_odds)),
-                         fuzz.partial_ratio(normalize_(statistic['team_name']),
-                                            normalize_(away_odds))) >= soglia
-                     and statistic['home_away'] == 0)
-            )
+            score_home = max(fuzz.ratio(normalize_(stat['team_name']), normalize_(home_odds)),
+                             fuzz.partial_ratio(normalize_(stat['team_name']), normalize_(home_odds)))
+            score_away = max(fuzz.ratio(normalize_(stat['team_name']), normalize_(away_odds)),
+                             fuzz.partial_ratio(normalize_(stat['team_name']), normalize_(away_odds)))
+
+            return (score_home >= soglia and stat['home_away'] == 1) or (
+                    score_away >= soglia and stat['home_away'] == 0)
 
         def check_date():
             def check_alternative_date():
@@ -104,11 +100,10 @@ def aggregate_ids_into_dataset(partial=False):
             return False, None
 
         statistics = []
-        for statistic in dict_dataset_statistics:
-            if statistic['season'] >= 2019 and check_name():
-                check_date_result = check_date()
-                if check_date_result[0]:
-                    statistics.append((statistic, check_date_result[1]))
+        for statistic in [d for d in dict_dataset_statistics if d['season'] >= 2019 and check_name(d)]:
+            check_date_result = check_date()
+            if check_date_result[0]:
+                statistics.append((statistic, check_date_result[1]))
         return statistics
 
     container = []
@@ -124,32 +119,56 @@ def aggregate_ids_into_dataset(partial=False):
             match_statistics = search_statistics()
 
             # Todo : per test
-            if len(match_statistics) == 1:
-                id_f = match_statistics[0][0]['id_fixture']
-                [container.append(stat) for stat in dict_dataset_statistics if stat['id_fixture'] == id_f]
+            if len(match_statistics) == 1 or len(match_statistics) > 2:
+                [container.append(
+                    {
+                        "id_fixture": stat[0]["id_fixture"],
+                        "date_fixture": stat[0]["date_fixture"],
+                        "round_fixture": stat[0]["round_fixture"],
+                        "team_id": stat[0]["team_id"],
+                        "team_name": stat[0]["team_name"],
+                        "opponent_id": stat[0]["opponent_id"],
+                        "opponent_name": stat[0]["opponent_name"],
+                        'type_error': len(match_statistics)
+                    }
+                ) for stat in match_statistics]
 
-            if len(match_statistics) == 2:
-                dataset_odds.at[index_odds, 'id_fixture_from_stat'] = match_statistics[0][0]['id_fixture']
+            # Se è di 2 partite, ci troviamo nel caso base.
+            # Mentre se è 4 è perchè può avere 2 partite con le stesse squadre ma di un range annuo ma che fanno riferimento a 2 stagioni differenti
+            if len(match_statistics) == 2 or len(match_statistics) == 4:
 
-                # Aggiunta al dataset_statistics
-                for stat in match_statistics:
-                    idx_stat = dataset_statistics[
-                        (dataset_statistics['team_name'] == stat[0]['team_name']) &
-                        (dataset_statistics['date_fixture'] == stat[0]['date_fixture'])
-                        ].index
+                def added_match_into_dataset(match_event):
+                    """
+                    Per stessi match, inserisce l'd nei dataset
+                    """
+                    dataset_odds.at[index_odds, 'id_fixture_from_stat'] = match_event[0][0]['id_fixture']
+                    # Aggiunta al dataset_statistics
+                    for stat in match_event:
+                        idx_stat = dataset_statistics[
+                            (dataset_statistics['team_name'] == stat[0]['team_name']) &
+                            (dataset_statistics['date_fixture'] == stat[0]['date_fixture'])
+                            ].index
 
-                    if not idx_stat.empty:
-                        if match_statistics[0][1] is None:
-                            dataset_statistics.loc[idx_stat, 'match_id_from_odds'] = row_odds['id']
-                        else:
-                            dataset_statistics.loc[idx_stat, 'match_id_from_odds'] = match_statistics[0][1]
+                        if not idx_stat.empty:
+                            if match_event[0][1] is None:
+                                dataset_statistics.loc[idx_stat, 'match_id_from_odds'] = row_odds['id']
+                            else:
+                                dataset_statistics.loc[idx_stat, 'match_id_from_odds'] = match_event[0][1]
+
+                if len(match_statistics) == 4:
+                    list_id = set([m['id_fixture'] for m in match_statistics])
+                    for id_match in list_id:
+                        match = [m for m in match_statistics if m['id_fixture'] == id_match]
+                        added_match_into_dataset(match)
+                else: # Caso base con soli 2 elementi
+                    added_match_into_dataset(match_statistics)
 
     # Update
     dataset_odds.to_csv(name_odds_history, index=False)
     dataset_statistics.to_csv(name_statistics_history, index=False)
 
-    container = pd.DataFrame(container)
-    container.to_excel('../dataset/analyze_statistics.xlsx')
+    container = pd.DataFrame(container)  # .sort_values(by=['id_fixture', 'date_fixture', 'team_id'], ascending=True)
+    container.to_excel('../dataset/analyze_statistics.xlsx', index=False)
 
     # Check valori
     count_ids_analyze()
@@ -198,11 +217,14 @@ aggregate_ids_into_dataset(partial=True)
 #     for r in ["fc", "bc", "calcio", "football", ".", ",", "-", "ssd", "asd", "club", "1899", "1929"]:
 #         name = name.replace(r, "")
 #     return " ".join(name.split()).strip()
-#
-#
-# print(max(fuzz.ratio(normalize_('US Catanzaro 1929'), normalize_('Catanzaro')),
-#           fuzz.partial_ratio(normalize_('US Catanzaro 1929'), normalize_('Catanzaro'))))
+
+
+# print(max(fuzz.ratio(normalize_('Lecco'), normalize_('Lecce')),
+#           fuzz.partial_ratio(normalize_('Lecco'), normalize_('Lecce'))))
 
 # convert_excel_to_csv('../dataset/odds/odds_dataset_replace.xlsx')
 # convert_excel_to_csv('../dataset/dataset_statistics_history.xlsx')
 # convert_csv_to_exel('../dataset/dataset_statistics_history.csv')
+
+# dt = pd.read_excel('../dataset/analyze_statistics.xlsx').sort_values(by=['id_fixture', 'team_id'], ascending=True)
+# dt.to_excel('../dataset/analyze_statistics.xlsx', index=False)
