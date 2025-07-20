@@ -11,7 +11,7 @@ import pandas as pd
 from dateutil.parser import isoparse
 from rapidfuzz import fuzz
 
-from service_ia.utility.utils import count_row_not_na, count_row_is_na, normalize_
+from service_ia.utility.utils import count_row_not_na, count_row_is_na, normalize_, check_name
 
 logging.basicConfig(level=logging.DEBUG)
 
@@ -45,21 +45,6 @@ def aggregate_ids_into_dataset(partial=False):
         :return: Lista di 2 elementi che sono le squadre avversarie con tutte le sue statistiche
         """
 
-        def check_name(stat):
-            """
-            Cerca la corrispondenza dei nomi simili tra squadra di fuori casa e casa
-            :return: Booleano se il match è stato trovato secondo i nomi delle squadre
-            """
-            soglia = 87
-
-            score_home = max(fuzz.ratio(normalize_(stat['team_name']), normalize_(home_odds)),
-                             fuzz.partial_ratio(normalize_(stat['team_name']), normalize_(home_odds)))
-            score_away = max(fuzz.ratio(normalize_(stat['team_name']), normalize_(away_odds)),
-                             fuzz.partial_ratio(normalize_(stat['team_name']), normalize_(away_odds)))
-
-            return (score_home >= soglia and stat['home_away'] == 1) or (
-                    score_away >= soglia and stat['home_away'] == 0)
-
         def check_date():
             def check_alternative_date():
                 """Controlla se il dizionario ha già 2 elementi con la data principale"""
@@ -83,7 +68,8 @@ def aggregate_ids_into_dataset(partial=False):
             return False, None
 
         statistics = []
-        for statistic in [d for d in dict_dataset_statistics if d['season'] >= 2019 and check_name(d)]:
+        for statistic in [d for d in dict_dataset_statistics if
+                          d['season'] >= 2019 and check_name(stat=d, home_odds=home_odds, away_odds=away_odds)]:
             check_date_result = check_date()
             if check_date_result[0]:
                 statistics.append((statistic, check_date_result[1]))
@@ -187,10 +173,45 @@ def analyze_none_id(dataset=pd.read_csv(name_odds_history, low_memory=False)):
     dataset_.to_excel('../dataset/analyze_none_id.xlsx', index=False)
 
 
-# TODO 19/07 : CI SONO ANCORA MATCH SENZA CORRISPONDEZA DOVUTI DA ALCUNE PARTITE DEL DF ODDS NON HANNO L'ALTERNATIVA E CORRISPONDEZA PRINCIPALE..
-#  DA PROVARE SE I LORO ID SONO STATI DISABILITATI
-aggregate_ids_into_dataset(partial=True)
+def refused_join_insert():
+    dataset_refused = pd.read_excel('../dataset/analyze_none_id.xlsx')
+    dataset_history_stat = pd.read_csv(name_statistics_history, low_memory=False)
+    dataset_h_dic=dataset_history_stat.to_dict()
+    dataset_history_odds = pd.read_csv(name_odds_history, low_memory=False)
+    for element in dataset_refused.to_dict(orient='records'):
+        name_home = element['home_team']
+        name_away = element['away_team']
+        commence_time = element['commence_time']
+        id_event = element['id']
 
+        # Search id_fixtures
+        start_date = (commence_time - pd.Timedelta(days=5)).date()
+        end_date = (commence_time + pd.Timedelta(days=5)).date()
+
+        dict_id = [
+            (index, ele) for index, ele in enumerate(dataset_h_dic)
+            if (
+                    check_name(stat=ele, home_odds=name_home, away_odds=name_away)
+                    and pd.isna(ele['match_id_from_odds'])
+                    and start_date <= isoparse(ele['date_fixture']).date() <= end_date
+            )
+        ]
+
+        if len(dict_id) == 2 and dict_id[0][1] == dict_id[1][1]:
+            rows = [dict_id[0][0], dict_id[1][0]]
+            id_fix = dict_id[0][1]
+            for index in rows:
+                dataset_history_stat.loc[index, 'match_id_from_odds'] = id_event
+
+    dataset_history_stat.to_csv('dataset_test.csv', index=False)
+
+
+# TODO 19/07 : CI SONO ANCORA MATCH SENZA CORRISPONDEZA DOVUTI DA ALCUNE PARTITE DEL DF ODDS NON HANNO
+#  L'ALTERNATIVA E CORRISPONDEZA PRINCIPALE..
+#  DA PROVARE SE I LORO ID SONO STATI DISABILITATI
+
+# aggregate_ids_into_dataset(partial=True)
+refused_join_insert()
 # count_ids_analyze()
 
 # print(max(fuzz.ratio(normalize_('Elche CF'), normalize_('Elche CF')),
@@ -199,6 +220,3 @@ aggregate_ids_into_dataset(partial=True)
 # convert_excel_to_csv('../dataset/odds/odds_dataset_replace.xlsx')
 # convert_excel_to_csv('../dataset/dataset_statistics_history.xlsx')
 # convert_csv_to_exel('../dataset/dataset_statistics_history.csv')
-
-# dt = pd.read_excel('../dataset/analyze_statistics.xlsx').sort_values(by=['id_fixture', 'team_id'], ascending=True)
-# dt.to_excel('../dataset/analyze_statistics.xlsx', index=False)

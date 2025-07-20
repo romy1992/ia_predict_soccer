@@ -2,6 +2,7 @@ import os
 import json
 import pandas as pd
 import unicodedata
+from rapidfuzz import fuzz
 
 with open('../dataset/black_name.json', 'r', encoding='utf-8') as file:
     black_names = json.load(file)
@@ -57,3 +58,22 @@ def normalize_(name):
         name = black_name[0]['replace']
 
     return " ".join(name.split()).strip()
+
+
+def check_name(**kwargs):
+    """
+    Cerca la corrispondenza dei nomi simili tra squadra di fuori casa e casa
+    :return: Booleano se il match è stato trovato secondo i nomi delle squadre
+    """
+    stat = kwargs.get('stat')
+    home_odds = kwargs.get('home_odds')
+    away_odds = kwargs.get('away_odds')
+    soglia = 87
+
+    score_home = max(fuzz.ratio(normalize_(stat['team_name']), normalize_(home_odds)),
+                     fuzz.partial_ratio(normalize_(stat['team_name']), normalize_(home_odds)))
+    score_away = max(fuzz.ratio(normalize_(stat['team_name']), normalize_(away_odds)),
+                     fuzz.partial_ratio(normalize_(stat['team_name']), normalize_(away_odds)))
+
+    return (score_home >= soglia and stat['home_away'] == 1) or (
+            score_away >= soglia and stat['home_away'] == 0)
