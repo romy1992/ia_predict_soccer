@@ -175,12 +175,14 @@ def analyze_none_id(dataset=pd.read_csv(name_odds_history, low_memory=False)):
 
 
 def refused_join_insert():
-    dataset_refused = pd.read_excel('../dataset/analyze_none_id.xlsx')
+    dataset_refused = pd.read_excel('../dataset/analyze_none_id.xlsx').to_dict(orient='records')
     dataset_history_stat = pd.read_csv(name_statistics_history, low_memory=False)
-    dataset_h_dic = dataset_history_stat.to_dict(orient='records')
+    dataset_history_copy = dataset_history_stat.copy()
+    dataset_history_copy['date_fixture'] = dataset_history_copy['date_fixture'].apply(lambda x: isoparse(x).date())
+    dataset_h_dic = dataset_history_copy.to_dict(orient='records')
     dataset_history_odds = pd.read_csv(name_odds_history, low_memory=False)
 
-    for element in dataset_refused.to_dict(orient='records'):
+    for element in dataset_refused:
         name_home = element['home_team']
         name_away = element['away_team']
         commence_time = element['commence_time']
@@ -195,7 +197,7 @@ def refused_join_insert():
             if (
                     check_name(stat=ele, home_odds=name_home, away_odds=name_away)
                     and pd.isna(ele['match_id_from_odds'])
-                    and start_date <= isoparse(ele['date_fixture']).date() <= end_date
+                    and start_date <= ele['date_fixture'] <= end_date
             )
         ]
 
@@ -204,18 +206,20 @@ def refused_join_insert():
             id_fix = dict_id[0][1]
             for index in rows:
                 dataset_history_stat.loc[index, 'match_id_from_odds'] = id_event
-            dataset_history_odds[element['original_index']] = id_fix
+            dataset_history_odds[element['original_index'], 'id_fixture_from_stat'] = id_fix
 
     dataset_history_stat.to_csv(name_statistics_history, index=False)
     dataset_history_odds.to_csv(name_odds_history, index=False)
+
+    count_ids_analyze()
 
 
 # TODO 19/07 : CI SONO ANCORA MATCH SENZA CORRISPONDEZA DOVUTI DA ALCUNE PARTITE DEL DF ODDS NON HANNO
 #  L'ALTERNATIVA E CORRISPONDEZA PRINCIPALE..
 #  DA PROVARE SE I LORO ID SONO STATI DISABILITATI
 
-# aggregate_ids_into_dataset(partial=True)
-refused_join_insert()
+aggregate_ids_into_dataset()
+# refused_join_insert()
 # count_ids_analyze()
 
 # print(max(fuzz.ratio(normalize_('Elche CF'), normalize_('Elche CF')),
@@ -223,4 +227,4 @@ refused_join_insert()
 
 # convert_excel_to_csv('../dataset/odds/odds_dataset_replace.xlsx')
 # convert_excel_to_csv('../dataset/dataset_statistics_history.xlsx')
-# convert_csv_to_exel('dataset_test.csv')
+# convert_csv_to_exel('../dataset/dataset_statistics_history.csv')
