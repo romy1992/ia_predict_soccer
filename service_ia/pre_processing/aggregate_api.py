@@ -117,11 +117,5 @@ def csv_sports_odds():
     with open('../dataset/sports_odds.json', 'w', encoding='utf-8') as file:
         json.dump(sports, file, ensure_ascii=False, indent=4)
 
-
-
-
-
 # aggregate_statistics_id()
 # reorder_and_adapt_csv()
-
-
