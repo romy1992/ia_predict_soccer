@@ -207,6 +207,7 @@ def refused_join_insert():
             dataset_history_odds[element['original_index']] = id_fix
 
     dataset_history_stat.to_csv(name_statistics_history, index=False)
+    dataset_history_odds.to_csv(name_odds_history, index=False)
 
 
 # TODO 19/07 : CI SONO ANCORA MATCH SENZA CORRISPONDEZA DOVUTI DA ALCUNE PARTITE DEL DF ODDS NON HANNO
@@ -214,8 +215,8 @@ def refused_join_insert():
 #  DA PROVARE SE I LORO ID SONO STATI DISABILITATI
 
 # aggregate_ids_into_dataset(partial=True)
-# refused_join_insert()
-count_ids_analyze()
+refused_join_insert()
+# count_ids_analyze()
 
 # print(max(fuzz.ratio(normalize_('Elche CF'), normalize_('Elche CF')),
 #           fuzz.partial_ratio(normalize_('Elche CF'), normalize_('Elche CF'))))
