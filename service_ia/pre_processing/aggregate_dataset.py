@@ -11,7 +11,7 @@ import pandas as pd
 from dateutil.parser import isoparse
 from rapidfuzz import fuzz
 
-from service_ia.utility.utils import count_row_not_na, count_row_is_na, normalize_, check_name
+from service_ia.utility.utils import count_row_not_na, count_row_is_na, normalize_, check_name, convert_csv_to_exel
 
 logging.basicConfig(level=logging.DEBUG)
 
@@ -169,15 +169,17 @@ def count_ids_analyze():
 
 def analyze_none_id(dataset=pd.read_csv(name_odds_history, low_memory=False)):
     dataset_ = dataset[['id', 'commence_time', 'home_team', 'away_team', 'ids_dates', 'id_fixture_from_stat']]
-    dataset_ = dataset_.loc[dataset_['id_fixture_from_stat'].isna()]
+    dataset_ = dataset_.loc[dataset_['id_fixture_from_stat'].isna()].copy()
+    dataset_['original_index'] = dataset_.index
     dataset_.to_excel('../dataset/analyze_none_id.xlsx', index=False)
 
 
 def refused_join_insert():
     dataset_refused = pd.read_excel('../dataset/analyze_none_id.xlsx')
     dataset_history_stat = pd.read_csv(name_statistics_history, low_memory=False)
-    dataset_h_dic=dataset_history_stat.to_dict()
+    dataset_h_dic = dataset_history_stat.to_dict(orient='records')
     dataset_history_odds = pd.read_csv(name_odds_history, low_memory=False)
+
     for element in dataset_refused.to_dict(orient='records'):
         name_home = element['home_team']
         name_away = element['away_team']
@@ -189,7 +191,7 @@ def refused_join_insert():
         end_date = (commence_time + pd.Timedelta(days=5)).date()
 
         dict_id = [
-            (index, ele) for index, ele in enumerate(dataset_h_dic)
+            (index, ele['id_fixture']) for index, ele in enumerate(dataset_h_dic)
             if (
                     check_name(stat=ele, home_odds=name_home, away_odds=name_away)
                     and pd.isna(ele['match_id_from_odds'])
@@ -202,8 +204,9 @@ def refused_join_insert():
             id_fix = dict_id[0][1]
             for index in rows:
                 dataset_history_stat.loc[index, 'match_id_from_odds'] = id_event
+            dataset_history_odds[element['original_index']] = id_fix
 
-    dataset_history_stat.to_csv('dataset_test.csv', index=False)
+    dataset_history_stat.to_csv(name_statistics_history, index=False)
 
 
 # TODO 19/07 : CI SONO ANCORA MATCH SENZA CORRISPONDEZA DOVUTI DA ALCUNE PARTITE DEL DF ODDS NON HANNO
@@ -211,12 +214,12 @@ def refused_join_insert():
 #  DA PROVARE SE I LORO ID SONO STATI DISABILITATI
 
 # aggregate_ids_into_dataset(partial=True)
-refused_join_insert()
-# count_ids_analyze()
+# refused_join_insert()
+count_ids_analyze()
 
 # print(max(fuzz.ratio(normalize_('Elche CF'), normalize_('Elche CF')),
 #           fuzz.partial_ratio(normalize_('Elche CF'), normalize_('Elche CF'))))
 
 # convert_excel_to_csv('../dataset/odds/odds_dataset_replace.xlsx')
 # convert_excel_to_csv('../dataset/dataset_statistics_history.xlsx')
-# convert_csv_to_exel('../dataset/dataset_statistics_history.csv')
+# convert_csv_to_exel('dataset_test.csv')
