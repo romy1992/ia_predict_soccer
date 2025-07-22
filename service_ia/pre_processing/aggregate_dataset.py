@@ -9,9 +9,8 @@ from datetime import datetime
 
 import pandas as pd
 from dateutil.parser import isoparse
-from rapidfuzz import fuzz
 
-from service_ia.utility.utils import count_row_not_na, count_row_is_na, normalize_, check_name, convert_csv_to_exel
+from service_ia.utility.utils import count_row_not_na, count_row_is_na, check_name, convert_csv_to_exel
 
 logging.basicConfig(level=logging.DEBUG)
 
@@ -161,10 +160,12 @@ def count_ids_analyze():
     analyze_none_id(df_odds_filters)
 
     df_stat = pd.read_csv(name_statistics_history, low_memory=False)
-    print('ODDS - Con valore : ', count_row_not_na(df_odds, 'id_fixture_from_stat'))  # 7421
-    print('ODDS - Senza valore alla data odierna : ', count_row_is_na(df_odds_filters, 'id_fixture_from_stat'))  # 1365
-    print('STATISTICS - Con valore : ', count_row_not_na(df_stat, 'match_id_from_odds') / 2)  # 7421
-    print('STATISTICS - Senza valore : ', count_row_is_na(df_stat, 'match_id_from_odds') / 2)  # 46854
+    df_stat = df_stat[df_stat['season'] >= 2019]
+
+    print('ODDS - Con valore : ', count_row_not_na(df_odds, 'id_fixture_from_stat'))
+    print('ODDS - Senza valore alla data odierna : ', count_row_is_na(df_odds_filters, 'id_fixture_from_stat'))
+    print('STATISTICS - Con valore dal 2019 : ', count_row_not_na(df_stat, 'match_id_from_odds') / 2)
+    print('STATISTICS - Senza valore dal 2019 : ', count_row_is_na(df_stat, 'match_id_from_odds') / 2)
 
 
 def analyze_none_id(dataset=pd.read_csv(name_odds_history, low_memory=False)):
@@ -189,14 +190,16 @@ def refused_join_insert():
         id_event = element['id']
 
         # Search id_fixtures
+        # start_date = (commence_time - pd.Timedelta(days=100)).date() # Caso in cui le partite sono state inserite con una data precedente
         start_date = (commence_time - pd.Timedelta(days=5)).date()
-        end_date = (commence_time + pd.Timedelta(days=5)).date()
+        # end_date = (commence_time + pd.Timedelta(days=5)).date()  # Di base metto sempre 5 giorni dopo
+        end_date = (commence_time + pd.Timedelta(days=130)).date() # Caso in cui le partite sono state disputate qualche mese dopo
 
         dict_id = [
             (index, ele['id_fixture']) for index, ele in enumerate(dataset_h_dic)
             if (
                     check_name(stat=ele, home_odds=name_home, away_odds=name_away)
-                    and pd.isna(ele['match_id_from_odds'])
+                    # and pd.isna(ele['match_id_from_odds'])
                     and start_date <= ele['date_fixture'] <= end_date
             )
         ]
@@ -206,7 +209,7 @@ def refused_join_insert():
             id_fix = dict_id[0][1]
             for index in rows:
                 dataset_history_stat.loc[index, 'match_id_from_odds'] = id_event
-            dataset_history_odds[element['original_index'], 'id_fixture_from_stat'] = id_fix
+            dataset_history_odds.loc[element['original_index'], 'id_fixture_from_stat'] = id_fix
 
     dataset_history_stat.to_csv(name_statistics_history, index=False)
     dataset_history_odds.to_csv(name_odds_history, index=False)
@@ -218,13 +221,10 @@ def refused_join_insert():
 #  L'ALTERNATIVA E CORRISPONDEZA PRINCIPALE..
 #  DA PROVARE SE I LORO ID SONO STATI DISABILITATI
 
-aggregate_ids_into_dataset()
+# aggregate_ids_into_dataset(partial=True)
 # refused_join_insert()
-# count_ids_analyze()
 
-# print(max(fuzz.ratio(normalize_('Elche CF'), normalize_('Elche CF')),
-#           fuzz.partial_ratio(normalize_('Elche CF'), normalize_('Elche CF'))))
-
-# convert_excel_to_csv('../dataset/odds/odds_dataset_replace.xlsx')
 # convert_excel_to_csv('../dataset/dataset_statistics_history.xlsx')
-# convert_csv_to_exel('../dataset/dataset_statistics_history.csv')
+# convert_excel_to_csv('../dataset/odds/odds_dataset.xlsx')
+# convert_csv_to_exel(name_statistics_history)
+# convert_csv_to_exel(name_odds_history)
