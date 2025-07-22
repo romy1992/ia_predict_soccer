@@ -207,7 +207,11 @@ def aggregate_odds_bookmakers_base():
     odds_dataset = pd.read_csv(name_id_odds_h2h_totals).drop(columns=['bookmakers'], axis=1)
     bookmakers_dataset = pd.read_csv(name_odds_bookmakers)
     merged_dataset = pd.merge(odds_dataset, bookmakers_dataset, on='id', how='inner')
-    merged_dataset.to_csv(name_odds_base, index=False)
+    # merged_dataset.to_csv(name_odds_base, index=False) TODO : commentato perchè altrimenti sovrascrive quelli già matchati con le statistiche
+    merged_dataset.to_csv(f'{base_dataset}/odds_dataset_2.csv', index=False)
+    # TODO : creare quindi un secondo dataset ,uguali per le prime partite ma diverse per le ultime dove poi aggiungerò a quello originale le partite senza match :
+    #       la colonna "id_fixture_from_stat" dell'originale odds_dataset.csv ha tutte le righe valorizzate quindi basta aggiungere sotto quelle che non hanno la colonna
+    #       Tutto questo però DOPO aver eseguito anche il metodo successivo "remove_duplicate_match_by_names"
 
 
 def remove_duplicate_match_by_names():
@@ -220,7 +224,9 @@ def remove_duplicate_match_by_names():
             altrimenti mi tengo la corrente (la più recente)
     :return: @name_odds_base ripulito senza duplicati di MATCH
     """
-    dataset = pd.read_csv(name_odds_base)
+    # TODO STESSO MOTIVO DEL METODO aggregate_odds_bookmakers_base
+    # dataset = pd.read_csv(name_odds_base)
+    dataset = pd.read_csv(f'{base_dataset}/odds_dataset_2.csv')
 
     dict_dat = []
     for row in dataset.itertuples(index=False):
@@ -261,7 +267,10 @@ def remove_duplicate_match_by_names():
 
     final_dataset = pd.DataFrame(dict_dat)
     final_dataset.drop_duplicates(subset='id', keep='last', inplace=True)
-    final_dataset.to_csv(name_odds_base, index=False)
+
+    # TODO STESSO MOTIVO DEL METODO aggregate_odds_bookmakers_base
+    # final_dataset.to_csv(name_odds_base, index=False)
+    final_dataset.to_csv(f'{base_dataset}/odds_dataset_2.csv', index=False)
 
 
 # create_odds_dataset()
