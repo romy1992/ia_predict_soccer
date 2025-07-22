@@ -60,6 +60,10 @@ def normalize_(name):
     return " ".join(name.split()).strip()
 
 
+# print(max(fuzz.ratio(normalize_('Pordenone'), normalize_('Frosinone')),
+#           fuzz.partial_ratio(normalize_('Pordenone'), normalize_('Frosinone'))))
+
+
 def check_name(**kwargs):
     """
     Cerca la corrispondenza dei nomi simili tra squadra di fuori casa e casa
@@ -70,10 +74,14 @@ def check_name(**kwargs):
     away_odds = kwargs.get('away_odds')
     soglia = 87
 
-    score_home = max(fuzz.ratio(normalize_(stat['team_name']), normalize_(home_odds)),
-                     fuzz.partial_ratio(normalize_(stat['team_name']), normalize_(home_odds)))
-    score_away = max(fuzz.ratio(normalize_(stat['team_name']), normalize_(away_odds)),
-                     fuzz.partial_ratio(normalize_(stat['team_name']), normalize_(away_odds)))
+    def fuzzy_score(a, b):
+        a_norm, b_norm = normalize_(a), normalize_(b)
+        return max(fuzz.ratio(a_norm, b_norm), fuzz.partial_ratio(a_norm, b_norm))
 
-    return (score_home >= soglia and stat['home_away'] == 1) or (
-            score_away >= soglia and stat['home_away'] == 0)
+    score_home_andata = fuzzy_score(stat['team_name'], home_odds)
+    score_away_andata = fuzzy_score(stat['opponent_name'], away_odds)
+    score_home_ritorno = fuzzy_score(stat['team_name'], away_odds)
+    score_away_ritorno = fuzzy_score(stat['opponent_name'], home_odds)
+
+    return ((score_home_andata >= soglia) and (score_away_andata >= soglia)) or (
+                (score_home_ritorno >= soglia) and (score_away_ritorno >= soglia))
