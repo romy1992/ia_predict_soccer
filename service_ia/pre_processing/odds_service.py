@@ -33,17 +33,24 @@ LAVORARE QUINDI IN MANIERA INDIPEDENTE
 """
 # =============================================== STEP 1 ===============================================
 import ast
-from datetime import datetime, timezone
+import json
+from datetime import datetime, timezone, timedelta
 
 import pandas as pd
 from dateutil.relativedelta import relativedelta
 
-from service_ia.utility.request_api import base_api_odds
+from service_ia.utility.request_api import base_api_odds, base_api_statistics
 
 base_dataset = '../dataset/odds'
 name_id_odds_h2h_totals = f'{base_dataset}/id_odds_h2h_totals.csv'  # Dataset ancora "grezzo" dove chiama solo API Odds per recuperare principalmente gli id e poi i primi odds h2h e totals
 name_odds_bookmakers = f'{base_dataset}/odds_h2h_totals_bookmakers.csv'  # Dataset conseguenza del precedente dove prende i bookmakers(colonna) che è solo json e crea un dataset solo con quote
 name_odds_base = f'{base_dataset}/odds_dataset.csv'  # Dataset che unisce il primo e il secondo precedenti ripuliti per duplicati
+
+with open('../json/bookmakers.json', 'r', encoding='utf-8') as file:
+    BOOKMAKERS_SPORTS = json.load(file)
+
+with open('../json/bet.json', 'r', encoding='utf-8') as file:
+    BET_BOOKMAKERS = json.load(file)
 
 markets_base = 'h2h,totals'
 markets_events = 'alternate_totals,btts,team_totals'  # TODO ci saranno da inserire gli altri non appena scatterà il nuovo abbonamento :  https://the-odds-api.com/sports-odds-data/betting-markets.html#featured-betting-markets -> qui ci sono tutte:leggere anche "Soccer Player Props API" e "Other soccer betting markets" per cartellini e angoli
@@ -166,6 +173,8 @@ def remap_json_bookmakers():
 
     flat_rows = []
 
+    names_book = [name['name'] for name in BOOKMAKERS_SPORTS]
+
     for _, row in df.iterrows():
         raw_json = row['bookmakers']
 
@@ -181,34 +190,43 @@ def remap_json_bookmakers():
 
         for bookmaker in bookmakers:
             title = bookmaker.get('title')
-            out_h2h = get_outcomes_event('h2h', bookmaker)
-            out_totals = get_outcomes_event('totals', bookmaker)
+            if title in names_book:
+                out_h2h = get_outcomes_event('h2h', bookmaker)
+                out_totals = get_outcomes_event('totals', bookmaker)
 
-            # Aggiunta quote H2H
-            r[f'home_{title}'] = search_price_name(out_h2h, home_team)
-            r[f'away_{title}'] = search_price_name(out_h2h, away_team)
-            r[f'draw_{title}'] = search_price_name(out_h2h, 'Draw')
+                # Aggiunta quote H2H
+                r[f'home_{title}'] = search_price_name(out_h2h, home_team)
+                r[f'away_{title}'] = search_price_name(out_h2h, away_team)
+                r[f'draw_{title}'] = search_price_name(out_h2h, 'Draw')
 
-            # Aggiunta quote Totals
-            r[f'over_2.5_{title}'] = search_price_name(out_totals, 'Over')
-            r[f'under_2.5_{title}'] = search_price_name(out_totals, 'Under')
+                # Aggiunta quote Totals
+                r[f'over_2.5_{title}'] = search_price_name(out_totals, 'Over')
+                r[f'under_2.5_{title}'] = search_price_name(out_totals, 'Under')
 
-        flat_rows.append(r)
+        if len(r) > 1:
+            flat_rows.append(r)
 
-    flat_df = pd.DataFrame(flat_rows)
-    flat_df.to_csv(name_odds_bookmakers, index=False)
+    if len(flat_rows) > 0:
+        flat_df = pd.DataFrame(flat_rows)
+        flat_df.to_csv(name_odds_bookmakers, index=False)
 
 
 def aggregate_odds_bookmakers_base():
     """
-    Aggrega i 2 dataset in un unico completo
+    Aggrega i 2 dataset in un unico completo controllando se quello finale ha già quelle partite
     :return: @name_odds_base
     """
-    odds_dataset = pd.read_csv(name_id_odds_h2h_totals).drop(columns=['bookmakers'], axis=1)
+    odds_h2h_totals = pd.read_csv(name_id_odds_h2h_totals).drop(columns=['bookmakers'], axis=1)
     bookmakers_dataset = pd.read_csv(name_odds_bookmakers)
-    merged_dataset = pd.merge(odds_dataset, bookmakers_dataset, on='id', how='inner')
+    # TODO DA TESTARE QUANDO ARRIVERANNO I NUOVI DATI
+    merged_dataset = pd.merge(odds_h2h_totals, bookmakers_dataset, on='id', how='inner')
+    odds_dataset = pd.read_csv(name_odds_base)
+    merged_dataset = [m_d for m_d in merged_dataset.itertuples(index=False) if
+                      m_d.id not in odds_dataset['id'].tolist()]
+    odds_dataset = pd.concat([odds_dataset, pd.DataFrame(merged_dataset)], axis=0)
+    pd.DataFrame(odds_dataset).to_csv(f'{base_dataset}/odds_dataset_2.csv', index=False)
+
     # merged_dataset.to_csv(name_odds_base, index=False) TODO : commentato perchè altrimenti sovrascrive quelli già matchati con le statistiche
-    merged_dataset.to_csv(f'{base_dataset}/odds_dataset_2.csv', index=False)
     # TODO : creare quindi un secondo dataset ,uguali per le prime partite ma diverse per le ultime dove poi aggiungerò a quello originale le partite senza match :
     #       la colonna "id_fixture_from_stat" dell'originale odds_dataset.csv ha tutte le righe valorizzate quindi basta aggiungere sotto quelle che non hanno la colonna
     #       Tutto questo però DOPO aver eseguito anche il metodo successivo "remove_duplicate_match_by_names"
@@ -273,10 +291,119 @@ def remove_duplicate_match_by_names():
     final_dataset.to_csv(f'{base_dataset}/odds_dataset_2.csv', index=False)
 
 
+def added_odds():
+    """
+    Aggiunge le quote NON dalla piattaforma ODDS ma da API_SPORT
+    Aggiunge al DT altre righe con nomi colonne simili
+    :return: new dt odds
+    """
+    leagues = [135, 136, 140, 78, 39, 94, 203, 2, 3, 848]
+
+    # ( - 0 -> Oggi , - 1 -> Ieri , + 1 -> Domani , + 2 DopoDomani)
+
+    # Formato richiesto è esempio:"2025-02-12"
+    format_data = '%Y-%m-%d'
+    current_data = datetime.now()
+
+    # Scegliere da che giorno indietro si vuole andare per recuperare le partite
+    from_date = (current_data - timedelta(days=3)).strftime(format_data)
+    # Fino a ...
+    to_date = (current_data - timedelta(days=0)).strftime(format_data)
+
+    # Scegliere i giorni indietro che si vuole andare per recuperare le partite (ESEGUIRA' solo un giorno)
+    date = (current_data - timedelta(days=0)).strftime(format_data)
+    date_manual = '2025-03-07'
+
+    # FT è partita finita
+    # AET è per partita finita ai supplementari (QUINDI PER COPPE)
+    # PEN è per partita finita ai rigori (QUINDI PER COPPE)
+    status_list = ['FT', 'AET', 'PEN']
+
+    dataset_odds = pd.read_csv(name_odds_base)
+
+    ids_bookmakers = [ids_book['id'] for ids_book in BOOKMAKERS_SPORTS]
+    ids_bets = [id_bet['id'] for id_bet in BET_BOOKMAKERS]
+    for league in leagues:
+        fixtures = base_api_statistics(
+            path='fixtures',
+            params={
+                'from': from_date, 'to': to_date,
+                'status': status_list,
+                'league': league,
+                # 'date': date
+            })
+        odds_bet = []
+        for fixture in fixtures:
+            id_fixture = fixture['fixture']['id']
+            data_fix = fixture['fixture']['date']
+            league_id = fixture['league']['id']
+            name_league = fixture['league']['name']
+            season = fixture['league']['season']
+            round_fixture = fixture['league']['round']
+            home_id = fixture['teams']['home']['id']
+            home_team = fixture['teams']['home']['name']
+            away_id = fixture['teams']['away']['id']
+            away_team = fixture['teams']['away']['name']
+            fixture_bookmakers = base_api_statistics(path='/odds', params={'fixture': id_fixture})
+
+            if len(fixture_bookmakers) > 0:
+                # Inizia a creare il dizionario prima di aggiungere le quote
+                bookmakers_filters = [bookmaker for bookmaker in fixture_bookmakers[0]['bookmakers'] if
+                                      bookmaker['id'] in ids_bookmakers]
+
+                odd_bet = {
+                    'id_fixture_from_stat': id_fixture,
+                    'api_from': 'sports-api',
+                    'sport_key': league_id,
+                    'sport_title': name_league,
+                    'commence_time': data_fix,
+                    'home_id': home_id,
+                    'home_team': home_team,
+                    'away_id': away_id,
+                    'away_team': away_team,
+                    'season': season,
+                    'round_fixture': round_fixture,
+                }
+
+                for bookmaker in bookmakers_filters:
+                    # Crea il dizionario della fixture aggregando tutti gli eventi con le sue quote
+                    name_book = bookmaker['name']
+                    filter_bet = [bet for bet in bookmaker['bets'] if bet['id'] in ids_bets]
+                    for filter_bet_name in filter_bet:
+                        for value in filter_bet_name['values']:
+                            odd_bet.update({
+                                f'{name_book}_{filter_bet_name['name']}_{value['value']}': value['odd']
+                            })
+
+                odds_bet.append(odd_bet)
+
+            if len(odds_bet) > 0:
+                # Inserisci e modifica il dataset attuale solo se c'è almeno un elemento
+                odd_bet_dt = pd.DataFrame(odds_bet)
+                concat_odds = pd.concat([dataset_odds, odd_bet_dt], axis=0)
+                print(concat_odds)
+                # TODO concat_odds.to_csv(name_odds_base, index=False)
+
+
+def clean_dataset_odds():
+    """
+    Ripulisce il dataset da colonne di bookmakers in eccesso
+    :return:
+    """
+    list_columns = ['id', 'ids_dates', 'id_fixture_from_stat', 'api_from', 'sport_key', 'sport_title', 'commence_time',
+                    'home_team', 'away_team']
+    names_book = [name['name'] for name in BOOKMAKERS_SPORTS]
+    dataset = pd.read_csv(name_odds_base)
+    dataset = dataset[[c for c in dataset.columns if c in list_columns or [el for el in names_book if el in c]]]
+    dataset.to_csv(name_odds_base, index=False)
+
+
 # create_odds_dataset()
 # remap_json_bookmakers()
 # aggregate_odds_bookmakers_base()
-remove_duplicate_match_by_names()
+# remove_duplicate_match_by_names()
+# added_odds()
+# clean_dataset_odds()
 
 
 # =============================================== STEP 1 ===============================================
