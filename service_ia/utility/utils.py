@@ -4,7 +4,7 @@ import pandas as pd
 import unicodedata
 from rapidfuzz import fuzz
 
-with open('../dataset/black_name.json', 'r', encoding='utf-8') as file:
+with open('../json/black_name.json', 'r', encoding='utf-8') as file:
     black_names = json.load(file)
 
 

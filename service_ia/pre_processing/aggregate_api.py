@@ -1,5 +1,4 @@
 import json
-import os
 
 import pandas as pd
 from dateutil.parser import isoparse
@@ -43,7 +42,7 @@ def aggregate_statistics_id():
     """
     date_event_historical = isoparse('2020-06-06T19:45:00Z')
     # Dataset originale delle statistiche
-    dataset_statistics = pd.read_csv('../dataset/dataset_statistics_history.csv')
+    dataset_statistics = pd.read_csv('../dataset/statistics/dataset_statistics_history.csv')
     dataset_statistics['date_fixture'] = pd.to_datetime(dataset_statistics['date_fixture'])
     dataset_statistics['id_events_odds'] = None
     for row in dataset_statistics.itertuples(index=False):
@@ -65,7 +64,7 @@ def aggregate_statistics_odds():
     :return: Nuovo dataset completo
     """
     # Dataset originale delle statistiche
-    dataset_statistics = pd.read_csv('../dataset/dataset_statistics_history.csv')
+    dataset_statistics = pd.read_csv('../dataset/statistics/dataset_statistics_history.csv')
 
     # Prendo il nome della squadra di casa, ospite e orario del match (unici valori per fare match con il Portale ODDS)
     for row in dataset_statistics.itertuples(index=False):
@@ -114,7 +113,7 @@ def csv_sports_odds():
                                'key_number': switch_league_string_by_number(sport['key'])}
               for sport in sports if sport['group'] == 'Soccer' and sport['active']}
     # Salvataggio su file JSON
-    with open('../dataset/sports_odds.json', 'w', encoding='utf-8') as file:
+    with open('../json/sports_odds.json', 'w', encoding='utf-8') as file:
         json.dump(sports, file, ensure_ascii=False, indent=4)
 
 # aggregate_statistics_id()

@@ -10,7 +10,8 @@ from datetime import datetime
 import pandas as pd
 from dateutil.parser import isoparse
 
-from service_ia.utility.utils import count_row_not_na, count_row_is_na, check_name, convert_csv_to_exel
+from service_ia.utility.utils import count_row_not_na, count_row_is_na, check_name, convert_csv_to_exel, \
+    convert_excel_to_csv
 
 logging.basicConfig(level=logging.DEBUG)
 
@@ -227,4 +228,4 @@ def refused_join_insert():
 # convert_excel_to_csv('../dataset/dataset_statistics_history.xlsx')
 # convert_excel_to_csv('../dataset/odds/odds_dataset.xlsx')
 # convert_csv_to_exel(name_statistics_history)
-# convert_csv_to_exel(name_odds_history)
+convert_csv_to_exel(name_odds_history)
