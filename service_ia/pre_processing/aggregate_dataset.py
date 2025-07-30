@@ -17,7 +17,7 @@ logging.basicConfig(level=logging.DEBUG)
 
 # =============================================== STEP 3 ===============================================
 base_dataset = '../dataset'
-name_statistics_history = f'{base_dataset}/dataset_statistics_history.csv'  # DT storico di statistiche partite
+name_statistics_history = f'{base_dataset}/statistics/dataset_statistics_history.csv'  # DT storico di statistiche partite
 name_odds_history = f'{base_dataset}/odds/odds_dataset.csv'  # DT storico di odds
 
 
@@ -225,7 +225,7 @@ def refused_join_insert():
 # aggregate_ids_into_dataset(partial=True)
 # refused_join_insert()
 
-# convert_excel_to_csv('../dataset/dataset_statistics_history.xlsx')
+convert_excel_to_csv('../dataset/statistics/dataset_statistics_history.xlsx')
 # convert_excel_to_csv('../dataset/odds/odds_dataset.xlsx')
 # convert_csv_to_exel(name_statistics_history)
-convert_csv_to_exel(name_odds_history)
+# convert_csv_to_exel(name_odds_history)
