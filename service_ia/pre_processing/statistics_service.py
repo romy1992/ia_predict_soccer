@@ -5,11 +5,13 @@ import time
 import pandas as pd
 
 from service_ia.utility.request_api import base_api_statistics
+from service_ia.utility.utils import convert_csv_to_exel
 
 LEAGUES = [135, 136, 140, 78, 39, 94, 203, 2, 3, 848]
 SEASONS = [2025]
 INDEX = 0
 JSON_DICT = []
+name_history = '../dataset/statistics/dataset_statistics_history.csv'
 
 
 def adapted_percentage(value):
@@ -17,6 +19,37 @@ def adapted_percentage(value):
     Rimuovo le percentuali e li adatto al dataset
     """
     return (float(value.replace('%', '')) / 100) if value else 0
+
+
+def get_predict(predict):
+    """
+    Recupera le predizioni del match
+    :return: dizionario predizioni
+    """
+    prediction = predict['predictions']
+    winner_predict_id = prediction['winner']['id']
+    winner_predict_name = prediction['winner']['name']
+    win_or_draw = prediction['win_or_draw']
+    under_over = prediction['under_over']
+    goal_home = prediction['goals']['home']
+    goal_away = prediction['goals']['away']
+    advice = prediction['advice']
+    percent_home = adapted_percentage(prediction['percent']['home'])
+    percent_draw = adapted_percentage(prediction['percent']['draw'])
+    percent_away = adapted_percentage(prediction['percent']['away'])
+
+    return {
+        'predict_winner_predict_id': winner_predict_id,
+        'predict_winner_predict_name': winner_predict_name,
+        'predict_win_or_draw': win_or_draw,
+        'predict_under_over': under_over,
+        'predict_goal_home': goal_home,
+        'predict_goal_away': goal_away,
+        'predict_advice': advice,
+        'predict_percent_home': percent_home,
+        'predict_percent_draw': percent_draw,
+        'predict_percent_away': percent_away
+    }
 
 
 def check_sleep():
@@ -40,7 +73,7 @@ def generate_statistics():
     global JSON_DICT
     try:
         # CONSEGUENZA DELL'AGGIORNAMENTO 15/07 FATTO SOTTO : LEGGERò IL DF PER CAPIRE SE ESISTONO LE PARTITE
-        df = pd.read_csv('../dataset/statistics/dataset_statistics_history.csv').to_dict(orient='records')
+        df = pd.read_csv(name_history).to_dict(orient='records')
 
         for season in SEASONS:
             logging.info(f'<<< Start season {season} >>>')
@@ -254,6 +287,7 @@ def generate_statistics():
                                         'form_goal_for_average_last_5': goal_for,
                                         'form_goal_against_average_last_5': goal_against,
                                     }
+
                                     pre_dict.update(for_)
                                     pre_dict.update(against_)
                                     pre_dict.update({
@@ -283,6 +317,9 @@ def generate_statistics():
                                         }
                                     )
 
+                                    # Predictions match
+                                    pre_dict.update(get_predict(predict))
+
                                     return pre_dict
 
                                 # Aggiungo la forma fisica
@@ -296,3 +333,49 @@ def generate_statistics():
     except Exception as e:
         print(str(e))
         save()
+
+
+def reload_statistics():
+    """
+    Questo metodo nasce con l'esigenza di dover aggiungere qualcosa al dataset esistente senza dover riprocessare tutto
+    ma passando solo dagli id
+    :return: new update dataset statistics
+    """
+    dataset = pd.read_csv(name_history, low_memory=False)
+    dataset_dict = dataset.to_dict(orient='records')
+    ids_fixture = set(
+        [id_fix['id_fixture'] for id_fix in dataset_dict
+         if id_fix['season'] <= 2015
+         # and pd.isna(id_fix['match_id_from_odds'])
+         and pd.isna(id_fix['predict_win_or_draw'])
+         ])
+    len_id = len(ids_fixture)
+    try:
+        for index, id_fix in enumerate(ids_fixture):
+            logging.info(f'Process id {id_fix} -> Row {index}/{len_id}')
+
+            # Predict della partita
+            fixtures_predict = base_api_statistics(path='/predictions', params={'fixture': id_fix})
+            check_sleep()
+
+            if len(fixtures_predict) > 0:
+                predictions = get_predict(fixtures_predict[0])
+
+                # Cerca le righe da modificare
+                index_stat_update = [index for index, d in enumerate(dataset_dict) if d['id_fixture'] == id_fix]
+                for ind in index_stat_update:
+                    dataset.loc[ind, predictions.keys()] = predictions.values()
+
+        print('Finish process')
+    except Exception as e:
+        print(str(e))
+    finally:
+        # Aggiorno il dataset
+        dataset.to_csv(name_history, index=False)
+        print('Aggiornato')
+
+
+reload_statistics()
+# convert_csv_to_exel(name_history)
+# d = pd.read_csv('../dataset/statistics/dataset_statistics_history.csv', low_memory=False)
+# d.to_excel('../dataset/statistics/dataset_statistics_history_copy.xlsx', index=False)
