@@ -146,7 +146,7 @@ def create_odds_dataset():
         for d in m['date_match']:
             odds_hist = base_api_odds(type_api='hist', path=f'{m['key_sports']}/odds',
                                       params={'regions': 'eu', 'markets': markets_base, 'date': d})
-            if odds_hist and len(odds_hist['data']) > 0:
+            if len(odds_hist['data']) > 0:
                 df = pd.DataFrame(odds_hist['data'])
                 df.to_csv(name_id_odds_h2h_totals, mode='a',
                           header=not pd.io.common.file_exists(name_id_odds_h2h_totals),
