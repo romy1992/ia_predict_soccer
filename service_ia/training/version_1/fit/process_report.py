@@ -66,23 +66,18 @@ Modelli che richiedono scaling (scaling è fortemente consigliato o obbligatorio
 | **Perceptron / MLP / Reti Neurali**       | Convergenza durante l’ottimizzazione (gradient descent) migliora molto con dati standardizzati |
 | **PCA, LDA**                              | Si basano su varianza, correlazione ⇒ le scale influiscono fortemente                          |
 """
-import datetime
-import os
 
 import pandas as pd
 import xgboost as xgb
-from sklearn.ensemble import RandomForestClassifier, VotingClassifier, BaggingClassifier, AdaBoostClassifier, \
-    GradientBoostingClassifier, StackingClassifier
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import accuracy_score, confusion_matrix, f1_score, precision_score, recall_score, \
-    precision_recall_curve, classification_report
-from sklearn.model_selection import train_test_split, StratifiedKFold, cross_val_predict, cross_validate, \
-    cross_val_score
+from sklearn.model_selection import train_test_split
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.svm import SVC
 from sklearn.tree import DecisionTreeClassifier
 
-from service_ia.training.grid_search_create import create_gs
+from service_ia.training.fit_classifier import FitEnsembleClassifier
+from service_ia.training.fit_search_best_model import FitSearchBestModel
 
 
 def split_dataset(t='mean', predict_feature=False):
@@ -120,11 +115,11 @@ def split_dataset(t='mean', predict_feature=False):
     return X, y
 
 
-def fit_process_voting(t='mean', hard=True):
+def fit_process_voting(t='mean', predict_feature=False):
     """
     Con Voting che accumula i modelli e restituisce il migliore
     """
-    X, y = split_dataset(t)
+    X, y = split_dataset(t, predict_feature)
 
     X_train, X_test, y_train, y_test = train_test_split(X, y, random_state=42, test_size=0.2)
 
@@ -137,16 +132,17 @@ def fit_process_voting(t='mean', hard=True):
     # X_train = st.fit_transform(X_train)
     # X_test = st.transform(X_test)
 
-    voting = VotingClassifier(
-        estimators=[('rf', random_forest), ('lg', logistic), ('svc', scv), ('decision', decision)],
-        voting='hard' if hard else 'soft', verbose=0, n_jobs=-1)
-    voting.fit(X_train, y_train)
-    y_predict = voting.predict(X_test)
+    estimators = [('rf', random_forest), ('lg', logistic), ('svc', scv), ('decision', decision)]
+    des = f't={t}/predict_feature={predict_feature}'
 
-    return f'Voting {t} {'hard' if hard else 'soft'} -> {accuracy_score(y_test, y_predict)}'
+    fit_ensemble_hard = FitEnsembleClassifier(X=X_train, y=y_train, cross_save='cross_save')
+    fit_ensemble_hard.fit_voting(estimators=estimators, voting_hs='hard', threshold=0.0, des=des)
+
+    fit_ensemble_soft = FitEnsembleClassifier(X=X_train, y=y_train, cross_save='cross_save')
+    fit_ensemble_soft.fit_voting(estimators=estimators, voting_hs='soft', threshold=0.0, des=des)
 
 
-def fit_process_bagging_pasting(t='mean', bagging=True):
+def fit_process_bagging_pasting(t='mean', predict_feature=False):
     """
     | Caratteristica     | Descrizione                                                                                                       |
     | ------------------ | ----------------------------------------------------------------------------------------------------------------- |
@@ -164,18 +160,20 @@ def fit_process_bagging_pasting(t='mean', bagging=True):
     | Pasting | `False`   | Estrae **senza ripetizione** i campioni (cioè ogni riga può apparire al massimo una volta in ogni clone). |
     """
     X, y = split_dataset(t)
-    model = BaggingClassifier(
-        estimator=RandomForestClassifier(max_leaf_nodes=16, n_estimators=500, n_jobs=-1, verbose=0, random_state=42),
-        n_estimators=500, n_jobs=-1, verbose=1, max_samples=100, bootstrap=bagging, random_state=42)
+    X_train, X_test, y_train, y_test = train_test_split(X, y, random_state=42, test_size=0.2, stratify=y)
 
-    X_train, X_test, y_train, y_test = train_test_split(X, y, random_state=42, test_size=0.2)
-    model.fit(X_train, y_train)
-    y_predict = model.predict(X_test)
+    estimator = DecisionTreeClassifier(max_leaf_nodes=16, random_state=42)
 
-    return f'BaggingClassifier(RandomForest) {t} {'bagging' if bagging else 'pasting'} -> {accuracy_score(y_test, y_predict)}'
+    fit_bagging = FitEnsembleClassifier(X_train, y_train, cross_save='cross_save')
+    fit_bagging.fit_bagging_pasting(estimator=estimator, bagging=True,
+                                    des=f't={t}/predict_feature={predict_feature}/bagging=True')
+
+    fit_bagging = FitEnsembleClassifier(X_train, y_train, cross_save='cross_save')
+    fit_bagging.fit_bagging_pasting(estimator=estimator, bagging=False,
+                                    des=f't={t}/predict_feature={predict_feature}/bagging=False')
 
 
-def fit_random_(oob=True, t='mean', predict_feature=False):
+def fit_random_(t='mean', predict_feature=False):
     """
     L'iper parametro oob, indica che il RandomForest può essere addestrato direttamente con X e y senza dover splittare
     in test. Di fatti per poter poi vedere il risultato finale, non c'è bisogno di fare il predict ma di richiamare una
@@ -190,20 +188,16 @@ def fit_random_(oob=True, t='mean', predict_feature=False):
 
     """
     X, y = split_dataset(t, predict_feature)
-    if oob:
-        model = RandomForestClassifier(max_leaf_nodes=16, n_estimators=500, random_state=42, n_jobs=-1, oob_score=True)
-        model.fit(X, y)
-        return f'RandomForest {t} oob {model.oob_score_:.3f}'
-    else:
-        model = RandomForestClassifier(n_estimators=500, max_leaf_nodes=16, random_state=42, n_jobs=-1)
-        X_train, X_test, y_train, y_test = train_test_split(X, y, random_state=42, test_size=0.2)
-        model.fit(X_train, y_train)
-        y_predict = model.predict(X_test)
-        accuracy = accuracy_score(y_test, y_predict)
-        return f'RandomForest {t} accuracy : {accuracy}'
+
+    random_oob = FitEnsembleClassifier(X, y, cross_save='cross_save')
+    random_oob.fit_random_(oob=True, des=f't={t}/predict_feature={predict_feature}/oob=True')
+
+    X_train, X_test, y_train, y_test = train_test_split(X, y, random_state=42, test_size=0.2)
+    random = FitEnsembleClassifier(X_train, y_train, cross_save='cross_save')
+    random.fit_random_(oob=False, des=f't={t}/predict_feature={predict_feature}/oob=False')
 
 
-def fit_adaboost(t='mean', alg_def=True):
+def fit_adaboost(t='mean', predict_feature=False):
     """
      Sulla base di un Algoritmo, proverà ad addestrare e controllare le stime.
      Se alcune stime saranno errate, si riaddestrerà sulla base di quelle stime cercando di migliorare sui suoi errori.
@@ -212,21 +206,16 @@ def fit_adaboost(t='mean', alg_def=True):
      Quindi in base a estimator e al n_estimator, lui man mano si riaddestrerà sulla base degli errori precedenti
     """
     X, y = split_dataset(t)
-    estimator = RandomForestClassifier(max_depth=1, max_leaf_nodes=16, n_estimators=100, random_state=42, n_jobs=-1)
-    algorithm = 'SAMME.R' if alg_def else 'SAMME'  # SAMME.R (default, usa probabilità), SAMME (senza probabilità)
-    if algorithm == 'SAMME':
-        ada_model = AdaBoostClassifier(estimator=estimator, n_estimators=500, algorithm=algorithm, learning_rate=0.5,
-                                       random_state=42)
-    else:
-        ada_model = AdaBoostClassifier(estimator=estimator, n_estimators=500, learning_rate=0.5, random_state=42)
+    estimator = DecisionTreeClassifier(max_depth=1, max_leaf_nodes=16, random_state=42)
 
-    X_train, X_test, y_train, y_test = train_test_split(X, y, random_state=42, test_size=0.2)
-    ada_model.fit(X_train, y_train)
-    y_predict = ada_model.predict(X_test)
-    return f'AdaBoostClassifier {t} {algorithm}: {accuracy_score(y_test, y_predict)}'
+    ada_samme = FitEnsembleClassifier(X=X, y=y, cross_save='cross_save')
+    ada_samme.fit_adaboost(estimator=estimator, alg_def=False, des=f't={t}/predict_feature={predict_feature}/samme')
+
+    ada_samme_r = FitEnsembleClassifier(X=X, y=y, cross_save='cross_save')
+    ada_samme_r.fit_adaboost(estimator=estimator, des=f't={t}/predict_feature={predict_feature}/samme_r')
 
 
-def fit_gradient_boosting(t='mean'):
+def fit_gradient_boosting(t='mean', predict_feature=False):
     """
     Gradient Boosting è simile ad ADABOOST ma invece che correggere le stime del precedente, lui le riadatta.
     Anche qui troviamo n_estimators che indica quante volte deve ripetere l'operazione per il riadattamento che di
@@ -235,15 +224,11 @@ def fit_gradient_boosting(t='mean'):
     il precedente.
     """
     X, y = split_dataset(t)
-    X_train, X_test, y_train, y_test = train_test_split(X, y, random_state=42, test_size=0.2)
-
-    model = GradientBoostingClassifier(max_depth=2, n_estimators=200, learning_rate=0.5, random_state=42)
-    model.fit(X_train, y_train)
-    y_predict = model.predict(X_test)
-    return f'Gradient Boosting {t} {accuracy_score(y_test, y_predict)}'
+    gb_fit = FitEnsembleClassifier(X=X, y=y, cross_save='cross_save')
+    gb_fit.fit_gradient_boosting(des=f't={t}/predict_feature={predict_feature}')
 
 
-def fit_xgb(t='mean'):
+def fit_xgb(t='mean', predict_feature=False):
     """
     XGBClassifier è un'evoluzione del GradientBoosting
 
@@ -270,21 +255,11 @@ def fit_xgb(t='mean'):
 
     """
     X, y = split_dataset(t)
-    X_train, X_test, y_train, y_test = train_test_split(X, y, random_state=42, test_size=0.2)
-    model = xgb.XGBClassifier(
-        n_estimators=500,
-        learning_rate=0.05,
-        max_depth=3,
-        subsample=0.8,
-        # colsample_bytree=0.8,
-        eval_metric='logloss'
-    )
-    model.fit(X_train, y_train)
-    y_predict = model.predict(X_test)
-    return f'XGB {t} {accuracy_score(y_test, y_predict)}'
+    gb_fit = FitEnsembleClassifier(X=X, y=y, cross_save='cross_save')
+    gb_fit.fit_xgb(des=f't={t}/predict_feature={predict_feature}')
 
 
-def fit_stacking_classifier(t='mean', passthrough=True, stack_method='predict_proba'):
+def fit_stacking_classifier(t='mean', passthrough=True, stack_method='predict_proba', predict_feature=False):
     """
     Lo stacking classifier combina più algoritmi(level-0) dove le loro previsioni vengono poi passate al modello finale
     (meta-model level-1) che restituisce la predizione finale.
@@ -330,7 +305,6 @@ def fit_stacking_classifier(t='mean', passthrough=True, stack_method='predict_pr
     È facile overfittare se hai pochi dati → regolarizza bene il final_estimator.
     """
     X, y = split_dataset(t)
-    X_train, X_test, y_train, y_test = train_test_split(X, y, random_state=42, test_size=0.2)
 
     estimators = [
         ('dt', DecisionTreeClassifier(max_depth=5)),
@@ -342,184 +316,31 @@ def fit_stacking_classifier(t='mean', passthrough=True, stack_method='predict_pr
 
     final_estimator = LogisticRegression()
 
-    stacking = StackingClassifier(
-        estimators=estimators,
-        final_estimator=final_estimator,
-        cv=5,  # K-fold è il cross validation
-        # verbose=1,
-        n_jobs=-1,
-        passthrough=passthrough,
-        stack_method=stack_method
-    )
-
-    stacking.fit(X_train, y_train)
-    y_predict = stacking.predict(X_test)
-    return f'Stacking Classifier {t} passthrough={passthrough} {stack_method}: {accuracy_score(y_test, y_predict)}'
+    staking_fit = FitEnsembleClassifier(X=X, y=y, cross_save='cross_save')
+    staking_fit.fit_stacking_classifier(stack_method=stack_method, estimators=estimators,
+                                        final_estimator=final_estimator, passthrough=passthrough,
+                                        des=f't={t}/predict_feature={predict_feature}/stack_method={stack_method}, passthrough={passthrough}')
 
 
-def cross(estimator, X, y, **kwargs):
-    """
-    Unisce metodi di cross per valutare gli algoritmi
-    | Metodo                | Tipo di output              | Supportato da                        | Uso tipico                 |
-    | --------------------- | --------------------------- | ------------------------------------ | -------------------------- |
-    | `predict_proba()`     | Probabilità per ogni classe | RandomForest, GradientBoosting, ecc. | ROC, Precision/Recall      |
-    | `decision_function()` | Score continuo grezzo       | SVC, LogisticRegression              | ROC, SVM margine           |
-    | `predict()`           | Classe predetta             | Tutti                                | Accuracy, Confusion Matrix |
-
-    """
-    cv = kwargs.get('cv') or StratifiedKFold(n_splits=5, shuffle=True,
-                                             random_state=42)  # Metodo di split per evitare il test_train_split
-    threshold = kwargs.get('threshold') or 0.0
-
-    def predict_score():
-        """
-        Come cross_val_score/cross_validate ma restituisce il predict (in questo caso con metodo 'decision_function')
-        Il method però deve essere idoneo con estimator, esempio: RandomForest non ha il 'decision_function' e quindi
-        va inserito il 'predict_proba' se si vuole la probabilità ma in questo caso NON utilizzare il method.
-        Entrambi, se inseriamo il 'method', restituisce le probabilità che vengono poi gestite dalla soglia
-        """
-        try:
-            return cross_val_predict(estimator, X, y, cv=cv, method='decision_function') > threshold
-        except Exception as e:
-            # print(str(e))
-            return cross_val_predict(estimator, X, y, cv=cv) > threshold
-
-    scoring = [
-        'accuracy',
-        'precision',
-        'recall',
-        'f1',
-        'roc_auc',
-        'average_precision',
-        'neg_log_loss',
-        'neg_brier_score',
-        'f1_macro',
-        'f1_weighted',
-        'balanced_accuracy'
-    ]
-
-    cross_score = cross_val_score(estimator, X, y, cv=cv)  # Restituisce array accuracy_score in base agli split
-    cross_val = cross_validate(estimator, X, y, cv=cv,  # return_estimator=True,
-                               scoring=scoring)  # Come val_score con return di estimatori
-    predict_score = predict_score().astype(int)
-    accuracy = accuracy_score(y, predict_score)
-    precision = precision_score(y, predict_score)  # Falsi positivi
-    recall = recall_score(y, predict_score)  # Veri positivi
-    f1 = f1_score(y, predict_score)  # Unisce il recall e la precisione
-    cm = confusion_matrix(y, predict_score)  # Un array che va vedere i falsi/veri positivi/negativi per le classi
-    precisions, recalls, thresholds = precision_recall_curve(y, predict_score)  # Return stesse descritte prima
-
-    report = classification_report(y, predict_score, output_dict=True)
-    results = {
-        'estimator': estimator,
-        'data': datetime.date.today(),
-        'description': kwargs.get('des'),
-        # 'fit_process': 'GridSearch',
-        'cross_val_score': cross_score,
-        'cross_val': cross_val,
-        # 'cross_validate_estimator': cross_val['estimator'],
-        # 'cross_validate_test_score': cross_val['test_score'],  # restituisce gli stessi valori di cross_val_score
-        'cross_val_predict': predict_score,
-        'accuracy': accuracy,
-        'f1': f1,
-        'precision': precision,
-        'precisions': precisions,
-        'recall': recall,
-        'recalls': recalls,
-        'threshold': threshold,
-        'thresholds': thresholds,
-        'confusion matrix': cm}
-    results.update(report)
-    save_report(results)
-    # TODO
-    # sns.heatmap(cm, annot=True)
-    # plt.savefig('confusion_matrix.png')
-    # RocCurveDisplay.from_estimator(cross_val['estimator'][0], X, y)
-    # plt.show()
-
-
-def search_best_model(estimator, t='base', predict_feature=False, des=''):
+def search_best_model(estimator, t='base', predict_feature=False):
     X, y = split_dataset(t)
     X_train, X_test, y_train, y_test = train_test_split(X, y, random_state=42, test_size=0.2)
-    gs = create_gs(estimator)
-    gs.fit(X_train, y_train)
-    cross(estimator=gs.best_estimator_, X=X, y=y, des=f't={t}/predict_feature={predict_feature}/{des}')
+    search = FitSearchBestModel(X=X_train, y=y_train, name=estimator, best_cross_save='best_cross_save')
+
+    des = f't={t}/predict_feature={predict_feature}'
+    # search.fit_grid_search(des=des)
+    # search.fit_random_search(des=des)
+    search.fit_halving_search(des=des)
+    # search.fit_halving_random_search(des=des)
 
 
-def save_report(results_):
-    """
-    Salva il report dei risultati
-    """
-    results = {}
-    for el in results_.items():
-        if el[0] != 'cross_val_predict':
-            results.update({el[0]: str(el[1])})
-    new_row = pd.DataFrame([results])
-    file_path = 'report.xlsx'
+search_best_model(estimator='gb', t='base', predict_feature=False)
 
-    if os.path.exists(file_path):
-        # Legge il file esistente e aggiunge la nuova riga
-        existing_df = pd.read_excel(file_path)
-        updated_df = pd.concat([existing_df, new_row], ignore_index=True)
-    else:
-        # Crea il DataFrame con la nuova riga
-        updated_df = new_row
+# fit_stacking_classifier()
+# fit_xgb()
+# fit_gradient_boosting()
+# fit_adaboost()
+# fit_random_()
+fit_process_bagging_pasting()
 
-    # Salva il file aggiornato
-    updated_df.to_excel(file_path, index=False)
-
-
-search_best_model(estimator='svc', t='base', predict_feature=False)
-
-# model = RandomForestClassifier(n_estimators=500, max_leaf_nodes=16, random_state=42, n_jobs=-1)
-# # model = SGDClassifier(max_iter=1000, tol=1e-3, random_state=42)
-#
-# [print(f'{el[0]}\n : ', el[1]) for el in cross(estimator=model).items()]
-# [print(f'{el[0]}\n : ', el[1]) for el in cross(estimator=model, t='base').items()]
-# [print(f'{el[0]}\n : ', el[1]) for el in cross(estimator=model, t='std').items()]
-#
-# [print(f'{el[0]}\n : ', el[1]) for el in cross(estimator=model, predict_feature=True).items()]
-# [print(f'{el[0]}\n : ', el[1]) for el in cross(estimator=model, t='base', predict_feature=True).items()]
-# [print(f'{el[0]}\n : ', el[1]) for el in cross(estimator=model, t='std', predict_feature=True).items()]
-
-# print(fit_stacking_classifier(t='base'))
-# print(fit_stacking_classifier(t='base', passthrough=False))
-# print(fit_stacking_classifier(t='base', passthrough=False, stack_method='auto'))
-# print(fit_stacking_classifier(t='base', stack_method='auto'))
-#
-# print(fit_stacking_classifier(t='std'))
-# print(fit_stacking_classifier(t='std', passthrough=False))
-# print(fit_stacking_classifier(t='std', passthrough=False, stack_method='auto'))
-# print(fit_stacking_classifier(t='std', stack_method='auto'))
-
-# print(fit_xgb())
-# print(fit_xgb(t='std'))
-
-# print(fit_gradient_boosting())
-# print(fit_gradient_boosting(t='std'))
-
-# print(fit_adaboost())
-# print(fit_adaboost(t='std'))
-#
-# print(fit_adaboost(alg_def=False))
-# print(fit_adaboost(t='std', alg_def=False))
-
-# print(fit_random_(predict_feature=False, t='base'))
-# print(fit_random_(predict_feature=False, t='base'))
-# print(fit_random_(t='std'))
-#
-# print(fit_random_(t='base'))
-# print(fit_random_(oob=False))
-# print(fit_random_(t='std', oob=False))
-
-# print(fit_process_bagging_pasting())
-# print(fit_process_bagging_pasting(t='std'))
-#
-# print(fit_process_bagging_pasting(bagging=False))
-# print(fit_process_bagging_pasting(t='std', bagging=False))
-#
-# print(fit_process_voting())
-# print(fit_process_voting(t='std'))
-#
-# print(fit_process_voting(hard=False))
-# print(fit_process_voting(t='std', hard=False))
+# fit_process_voting()

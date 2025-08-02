@@ -5,7 +5,6 @@ import time
 import pandas as pd
 
 from service_ia.utility.request_api import base_api_statistics
-from service_ia.utility.utils import convert_csv_to_exel
 
 LEAGUES = [135, 136, 140, 78, 39, 94, 203, 2, 3, 848]
 SEASONS = [2025]
@@ -63,13 +62,15 @@ def check_sleep():
 
 def save():
     if len(JSON_DICT) > 0:
-        file_path = '../dataset/statistics/dataset_statistics_history.csv'
-        data_all = pd.concat([pd.read_csv(file_path), pd.DataFrame(JSON_DICT)],
-                             ignore_index=True) if os.path.exists(file_path) else pd.DataFrame(JSON_DICT)
-        data_all.to_csv(file_path, index=False)
+        data_all = pd.concat([pd.read_csv(name_history), pd.DataFrame(JSON_DICT)],
+                             ignore_index=True) if os.path.exists(name_history) else pd.DataFrame(JSON_DICT)
+        data_all.to_csv(name_history, index=False)
 
 
 def generate_statistics():
+    """
+    Genera e accumula tutte le statistiche delle leghe e squadre nel corso degli anni
+    """
     global JSON_DICT
     try:
         # CONSEGUENZA DELL'AGGIORNAMENTO 15/07 FATTO SOTTO : LEGGERò IL DF PER CAPIRE SE ESISTONO LE PARTITE
