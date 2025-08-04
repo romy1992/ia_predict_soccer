@@ -34,6 +34,7 @@ LAVORARE QUINDI IN MANIERA INDIPEDENTE
 # =============================================== STEP 1 ===============================================
 import ast
 import json
+import logging
 from datetime import datetime, timezone, timedelta
 
 import pandas as pd
@@ -41,6 +42,7 @@ from dateutil.relativedelta import relativedelta
 
 from service_ia.utility.request_api import base_api_odds, base_api_statistics
 
+logging.basicConfig(level=logging.DEBUG)
 base_dataset = '../dataset/odds'
 name_id_odds_h2h_totals = f'{base_dataset}/id_odds_h2h_totals.csv'  # Dataset ancora "grezzo" dove chiama solo API Odds per recuperare principalmente gli id e poi i primi odds h2h e totals
 name_odds_bookmakers = f'{base_dataset}/odds_h2h_totals_bookmakers.csv'  # Dataset conseguenza del precedente dove prende i bookmakers(colonna) che è solo json e crea un dataset solo con quote
@@ -52,8 +54,9 @@ with open('../json/bookmakers.json', 'r', encoding='utf-8') as file:
 with open('../json/bet.json', 'r', encoding='utf-8') as file:
     BET_BOOKMAKERS = json.load(file)
 
+regions = 'us,eu'
 markets_base = 'h2h,totals'
-markets_events = 'alternate_totals,btts,team_totals'  # TODO ci saranno da inserire gli altri non appena scatterà il nuovo abbonamento :  https://the-odds-api.com/sports-odds-data/betting-markets.html#featured-betting-markets -> qui ci sono tutte:leggere anche "Soccer Player Props API" e "Other soccer betting markets" per cartellini e angoli
+markets_events = 'alternate_totals,btts,team_totals,double_chance,alternate_team_totals,alternate_totals_corners,alternate_totals_cards'  # TODO ci saranno da inserire gli altri non appena scatterà il nuovo abbonamento :  https://the-odds-api.com/sports-odds-data/betting-markets.html#featured-betting-markets -> qui ci sono tutte:leggere anche "Soccer Player Props API" e "Other soccer betting markets" per cartellini e angoli
 # Data iniziale
 start_date = datetime(2020, 6, 6, 10, 5, tzinfo=timezone.utc)
 
@@ -102,26 +105,50 @@ dat_match = [
     #     'key_sports': 'soccer_spain_la_liga',
     #     'date_match': dates
     # },
+    # {
+    #     'key_sports': 'soccer_france_ligue_one',
+    #     'date_match': dates
+    # },
+    # {
+    #     'key_sports': 'soccer_uefa_champions_league',
+    #     'date_match': dates
+    # },
+    # {
+    #     'key_sports': 'soccer_uefa_europa_league',
+    #     'date_match': dates
+    # },
+    # {
+    #     'key_sports': 'soccer_uefa_europa_conference_league',
+    #     'date_match': dates
+    # },
+    # {
+    #     'key_sports': 'soccer_turkey_super_league',
+    #     'date_match': dates
+    # },
     {
-        'key_sports': 'soccer_france_ligue_one',
+        'key_sports': 'soccer_netherlands_eredivisie',  # attuale
         'date_match': dates
     },
     {
-        'key_sports': 'soccer_uefa_champions_league',
+        'key_sports': 'soccer_dutch_eredivisie',  # vecchia
         'date_match': dates
     },
-    {
-        'key_sports': 'soccer_uefa_europa_league',
-        'date_match': dates
-    },
-    {
-        'key_sports': 'soccer_uefa_europa_conference_league',
-        'date_match': dates
-    },
-    {
-        'key_sports': 'soccer_turkey_super_league',
-        'date_match': dates
-    }
+    # {
+    #     'key_sports': 'soccer_belgium_first_div',  # attuale e storica
+    #     'date_match': dates
+    # },
+    # {
+    #     'key_sports': 'soccer_portugal_primeira_liga',  # attuale e storica
+    #     'date_match': dates
+    # },
+    # {
+    #     'key_sports': 'soccer_usa_mls',  # attuale
+    #     'date_match': dates
+    # },
+    # {
+    #     'key_sports': 'soccer_mls',  # vecchia
+    #     'date_match': dates
+    # }
 ]
 
 
@@ -132,9 +159,35 @@ def get_outcomes_event(value, bookmaker):
 
 
 def search_price_name(outcomes, value):
+    """
+    Cerca e torna il prezzo dell'evento dove si ha la certezza che c'è solo 1 elemento con quel value specificato
+    :param outcomes: prezzi
+    :param value: nome squadra o evento
+    :return: prezzo evento
+    """
     if len(outcomes) > 0:
         price = [outcome['price'] for outcome in outcomes if outcome['name'] == value]
         return price[0] if len(price) > 0 else None
+
+
+def search_price_name_point(outcomes, value, point, des=None):
+    """
+    Cerca e torna i prezzi dell'evento dove ci sono più value con lo stesso nome e quindi bisogna filtrare con il point
+    :param des: se valorizzato, significa che c'è un ulteriore parametro da filtrare es nome squadra
+    :param outcomes: prezzi
+    :param value: nome squadra o evento
+    :param point: ese: 1.5 -> Over o Under (value)
+    :return: prezzi evento
+    """
+    if len(outcomes) > 0:
+        if des is None:
+            price = [outcome['price'] for outcome in outcomes if outcome['name'] == value and outcome['point'] == point]
+            return price[0] if len(price) > 0 else None
+        else:
+            price = [outcome['price'] for outcome in outcomes if
+                     outcome['name'] == value and outcome['point'] == point and (
+                             outcome.get('description') and outcome.get('description') == des)]
+            return price[0] if len(price) > 0 else None
 
 
 def create_odds_dataset():
@@ -145,16 +198,17 @@ def create_odds_dataset():
     for m in dat_match:
         for d in m['date_match']:
             odds_hist = base_api_odds(type_api='hist', path=f'{m['key_sports']}/odds',
-                                      params={'regions': 'eu', 'markets': markets_base, 'date': d})
-            if len(odds_hist['data']) > 0:
+                                      params={'regions': 'eu', 'markets': markets_base,
+                                              'date': d})  # TODO : fino alla data 03/08/2025 , ho utilizzato solo 'eu' come regions.Sarebbe meglio provare anche us per tutti?
+            if len(odds_hist) > 0 and len(odds_hist['data']) > 0:
                 df = pd.DataFrame(odds_hist['data'])
                 df.to_csv(name_id_odds_h2h_totals, mode='a',
                           header=not pd.io.common.file_exists(name_id_odds_h2h_totals),
                           index=False)
 
-    dataset = pd.read_csv(name_id_odds_h2h_totals)
-    dataset.drop_duplicates(subset='id', keep='first', inplace=True)
-    dataset.to_csv(name_id_odds_h2h_totals)
+    # dataset = pd.read_csv(name_id_odds_h2h_totals)
+    # dataset.drop_duplicates(subset='id', keep='first', inplace=True)
+    # dataset.to_csv(name_id_odds_h2h_totals, index=False)
 
 
 def remap_json_bookmakers():
@@ -218,13 +272,11 @@ def aggregate_odds_bookmakers_base():
     """
     odds_h2h_totals = pd.read_csv(name_id_odds_h2h_totals).drop(columns=['bookmakers'], axis=1)
     bookmakers_dataset = pd.read_csv(name_odds_bookmakers)
-    # TODO DA TESTARE QUANDO ARRIVERANNO I NUOVI DATI
     merged_dataset = pd.merge(odds_h2h_totals, bookmakers_dataset, on='id', how='inner')
     odds_dataset = pd.read_csv(name_odds_base)
-    merged_dataset = [m_d for m_d in merged_dataset.itertuples(index=False) if
-                      m_d.id not in odds_dataset['id'].tolist()]
-    odds_dataset = pd.concat([odds_dataset, pd.DataFrame(merged_dataset)], axis=0)
-    pd.DataFrame(odds_dataset).to_csv(f'{base_dataset}/odds_dataset_2.csv', index=False)
+    merged_dataset = merged_dataset[~merged_dataset['id'].isin(odds_dataset['id'])]
+    odds_dataset = pd.concat([odds_dataset, merged_dataset], axis=0)
+    pd.DataFrame(odds_dataset).to_csv(f'{base_dataset}/odds_dataset_copy.csv', index=False)
 
     # merged_dataset.to_csv(name_odds_base, index=False) TODO : commentato perchè altrimenti sovrascrive quelli già matchati con le statistiche
     # TODO : creare quindi un secondo dataset ,uguali per le prime partite ma diverse per le ultime dove poi aggiungerò a quello originale le partite senza match :
@@ -244,7 +296,7 @@ def remove_duplicate_match_by_names():
     """
     # TODO STESSO MOTIVO DEL METODO aggregate_odds_bookmakers_base
     # dataset = pd.read_csv(name_odds_base)
-    dataset = pd.read_csv(f'{base_dataset}/odds_dataset_2.csv')
+    dataset = pd.read_csv(f'{base_dataset}/odds_dataset_copy.csv')
 
     dict_dat = []
     for row in dataset.itertuples(index=False):
@@ -288,7 +340,7 @@ def remove_duplicate_match_by_names():
 
     # TODO STESSO MOTIVO DEL METODO aggregate_odds_bookmakers_base
     # final_dataset.to_csv(name_odds_base, index=False)
-    final_dataset.to_csv(f'{base_dataset}/odds_dataset_2.csv', index=False)
+    final_dataset.to_csv(f'{base_dataset}/odds_dataset_copy.csv', index=False)
 
 
 def added_odds():
@@ -402,6 +454,9 @@ def clean_dataset_odds():
 # remap_json_bookmakers()
 # aggregate_odds_bookmakers_base()
 # remove_duplicate_match_by_names()
+
+
+# convert_csv_to_exel(f'{base_dataset}/odds_dataset_copy.csv')
 # added_odds()
 # clean_dataset_odds()
 
@@ -409,25 +464,268 @@ def clean_dataset_odds():
 # =============================================== STEP 1 ===============================================
 
 # =============================================== STEP 2 ===============================================
+
+def get_alternate_totals(bookmaker, title):
+    """
+    Alternate totals: Under e Over (inteso come match) di tutte le tipologie
+    :param bookmaker: il bookmaker corrente
+    :param title: titolo bookmaker
+    :return: dict alternat totals
+    """
+    out_alternate_totals = get_outcomes_event('alternate_totals', bookmaker)
+
+    # 1.5
+    over_1_5 = search_price_name_point(out_alternate_totals, 'Over', 1.5)
+    under_1_5 = search_price_name_point(out_alternate_totals, 'Under', 1.5)
+    # 2.5
+    over_2_5 = search_price_name_point(out_alternate_totals, 'Over', 2.5)
+    under_2_5 = search_price_name_point(out_alternate_totals, 'Under', 2.5)
+    # 3.5
+    over_3_5 = search_price_name_point(out_alternate_totals, 'Over', 3.5)
+    under_3_5 = search_price_name_point(out_alternate_totals, 'Under', 3.5)
+    # 4.5
+    over_4_5 = search_price_name_point(out_alternate_totals, 'Over', 4.5)
+    under_4_5 = search_price_name_point(out_alternate_totals, 'Under', 4.5)
+
+    list_under_over = {
+        f'under_1_5_{title}': under_1_5,
+        f'over_1_5_{title}': over_1_5,
+        f'under_2_5_{title}': under_2_5,
+        f'over_2_5_{title}': over_2_5,
+        f'under_3_5_{title}': under_3_5,
+        f'over_3_5_{title}': over_3_5,
+        f'under_4_5_{title}': under_4_5,
+        f'over_4_5_{title}': over_4_5
+    }
+    """
+    Questo controllo perché, a quanto pare, nonostante io abbia già preso i 2.5 nella precedente API iniziale, per gli stessi
+    bookmakers, le quote sono diverse.
+    Quindi SE under e over 2.5 sono valorizzati, sovrascrivono gli altri già esistenti, altrimenti SE sono a None,
+    lascio i precedenti.
+    """
+    if under_2_5 and over_2_5:
+        return list_under_over
+    else:
+        list_under_over.pop(f'under_2_5_{title}')
+        list_under_over.pop(f'over_2_5_{title}')
+
+    return list_under_over
+
+
+def get_teams_total(bookmaker, title, name_home, name_away):
+    """
+    teams_totals e alternate_team_totals : under e over per singola squadra
+    :param bookmaker: il bookmaker corrente
+    :param title: titolo bookmaker
+    :param name_home: nome squadra casa
+    :param name_away: nome squadra ospite
+    :return: dict di under over
+    """
+    out_teams_totals = get_outcomes_event('teams_totals', bookmaker)
+    out_alternate_team_totals = get_outcomes_event('alternate_team_totals', bookmaker)
+
+    dict_teams_totals = out_teams_totals + out_alternate_team_totals
+
+    under_1_5_home = search_price_name_point(dict_teams_totals, 'Under', 1.5, des=name_home)
+    over_1_5_home = search_price_name_point(dict_teams_totals, 'Over', 1.5, des=name_home)
+    under_1_5_away = search_price_name_point(dict_teams_totals, 'Under', 1.5, des=name_away)
+    over_1_5_away = search_price_name_point(dict_teams_totals, 'Over', 1.5, des=name_away)
+
+    under_2_5_home = search_price_name_point(dict_teams_totals, 'Under', 2.5, des=name_home)
+    over_2_5_home = search_price_name_point(dict_teams_totals, 'Over', 2.5, des=name_home)
+    under_2_5_away = search_price_name_point(dict_teams_totals, 'Under', 2.5, des=name_away)
+    over_2_5_away = search_price_name_point(dict_teams_totals, 'Over', 2.5, des=name_away)
+
+    under_3_5_home = search_price_name_point(dict_teams_totals, 'Under', 3.5, des=name_home)
+    over_3_5_home = search_price_name_point(dict_teams_totals, 'Over', 3.5, des=name_home)
+    under_3_5_away = search_price_name_point(dict_teams_totals, 'Under', 3.5, des=name_away)
+    over_3_5_away = search_price_name_point(dict_teams_totals, 'Over', 3.5, des=name_away)
+
+    under_4_5_home = search_price_name_point(dict_teams_totals, 'Under', 4.5, des=name_home)
+    over_4_5_home = search_price_name_point(dict_teams_totals, 'Over', 4.5, des=name_home)
+    under_4_5_away = search_price_name_point(dict_teams_totals, 'Under', 4.5, des=name_away)
+    over_4_5_away = search_price_name_point(dict_teams_totals, 'Over', 4.5, des=name_away)
+
+    return {
+        f'under_1_5_home_{title}': under_1_5_home,
+        f'over_1_5_home_{title}': over_1_5_home,
+        f'under_1_5_away_{title}': under_1_5_away,
+        f'over_1_5_away_{title}': over_1_5_away,
+
+        f'under_2_5_home_{title}': under_2_5_home,
+        f'over_2_5_home_{title}': over_2_5_home,
+        f'under_2_5_away_{title}': under_2_5_away,
+        f'over_2_5_away_{title}': over_2_5_away,
+
+        f'under_3_5_home_{title}': under_3_5_home,
+        f'over_3_5_home_{title}': over_3_5_home,
+        f'under_3_5_away_{title}': under_3_5_away,
+        f'over_3_5_away_{title}': over_3_5_away,
+
+        f'under_4_5_home_{title}': under_4_5_home,
+        f'over_4_5_home_{title}': over_4_5_home,
+        f'under_4_5_away_{title}': under_4_5_away,
+        f'over_4_5_away_{title}': over_4_5_away
+    }
+
+
+def get_btts(bookmaker, title):
+    """
+    btts : Goal e NoGoal
+    :param bookmaker: il bookmaker corrente
+    :param title: titolo bookmaker
+    :return: dict bbts
+    """
+    out_alternate_totals = get_outcomes_event('btts', bookmaker)
+    goal = search_price_name(out_alternate_totals, 'Yes')
+    no_goal = search_price_name(out_alternate_totals, 'No')
+    return {
+        f'goal_{title}': goal,
+        f'no_goal_{title}': no_goal
+    }
+
+
+def get_corners(bookmaker, title):
+    """
+    Cerca e ritorna direttamente la lista quota dei corners non differenziando il tipo di under/over
+    :param bookmaker: il bookmaker corrente
+    :param title: titolo bookmaker
+    :return: dict totale dei corners
+    """
+    corners = get_outcomes_event('alternate_totals_corners', bookmaker)
+    return {f'corner_{corner["name"]}_{corner['point']}_{title}': corner['price'] for corner in corners}
+
+
+def get_cards(bookmaker, title):
+    """
+    Cerca e ritorna direttamente la lista quota dei cartellini non differenziando il tipo di under/over
+    :param bookmaker: il bookmaker corrente
+    :param title: titolo bookmaker
+    :return: dict totale dei cartellini
+    """
+    cards = get_outcomes_event('alternate_totals_cards', bookmaker)
+    return {f'corner_{card["name"]}_{card['point']}_{title}': card['price'] for card in cards}
+
+
+def get_double_chance(bookmaker, title, name_home, name_away):
+    """
+    Recupera le doppie chance
+    :param bookmaker: il bookmaker corrente
+    :param title: titolo bookmaker
+    :param name_home: nome squadra casa
+    :param name_away: nome squadra ospite
+    :return: dict di doppia chance
+    """
+    dc_dict = get_outcomes_event('double_chance', bookmaker)
+    n_dc_dict = {}
+    for dc in dc_dict:
+        if name_home in dc['name'] and 'or Draw' in dc['name']:  # 1X
+            n_dc_dict.update({f'1X_{title}': dc['price']})
+        elif name_away in dc['name'] and 'or Draw' in dc['name']:  # X2
+            n_dc_dict.update({f'X2_{title}': dc['price']})
+        elif name_home in dc['name'] and name_away in dc['name']:  # 12
+            n_dc_dict.update({f'12_{title}': dc['price']})
+    return n_dc_dict
+
+
 def aggregate_events_into_dataset():
-    dataset_odds = pd.read_csv(name_odds_base)
+    """
+    https://the-odds-api.com/liveapi/guides/v4/#usage-quota-costs-8 :
+    Recupera eventi più avanzati e sono disponibili dopo il 03/05/2023 alle 05:30:00
+    :return: odds_dataset con più quote
+    https://the-odds-api.com/sports-odds-data/betting-markets-examples.html
 
-    for index, row in dataset_odds.iterrows():
-        home_team, away_team = row['home_team'], row['away_team']
+    Mercati comuni
+    | `market_key`            | Descrizione                                                                       |
+    | ----------------------- | --------------------------------------------------------------------------------- |
+    | `h2h`                   | Head‑to‑Head (Moneyline o 1X2) — esito finale (include il pareggio per il calcio) |
+    | `spreads`               | Handicap sul punteggio (es. +1.5, –1.5)                                           |
+    | `totals`                | Over/Under sul totale dei goal dell’incontro                                      |
+    | `outrights`             | Vincente del torneo/competizione (es. Mondiali, campionati, ecc.)                 |
+    | `alternate_totals`      | Tutte le varianti Over/Under per il totale goal                                   |
+    | `btts`                  | Both Teams To Score — scommessa sì/no che entrambe le squadre segnino             |
+    | `team_totals`           | Over/Under sul totale di goal segnati da una singola squadra                      |
+    | `alternate_team_totals` | Tutte le varianti di Over/Under per i goal di una squadra                         |
 
-        events_odds_hist = base_api_odds(type_api='hist', path=f'{row['sport_key']}/events/{row['id']}',
-                                         params={'regions': 'eu', 'markets': markets_events,
-                                                 'date': row['commence_time']})
-        for bookmaker in events_odds_hist['data']['bookmakers']:
-            title = bookmaker.get('title')
+    Mercati solo calcio
+    | `market_key`                 | Descrizione                                       |
+    | ---------------------------- | ------------------------------------------------- |
+    | `player_goal_scorer_anytime` | Giocatore che segna in qualsiasi momento (Yes/No) |
+    | `player_first_goal_scorer`   | Giocatore che segna il primo gol                  |
+    | `player_last_goal_scorer`    | Giocatore che segna l'ultimo gol                  |
+    | `player_to_receive_card`     | Giocatore che riceve un cartellino (Yes/No)       |
+    | `player_to_receive_red_card` | Giocatore che riceve un cartellino rosso (Yes/No) |
+    | `player_shots_on_target`     | Over/Under sui tiri in porta del giocatore        |
+    | `player_shots`               | Over/Under sui tiri totali del giocatore          |
+    | `player_assists`             | Over/Under sugli assist del giocatore             |
+    | `alternate_spreads_corners`  | Handicap corner (es. +2.5 o –3.5 corner)          |
+    | `alternate_totals_corners`   | Totale corner Over/Under                          |
+    | `alternate_spreads_cards`    | Handicap cartellini (bookings)                    |
+    | `alternate_totals_cards`     | Totale cartellini Over/Under                      |
+    | `double_chance`              | Doppia chance (1X, 12, X2)                        |
 
-            # TODO : aggiungere gli altri markets
-            out_alternate_totals = get_outcomes_event('alternate_totals', bookmaker)
-            dataset_odds.at[index, f'home_{title}'] = search_price_name(out_alternate_totals, home_team)
-            dataset_odds.at[index, f'away_{title}'] = search_price_name(out_alternate_totals, away_team)
+
+    | `market_key`                | Regioni disponibili | Note                                                  | Tu: Bookmakers che lo gestiscono      | Chi lo gestisce se i tuoi non lo fanno                                                                                                                 |
+    | --------------------------- | ------------------- | ----------------------------------------------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+    | `h2h`                       | us, eu, uk, au      | Esito partita (1X2/moneyline)                         | Pinnacle, William Hill, 1xBet, Unibet | —                                                                                                                                                      |
+    | `spreads`                   | us, eu, uk, au      | Handicap sul punteggio                                | Pinnacle, William Hill, 1xBet, Unibet | —                                                                                                                                                      |
+    | `totals`                    | us, eu, uk, au      | Over/Under sul totale goal                            | Pinnacle, William Hill, 1xBet, Unibet | —                                                                                                                                                      |
+    | `outrights`                 | us, eu, uk, au      | Vincente torneo (futures)                             | Pinnacle, William Hill, 1xBet, Unibet | —                                                                                                                                                      |
+    | `alternate_totals`          | us                  | Varianti Over/Under (es. O/U 2.25, 2.75)              | (non confermato) Pinnacle, 1xBet      | principalmente bookmaker USA come DraftKings, BetMGM, FanDuel ([the-odds-api.com][1], [the-odds-api.com][2], [the-odds-api.com][3], [SportsDataIO][4]) |
+    | `btts`                      | us                  | “Entrambe le squadre segnano”                         | (possibile) 1xBet                     | bookmaker USA selezionati (es. DraftKings…) ([the-odds-api.com][1])                                                                                    |
+    | `team_totals`               | us                  | Over/Under su goal squadra                            | (possibile) Pinnacle, 1xBet           | Solo USA (DraftKings, BetMGM…) ([the-odds-api.com][1])                                                                                                 |
+    | `alternate_team_totals`     | us                  | Varianti team O/U (es. +2.5 goal squadra)             | ❌ Nessuno                             | Solo USA (bookmaker USA selezionati) ([the-odds-api.com][1])                                                                                           |
+    | Player props (`player_*`)   | us                  | Props sui giocatori (goal, assist, tiri, cartellini…) | ❌ Nessuno                             | Solo bookmaker USA top campionati (EPL, Serie A…) ([the-odds-api.com][1], [the-odds-api.com][5])                                                       |
+    | `alternate_spreads_corners` | us                  | Handicap corner                                       | ❌ Nessuno                             | Solo USA bookmaker selezionati ([the-odds-api.com][1])                                                                                                 |
+    | `alternate_totals_corners`  | us                  | Totale corner Over/Under                              | ❌ Nessuno                             | Solo USA bookmaker selezionati ([the-odds-api.com][1])                                                                                                 |
+    | `alternate_spreads_cards`   | us                  | Handicap cartellini                                   | ❌ Nessuno                             | Solo USA bookmaker selezionati ([the-odds-api.com][1])                                                                                                 |
+    | `alternate_totals_cards`    | us                  | Totale cartellini Over/Under                          | ❌ Nessuno                             | Solo USA bookmaker selezionati ([the-odds-api.com][1])                                                                                                 |
+    | `double_chance`             | us, eu              | Doppie chance (1X, 12, X2)                            | Pinnacle, William Hill, 1xBet, Unibet | —                                                                                                                                                      |
+
+    [1]: https://the-odds-api.com/sports-odds-data/betting-markets.html?utm_source=chatgpt.com "List of API Betting Markets"
+    [2]: https://the-odds-api.com/?utm_source=chatgpt.com "The Odds API: Sports Odds API"
+    [3]: https://the-odds-api.com/sports-odds-data/football-odds.html?utm_source=chatgpt.com "Football Odds Data"
+    [4]: https://sportsdata.io/live-odds-api?utm_source=chatgpt.com "Odds API | Sports Betting API"
+    [5]: https://the-odds-api.com/sports-odds-data/betting-markets-examples.html?utm_source=chatgpt.com "Betting Markets - Examples"
+
+
+    """
+    dataset_odds = pd.read_csv(f'{base_dataset}/odds_dataset_copy.csv')
+    dict_ods = dataset_odds.to_dict(orient='records')
+
+    for index, row in enumerate(dict_ods):
+        data_row = row['commence_time']
+        if pd.to_datetime(data_row).tz_convert(None) > pd.Timestamp('2023-05-03'):
+            logging.info(f'Row {index}')
+            home_team, away_team = row['home_team'], row['away_team']  # Nomi delle squadre
+
+            # Recupera odds storiche
+            events_odds_hist = base_api_odds(type_api='hist', path=f'{row['sport_key']}/events/{row['id']}/odds',
+                                             params={'regions': regions, 'markets': markets_events, 'date': data_row})
+
+            if len(events_odds_hist) > 0 and events_odds_hist['data']:
+                final_row = {}
+                for bookmaker in events_odds_hist['data']['bookmakers']:
+                    title = bookmaker.get('title')
+                    # Alternate totals: Under e Over (inteso come match) di tutte le tipologie
+                    final_row.update(get_alternate_totals(bookmaker, title))
+                    # btts : Goal e NoGoal
+                    final_row.update(get_btts(bookmaker, title))
+                    # teams_totals e alternate_team_totals : under e over per singola squadra
+                    final_row.update(get_teams_total(bookmaker, title, home_team, away_team))
+                    # double_chance : Doppia Chance 1x x2 12
+                    final_row.update(get_cards(bookmaker, title))
+                    # alternate_totals_corners: Under e over dei corners
+                    final_row.update(get_corners(bookmaker, title))
+                    # alternate_totals_cards: Under e over dei cartellini
+                    final_row.update(get_double_chance(bookmaker, title, home_team, away_team))
+                # Applica final_row alla riga corrente
+                for col, val in final_row.items():
+                    dataset_odds.at[index, col] = val
 
     # Salva il DataFrame aggiornato
-    dataset_odds.to_csv(name_odds_base, index=False)
+    dataset_odds.to_csv(f'{base_dataset}/odds_dataset_copy.csv', index=False)
+
 
 # aggregate_events_into_dataset()
 
