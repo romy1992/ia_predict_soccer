@@ -51,15 +51,6 @@ def get_predict(predict):
     }
 
 
-def check_sleep():
-    global INDEX
-    INDEX += 1
-    if INDEX == 100:
-        logging.info('Sleep process')
-        time.sleep(25)
-        INDEX = 0
-
-
 def save():
     if len(JSON_DICT) > 0:
         data_all = pd.concat([pd.read_csv(name_history), pd.DataFrame(JSON_DICT)],
@@ -84,7 +75,6 @@ def generate_statistics():
 
                 # Recupero tutte le squadre del campionato
                 teams = base_api_statistics(path='teams', params={'league': league, 'season': season})
-                check_sleep()
 
                 # Prendo solo gli id delle squadre
                 id_teams = [team['team']['id'] for team in teams]
@@ -95,7 +85,6 @@ def generate_statistics():
                     # Chiamo la API delle fixture per farmi restituire tutte le partite disputate finora dalla squadra
                     fixtures = base_api_statistics(path='fixtures',
                                                    params={'season': season, 'team': id_team, 'status': 'FT-AET-PEN'})
-                    check_sleep()
 
                     for fixture in fixtures:
                         logging.info(f'<<< Start Fixture {fixture} >>>')
@@ -150,7 +139,7 @@ def generate_statistics():
                                     'opponent_id'] == attribute_fixture['opponent_id']]) == 0:
                             # Chiamo la API delle statistiche di quella partita e di quella squadra
                             statistics = base_api_statistics(path='fixtures/statistics', params={'fixture': id_fix})
-                            check_sleep()
+
                             logging.info(f'Statistics match {id_fix} : {statistics}')
                             if len(statistics) > 0:
 
@@ -176,7 +165,6 @@ def generate_statistics():
                                     # Predict della partita
                                     fixtures_predict = base_api_statistics(path='/predictions',
                                                                            params={'fixture': id_fixture})
-                                    check_sleep()
 
                                     if len(fixtures_predict) == 0:
                                         return None
@@ -357,7 +345,6 @@ def reload_statistics():
 
             # Predict della partita
             fixtures_predict = base_api_statistics(path='/predictions', params={'fixture': id_fix})
-            check_sleep()
 
             if len(fixtures_predict) > 0:
                 predictions = get_predict(fixtures_predict[0])
