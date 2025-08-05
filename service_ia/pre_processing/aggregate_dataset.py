@@ -21,7 +21,6 @@ name_statistics_history = f'{base_dataset}/statistics/dataset_statistics_history
 name_odds_history = f'{base_dataset}/odds/odds_dataset_copy.csv'  # DT storico di odds
 
 
-
 def aggregate_ids_into_dataset(partial=False):
     """
        Dopo aver matchato i match tra odds e statistics, nel dataset statistics viene aggiunta la colonna "id"
@@ -195,7 +194,8 @@ def refused_join_insert():
         # start_date = (commence_time - pd.Timedelta(days=100)).date() # Caso in cui le partite sono state inserite con una data precedente
         start_date = (commence_time - pd.Timedelta(days=5)).date()
         # end_date = (commence_time + pd.Timedelta(days=5)).date()  # Di base metto sempre 5 giorni dopo
-        end_date = (commence_time + pd.Timedelta(days=130)).date() # Caso in cui le partite sono state disputate qualche mese dopo
+        end_date = (commence_time + pd.Timedelta(
+            days=130)).date()  # Caso in cui le partite sono state disputate qualche mese dopo
 
         dict_id = [
             (index, ele['id_fixture']) for index, ele in enumerate(dataset_h_dic)

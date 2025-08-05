@@ -41,6 +41,7 @@ import pandas as pd
 from dateutil.relativedelta import relativedelta
 
 from service_ia.utility.request_api import base_api_odds, base_api_statistics
+from service_ia.utility.utils import convert_csv_to_exel
 
 logging.basicConfig(level=logging.DEBUG)
 base_dataset = '../dataset/odds'
@@ -125,37 +126,37 @@ dat_match = [
     #     'key_sports': 'soccer_turkey_super_league',
     #     'date_match': dates
     # },
+    # {
+    #     'key_sports': 'soccer_netherlands_eredivisie',  # attuale
+    #     'date_match': dates
+    # },
+    # {
+    #     'key_sports': 'soccer_dutch_eredivisie',  # vecchia
+    #     'date_match': dates
+    # },
+    # TODO : i prossimi saranno loro
     {
-        'key_sports': 'soccer_netherlands_eredivisie',  # attuale
+        'key_sports': 'soccer_belgium_first_div',  # attuale e storica
         'date_match': dates
     },
     {
-        'key_sports': 'soccer_dutch_eredivisie',  # vecchia
+        'key_sports': 'soccer_portugal_primeira_liga',  # attuale e storica
         'date_match': dates
     },
-    # {
-    #     'key_sports': 'soccer_belgium_first_div',  # attuale e storica
-    #     'date_match': dates
-    # },
-    # {
-    #     'key_sports': 'soccer_portugal_primeira_liga',  # attuale e storica
-    #     'date_match': dates
-    # },
-    # {
-    #     'key_sports': 'soccer_usa_mls',  # attuale
-    #     'date_match': dates
-    # },
-    # {
-    #     'key_sports': 'soccer_mls',  # vecchia
-    #     'date_match': dates
-    # }
+    {
+        'key_sports': 'soccer_usa_mls',  # attuale
+        'date_match': dates
+    },
+    {
+        'key_sports': 'soccer_mls',  # vecchia
+        'date_match': dates
+    }
 ]
 
 
 def get_outcomes_event(value, bookmaker):
-    mark = bookmaker['markets'][0] if bookmaker['markets'][0]['key'] == value else bookmaker['markets'][
-        1] if len(bookmaker['markets']) > 1 else None
-    return mark['outcomes'] if mark else []
+    markets = [market for market in bookmaker['markets'] if market.get('key') == value]
+    return markets[0]['outcomes'] if len(markets) > 0 else []
 
 
 def search_price_name(outcomes, value):
@@ -181,11 +182,12 @@ def search_price_name_point(outcomes, value, point, des=None):
     """
     if len(outcomes) > 0:
         if des is None:
-            price = [outcome['price'] for outcome in outcomes if outcome['name'] == value and outcome['point'] == point]
+            price = [outcome.get('price') for outcome in outcomes if
+                     outcome.get('name') == value and outcome.get('point') == point]
             return price[0] if len(price) > 0 else None
         else:
-            price = [outcome['price'] for outcome in outcomes if
-                     outcome['name'] == value and outcome['point'] == point and (
+            price = [outcome.get('price') for outcome in outcomes if
+                     outcome.get('name') == value and outcome.get('point') == point and (
                              outcome.get('description') and outcome.get('description') == des)]
             return price[0] if len(price) > 0 else None
 
@@ -195,17 +197,19 @@ def create_odds_dataset():
     Crea il primo dataset con le partite storiche con id e il json dei bookmakers
     :return: id_odds_h2h_totals.csv con le partite storiche dal 2020 a oggi
     """
-    for m in dat_match:
-        for d in m['date_match']:
-            odds_hist = base_api_odds(type_api='hist', path=f'{m['key_sports']}/odds',
-                                      params={'regions': 'eu', 'markets': markets_base,
-                                              'date': d})  # TODO : fino alla data 03/08/2025 , ho utilizzato solo 'eu' come regions.Sarebbe meglio provare anche us per tutti?
-            if len(odds_hist) > 0 and len(odds_hist['data']) > 0:
-                df = pd.DataFrame(odds_hist['data'])
-                df.to_csv(name_id_odds_h2h_totals, mode='a',
-                          header=not pd.io.common.file_exists(name_id_odds_h2h_totals),
-                          index=False)
-
+    try:
+        for m in dat_match:
+            for d in m['date_match']:
+                odds_hist = base_api_odds(type_api='hist', path=f'{m['key_sports']}/odds',
+                                          params={'regions': regions, 'markets': markets_base,
+                                                  'date': d})  # TODO : fino alla data 03/08/2025 , ho utilizzato solo 'eu' come regions.Sarebbe meglio provare anche us per tutti?
+                if len(odds_hist) > 0 and len(odds_hist['data']) > 0:
+                    df = pd.DataFrame(odds_hist['data'])
+                    df.to_csv(name_id_odds_h2h_totals, mode='a',
+                              header=not pd.io.common.file_exists(name_id_odds_h2h_totals),
+                              index=False)
+    except Exception as e:
+        logging.error(str(e))
     # dataset = pd.read_csv(name_id_odds_h2h_totals)
     # dataset.drop_duplicates(subset='id', keep='first', inplace=True)
     # dataset.to_csv(name_id_odds_h2h_totals, index=False)
@@ -454,8 +458,6 @@ def clean_dataset_odds():
 # remap_json_bookmakers()
 # aggregate_odds_bookmakers_base()
 # remove_duplicate_match_by_names()
-
-
 # convert_csv_to_exel(f'{base_dataset}/odds_dataset_copy.csv')
 # added_odds()
 # clean_dataset_odds()
@@ -487,29 +489,16 @@ def get_alternate_totals(bookmaker, title):
     over_4_5 = search_price_name_point(out_alternate_totals, 'Over', 4.5)
     under_4_5 = search_price_name_point(out_alternate_totals, 'Under', 4.5)
 
-    list_under_over = {
-        f'under_1_5_{title}': under_1_5,
-        f'over_1_5_{title}': over_1_5,
-        f'under_2_5_{title}': under_2_5,
-        f'over_2_5_{title}': over_2_5,
-        f'under_3_5_{title}': under_3_5,
-        f'over_3_5_{title}': over_3_5,
-        f'under_4_5_{title}': under_4_5,
-        f'over_4_5_{title}': over_4_5
+    return {
+        f'alternate_under_1_5_{title}': under_1_5,
+        f'alternate_over_1_5_{title}': over_1_5,
+        f'alternate_under_2_5_{title}': under_2_5,
+        f'alternate_over_2_5_{title}': over_2_5,
+        f'alternate_under_3_5_{title}': under_3_5,
+        f'alternate_over_3_5_{title}': over_3_5,
+        f'alternate_under_4_5_{title}': under_4_5,
+        f'alternate_over_4_5_{title}': over_4_5
     }
-    """
-    Questo controllo perché, a quanto pare, nonostante io abbia già preso i 2.5 nella precedente API iniziale, per gli stessi
-    bookmakers, le quote sono diverse.
-    Quindi SE under e over 2.5 sono valorizzati, sovrascrivono gli altri già esistenti, altrimenti SE sono a None,
-    lascio i precedenti.
-    """
-    if under_2_5 and over_2_5:
-        return list_under_over
-    else:
-        list_under_over.pop(f'under_2_5_{title}')
-        list_under_over.pop(f'over_2_5_{title}')
-
-    return list_under_over
 
 
 def get_teams_total(bookmaker, title, name_home, name_away):
@@ -593,7 +582,7 @@ def get_corners(bookmaker, title):
     :return: dict totale dei corners
     """
     corners = get_outcomes_event('alternate_totals_corners', bookmaker)
-    return {f'corner_{corner["name"]}_{corner['point']}_{title}': corner['price'] for corner in corners}
+    return {f'corner_{corner.get('name')}_{corner.get('point')}_{title}': corner.get('price') for corner in corners}
 
 
 def get_cards(bookmaker, title):
@@ -604,7 +593,7 @@ def get_cards(bookmaker, title):
     :return: dict totale dei cartellini
     """
     cards = get_outcomes_event('alternate_totals_cards', bookmaker)
-    return {f'corner_{card["name"]}_{card['point']}_{title}': card['price'] for card in cards}
+    return {f'card_{card.get('name')}_{card.get('point')}_{title}': card.get('price') for card in cards}
 
 
 def get_double_chance(bookmaker, title, name_home, name_away):
@@ -690,43 +679,77 @@ def aggregate_events_into_dataset():
 
 
     """
-    dataset_odds = pd.read_csv(f'{base_dataset}/odds_dataset_copy.csv')
+    dataset_odds = pd.read_csv(f'{base_dataset}/odds_dataset_copy.csv', low_memory=False)
     dict_ods = dataset_odds.to_dict(orient='records')
+    # TODO : Check per controllare quante ne ha fatte fino ad ora -> 04/08/2025 = 853
+    #   dict_ods = [d for d in dataset_odds.to_dict(orient='records') if
+    #             pd.to_datetime(d['commence_time']).tz_convert(None) >= pd.Timestamp('2023-05-03') and pd.notna(
+    #                 d['event_used'])]
+    try:
+        for index, row in enumerate(dict_ods):
+            data_row = row['commence_time']
+            if pd.to_datetime(data_row).tz_convert(None) >= pd.Timestamp('2023-05-03') and pd.isna(row['event_used']):
+                logging.info(f'Row {index}')
+                home_team, away_team = row['home_team'], row['away_team']  # Nomi delle squadre
 
-    for index, row in enumerate(dict_ods):
-        data_row = row['commence_time']
-        if pd.to_datetime(data_row).tz_convert(None) > pd.Timestamp('2023-05-03'):
-            logging.info(f'Row {index}')
-            home_team, away_team = row['home_team'], row['away_team']  # Nomi delle squadre
+                """
+                    L'id di ricerca può variare a seconda se il match è stato rinviato o meno, quindi:
+                    Se l'id principale 'id' non ha la colonna 'ids_dates' valorizzato, allora torna 'id'
+                    altrimenti la colonna tuple(ids_dates), userà l'id alternativo per quel match
+                    :return: id match
+                """
+                id_match = row['id'] if pd.isna(row['ids_dates']) else row['ids_dates'][0]
 
-            # Recupera odds storiche
-            events_odds_hist = base_api_odds(type_api='hist', path=f'{row['sport_key']}/events/{row['id']}/odds',
-                                             params={'regions': regions, 'markets': markets_events, 'date': data_row})
-
-            if len(events_odds_hist) > 0 and events_odds_hist['data']:
-                final_row = {}
-                for bookmaker in events_odds_hist['data']['bookmakers']:
-                    title = bookmaker.get('title')
-                    # Alternate totals: Under e Over (inteso come match) di tutte le tipologie
-                    final_row.update(get_alternate_totals(bookmaker, title))
-                    # btts : Goal e NoGoal
-                    final_row.update(get_btts(bookmaker, title))
-                    # teams_totals e alternate_team_totals : under e over per singola squadra
-                    final_row.update(get_teams_total(bookmaker, title, home_team, away_team))
-                    # double_chance : Doppia Chance 1x x2 12
-                    final_row.update(get_cards(bookmaker, title))
-                    # alternate_totals_corners: Under e over dei corners
-                    final_row.update(get_corners(bookmaker, title))
-                    # alternate_totals_cards: Under e over dei cartellini
-                    final_row.update(get_double_chance(bookmaker, title, home_team, away_team))
-                # Applica final_row alla riga corrente
-                for col, val in final_row.items():
-                    dataset_odds.at[index, col] = val
-
-    # Salva il DataFrame aggiornato
-    dataset_odds.to_csv(f'{base_dataset}/odds_dataset_copy.csv', index=False)
+                # Recupera odds storiche
+                events_odds_hist = base_api_odds(type_api='hist', path=f'{row['sport_key']}/events/{id_match}/odds',
+                                                 params={'regions': regions, 'markets': markets_events,
+                                                         'date': data_row})
+                # Potenzialmente ci sono 5834 partite * 2 regioni * 7 eventi = 408380 token
+                if len(events_odds_hist) > 0 and events_odds_hist['data']:
+                    final_row = {}
+                    for bookmaker in events_odds_hist['data']['bookmakers']:
+                        title = bookmaker.get('title')
+                        # Alternate totals: Under e Over (inteso come match) di tutte le tipologie
+                        final_row.update(get_alternate_totals(bookmaker, title))
+                        # btts : Goal e NoGoal
+                        final_row.update(get_btts(bookmaker, title))
+                        # teams_totals e alternate_team_totals : under e over per singola squadra
+                        final_row.update(get_teams_total(bookmaker, title, home_team, away_team))
+                        # alternate_totals_cards: Under e over dei cartellini
+                        final_row.update(get_cards(bookmaker, title))
+                        # alternate_totals_corners: Under e over dei corners
+                        final_row.update(get_corners(bookmaker, title))
+                        # double_chance : Doppia Chance 1x x2 12
+                        final_row.update(get_double_chance(bookmaker, title, home_team, away_team))
+                    # Applica final_row alla riga corrente
+                    for col, val in final_row.items():
+                        if val:  # Solo se la colonna ha un valore altrimenti lascia stare
+                            dataset_odds.at[index, col] = val
+                    # Per eventi futuri, marchio la riga come UTILIZZATA per questa api
+                    dataset_odds.at[index, 'event_used'] = 1
+    except Exception as e:
+        logging.warning(str(e))
+    finally:
+        # Salva il DataFrame aggiornato
+        dataset_odds.to_csv(f'{base_dataset}/odds_dataset_copy.csv', index=False)
+        logging.info(f'{name_odds_base} Aggiornato')
 
 
 # aggregate_events_into_dataset()
-
 # =============================================== STEP 2 ===============================================
+# dict_ods = [d for d in pd.read_csv(f'{base_dataset}/odds_dataset_copy.csv').to_dict(orient='records') if
+#             pd.to_datetime(d['commence_time']).tz_convert(None) >= pd.Timestamp('2023-05-03') and pd.notna(
+#                 d['event_used'])]
+#
+# d = pd.DataFrame(dict_ods)
+# columns = [a for a in d.columns if 'corner_' in a and 'or ' in a]
+# d.drop(columns=columns, inplace=True)
+# d.to_excel(f'{base_dataset}/dataset_events.xlsx', index=False)
+
+with open('json_test.json', 'r', encoding='utf-8') as file:
+    test = json.load(file)
+for b in test['data']['bookmakers']:
+    title = b.get('title')
+    print(get_corners(b, title))
+    print(get_cards(b, title))
+    print(get_double_chance(b, title, test['data']['home_team'], test['data']['away_team']))
