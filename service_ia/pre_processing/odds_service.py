@@ -142,14 +142,6 @@ dat_match = [
     {
         'key_sports': 'soccer_portugal_primeira_liga',  # attuale e storica
         'date_match': dates
-    },
-    {
-        'key_sports': 'soccer_usa_mls',  # attuale
-        'date_match': dates
-    },
-    {
-        'key_sports': 'soccer_mls',  # vecchia
-        'date_match': dates
     }
 ]
 

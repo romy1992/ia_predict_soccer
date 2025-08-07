@@ -1,13 +1,13 @@
 import logging
 import os
-import time
 
 import pandas as pd
 
 from service_ia.utility.request_api import base_api_statistics
-
-LEAGUES = [135, 136, 140, 78, 39, 94, 203, 2, 3, 848]
-SEASONS = [2025]
+# 135, 136, 140,
+LEAGUES = [78, 39, 94, 203, 2, 3, 848, 492, 144, 94]
+# SEASONS = [2014, 2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024]
+SEASONS = [2023]
 INDEX = 0
 JSON_DICT = []
 name_history = '../dataset/statistics/dataset_statistics_history.csv'
@@ -52,10 +52,11 @@ def get_predict(predict):
 
 
 def save():
+    path_temp = '../dataset/statistics/dataset_statistics_history_temp.csv'  # TODO : TEMPORANEO perché il 06/08/2025 ho dovuto rielaborare tutto
     if len(JSON_DICT) > 0:
-        data_all = pd.concat([pd.read_csv(name_history), pd.DataFrame(JSON_DICT)],
-                             ignore_index=True) if os.path.exists(name_history) else pd.DataFrame(JSON_DICT)
-        data_all.to_csv(name_history, index=False)
+        data_all = pd.concat([pd.read_csv(path_temp), pd.DataFrame(JSON_DICT)],
+                             ignore_index=True) if os.path.exists(path_temp) else pd.DataFrame(JSON_DICT)
+        data_all.to_csv(path_temp, index=False)
 
 
 def generate_statistics():
@@ -65,7 +66,11 @@ def generate_statistics():
     global JSON_DICT
     try:
         # CONSEGUENZA DELL'AGGIORNAMENTO 15/07 FATTO SOTTO : LEGGERò IL DF PER CAPIRE SE ESISTONO LE PARTITE
-        df = pd.read_csv(name_history).to_dict(orient='records')
+        df = pd.read_csv(name_history, low_memory=False).to_dict(orient='records')
+
+        # TODO DI SUPPORTO
+        ids_fix_excluded = pd.read_csv('../dataset/statistics/dataset_statistics_history_temp.csv').to_dict(
+            orient='records')
 
         for season in SEASONS:
             logging.info(f'<<< Start season {season} >>>')
@@ -132,16 +137,33 @@ def generate_statistics():
                         attribute_fixture = get_attribute_fixture()
                         id_fix = attribute_fixture['id_fixture']
 
+                        # TODO PER ELIMINARE EVENTUALI FIXTURE GIA' INSERITE NEL FILE TEMP
+                        is_duplicate_temp = [id_ for id_ in ids_fix_excluded if id_['id_fixture'] == id_fix
+                                             and id_['team_id'] == attribute_fixture['team_id']
+                                             and id_['opponent_id'] == attribute_fixture['opponent_id']]
+
                         # AGGIORNAMENTO 15/07 : AGGIORNARE IL DF DI STATISTICS PRENDENDO LE ULTIME PARTITE
                         # DA MARZO 2025 AD OGGI (CONTROLLERò SE NEL DF HISTORY ESISTE GIà L'ID_FIXTURE)
-                        if len([id_ for id_ in df if
-                                id_['id_fixture'] == id_fix and id_['team_id'] == attribute_fixture['team_id'] and id_[
-                                    'opponent_id'] == attribute_fixture['opponent_id']]) == 0:
-                            # Chiamo la API delle statistiche di quella partita e di quella squadra
-                            statistics = base_api_statistics(path='fixtures/statistics', params={'fixture': id_fix})
+                        is_duplicate = [id_ for id_ in df if id_['id_fixture'] == id_fix
+                                        and id_['team_id'] == attribute_fixture['team_id']
+                                        and id_['opponent_id'] == attribute_fixture['opponent_id']]
 
-                            logging.info(f'Statistics match {id_fix} : {statistics}')
+                        # TODO : togliere questo match_id_from_odds che viene aggiunto al dizionario se non serve
+                        match_id_from_odds = is_duplicate[0]['match_id_from_odds'] if len(is_duplicate) > 0 else None
+                        attribute_fixture.update({'match_id_from_odds': match_id_from_odds})
+
+                        # TODO is_duplicate_temp dovrà poi essere sostituito da is_duplicate che a sua volta dovrà puntare al nuovo dataset aggiornato(ora è TEMP)
+                        if len(is_duplicate_temp) == 0:
+                            # Chiamo la API delle statistiche di quella partita e di quella squadra
+                            # Recupero le statistiche dal nodo fixture principale
+                            statistics = fixture.get('statistics') or []
+                            # E se non ci sono chiama l'alternativa
+                            if len(statistics) == 0:
+                                statistics = base_api_statistics(path='fixtures/statistics',
+                                                                 params={'fixture': id_fix, 'team': id_team})
+
                             if len(statistics) > 0:
+                                logging.info(f'Statistics match {id_fix} : {statistics}')
 
                                 def get_attribute_statistics():
                                     data_match_stat = {}
@@ -153,7 +175,8 @@ def generate_statistics():
                                         data_match_stat.update({stat_type: value})
                                     return data_match_stat
 
-                                statistics = statistics[0]['statistics']
+                                statistics = statistics[0]['statistics'] \
+                                    if statistics[0]['team']['id'] == id_team else statistics[1]
 
                                 attribute_fixture.update(get_attribute_statistics())
 
@@ -320,8 +343,12 @@ def generate_statistics():
                 save()
                 JSON_DICT = []
     except Exception as e:
-        print(str(e))
+        logging.error(str(e))
+    finally:
         save()
+
+
+generate_statistics()
 
 
 def reload_statistics():
@@ -362,8 +389,7 @@ def reload_statistics():
         dataset.to_csv(name_history, index=False)
         print('Aggiornato')
 
-
-reload_statistics()
+# reload_statistics()
 # convert_csv_to_exel(name_history)
 # d = pd.read_csv('../dataset/statistics/dataset_statistics_history.csv', low_memory=False)
 # d.to_excel('../dataset/statistics/dataset_statistics_history_copy.xlsx', index=False)
