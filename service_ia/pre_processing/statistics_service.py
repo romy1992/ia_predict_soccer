@@ -4,8 +4,8 @@ import os
 import pandas as pd
 
 from service_ia.utility.request_api import base_api_statistics
-# 135, 136, 140,
-LEAGUES = [78, 39, 94, 203, 2, 3, 848, 492, 144, 94]
+# 135, 136, 140, 78, 39, 94, 203,
+LEAGUES = [2, 3, 848, 492, 144, 94]
 # SEASONS = [2014, 2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024]
 SEASONS = [2023]
 INDEX = 0
