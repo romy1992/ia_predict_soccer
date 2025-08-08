@@ -4,9 +4,14 @@ import os
 import pandas as pd
 
 from service_ia.utility.request_api import base_api_statistics
-# 135, 136, 140, 78, 39, 94, 203,
-LEAGUES = [2, 3, 848, 492, 144, 94]
+
+# 135, 136, 140, 78, 39, 94, 203,2,3,848,492,144, 
+LEAGUES = [94]
 # SEASONS = [2014, 2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024]
+# todo  League 2 - 2023 deve completarsi
+# todo  League 3 - 2023 deve completarsi
+# todo  League 848 - 2023 deve completarsi
+# todo  League 144 - 2023 deve completarsi
 SEASONS = [2023]
 INDEX = 0
 JSON_DICT = []
@@ -54,7 +59,7 @@ def get_predict(predict):
 def save():
     path_temp = '../dataset/statistics/dataset_statistics_history_temp.csv'  # TODO : TEMPORANEO perché il 06/08/2025 ho dovuto rielaborare tutto
     if len(JSON_DICT) > 0:
-        data_all = pd.concat([pd.read_csv(path_temp), pd.DataFrame(JSON_DICT)],
+        data_all = pd.concat([pd.read_csv(path_temp, low_memory=False), pd.DataFrame(JSON_DICT)],
                              ignore_index=True) if os.path.exists(path_temp) else pd.DataFrame(JSON_DICT)
         data_all.to_csv(path_temp, index=False)
 
@@ -69,8 +74,8 @@ def generate_statistics():
         df = pd.read_csv(name_history, low_memory=False).to_dict(orient='records')
 
         # TODO DI SUPPORTO
-        ids_fix_excluded = pd.read_csv('../dataset/statistics/dataset_statistics_history_temp.csv').to_dict(
-            orient='records')
+        ids_fix_excluded = pd.read_csv('../dataset/statistics/dataset_statistics_history_temp.csv',
+                                       low_memory=False).to_dict(orient='records')
 
         for season in SEASONS:
             logging.info(f'<<< Start season {season} >>>')
