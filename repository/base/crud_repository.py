@@ -34,14 +34,15 @@ class CrudRepository:
         Inserisce in maniera massiva le entità
         :return:
         """
-        with self.session as session:
-            try:
-                session.add_all(list_obj)
-                session.commit()
-            except Exception as e:
-                logging.error(str(e))
-                session.rollback()
-                raise
+        if len(list_obj) > 0:
+            with self.session as session:
+                try:
+                    session.add_all(list_obj)
+                    session.commit()
+                except Exception as e:
+                    logging.error(str(e))
+                    session.rollback()
+                    raise
 
     def search_all(self):
         """
