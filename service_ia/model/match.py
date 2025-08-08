@@ -40,15 +40,16 @@ class Statistics(Base):
     id_statistics_fk = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     id_match = Column(String(36), ForeignKey("match.id_match_fk"))  # 👈 Foreign Key
     match = relationship("Match", back_populates="statistics")  # 👈 Many-to-One
-    score_ht = Column(JSON, nullable=True)  # Risultato primo tempo
+    statistics_team_id = Column(Integer)  # Discriminante per capire di che team si parla
+    score_ht = Column(Integer)  # Risultato primo tempo
     score_ft = Column(JSON, nullable=True)  # Risultato secondo tempo
     shots = Column(JSON, nullable=True)  # Tiri
-    fouls = Column(JSON, nullable=True)  # Falli
-    corners = Column(JSON, nullable=True)  # Corner
-    offside = Column(JSON, nullable=True)  # Fuorigioco
-    bass_possession = Column(JSON, nullable=True)  # Possesso palla
-    yellow_cards = Column(JSON, nullable=True)  # Cartellini gialli
-    red_cards = Column(JSON, nullable=True)  # Cartellini rossi
+    fouls = Column(Integer)  # Falli
+    corners = Column(Integer)  # Corner
+    offside = Column(Integer)  # Fuorigioco
+    bass_possession = Column(Integer)  # Possesso palla
+    yellow_cards = Column(Integer)  # Cartellini gialli
+    red_cards = Column(Integer)  # Cartellini rossi
     goal_keeper = Column(JSON, nullable=True)  # Palle salvate dal portiere
     passes = Column(JSON, nullable=True)  # Passaggi
     form = Column(JSON, nullable=True)  # Forma delle squadre
