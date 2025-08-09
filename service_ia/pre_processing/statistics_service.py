@@ -5,14 +5,15 @@ import pandas as pd
 
 from service_ia.utility.request_api import base_api_statistics
 
-# 135, 136, 140, 78, 39, 94, 203,2,3,848,492,144, 
-LEAGUES = [94]
+# 135, 136, 140, 78, 39, 94, 203,2,3,848,492
+LEAGUES = [39]# Prossimo
 # SEASONS = [2014, 2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024]
 # todo  League 2 - 2023 deve completarsi
 # todo  League 3 - 2023 deve completarsi
 # todo  League 848 - 2023 deve completarsi
 # todo  League 144 - 2023 deve completarsi
-SEASONS = [2023]
+# todo  League 78 - 2024 deve completarsi
+SEASONS = [2024]
 INDEX = 0
 JSON_DICT = []
 name_history = '../dataset/statistics/dataset_statistics_history.csv'
