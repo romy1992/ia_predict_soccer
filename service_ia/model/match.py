@@ -19,8 +19,10 @@ class Match(Base):
     id_team_away = Column(Integer)  # Id team ospite
     date_match = Column(String)  # Data reale del match
     date_alternate_match = Column(String)  # In caso di mach rinviato o spostato
-    sport_key = Column(String)  # Chiave della lega (Stringa per odds e numerica per statistics)
-    title_league = Column(String)  # Nome della lega
+    sport_key = Column(String)  # Chiave della lega (per odds)
+    title_league = Column(String)  # Nome della lega (per odds)
+    current_league = Column(Integer)  # Numero della lega corrente (per statistics)
+    league_match = Column(Integer)  # Numero della lega partita (per statistics)
     referee = Column(String)  # Arbitro
     round = Column(String)  # Giornata
     season = Column(Integer)  # Stagione
@@ -42,7 +44,7 @@ class Statistics(Base):
     match = relationship("Match", back_populates="statistics")  # 👈 Many-to-One
     statistics_team_id = Column(Integer)  # Discriminante per capire di che team si parla
     score_ht = Column(Integer)  # Risultato primo tempo
-    score_ft = Column(JSON, nullable=True)  # Risultato secondo tempo
+    score_ft = Column(Integer)  # Risultato secondo tempo
     shots = Column(JSON, nullable=True)  # Tiri
     fouls = Column(Integer)  # Falli
     corners = Column(Integer)  # Corner
@@ -50,7 +52,7 @@ class Statistics(Base):
     bass_possession = Column(Integer)  # Possesso palla
     yellow_cards = Column(Integer)  # Cartellini gialli
     red_cards = Column(Integer)  # Cartellini rossi
-    goal_keeper = Column(JSON, nullable=True)  # Palle salvate dal portiere
+    goal_keeper = Column(Integer)  # Palle salvate dal portiere
     passes = Column(JSON, nullable=True)  # Passaggi
     form = Column(JSON, nullable=True)  # Forma delle squadre
     for_ = Column(JSON, nullable=True)  # For comprende una serie di statistiche a FAVORE della squadra indicata
