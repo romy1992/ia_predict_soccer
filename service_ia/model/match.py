@@ -63,6 +63,7 @@ class Statistics(Base):
     # Restanti statistiche :expected_goals-goals_prevented-Assists-Counter Attacks-Cross Attacks-Free Kicks-Goals-Goal Attempts-Substitutions-Throwins-Medical Treatment
     generic_statistics = Column(JSON, nullable=True)
     predict = Column(JSON, nullable=True)  # Predizioni del match provenienti da API
+    mean_season_at_today = Column(JSON, nullable=True) # Medie stagionali alla giornata corrente (cioè PRIMA CHE INIZIASSE LA PARTITA CORRENTE)
 
     def to_dict(self):
         return {column.name: getattr(self, column.name) for column in self.__table__.columns}
