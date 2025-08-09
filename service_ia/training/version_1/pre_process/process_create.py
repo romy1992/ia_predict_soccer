@@ -9,7 +9,7 @@ stat_dataset = pd.read_csv('../../../dataset/statistics/dataset_statistics_histo
 stat_dataset = stat_dataset[stat_dataset['season'] >= 2019]
 stat_dataset = stat_dataset.to_dict(orient='records')
 
-odds_dataset = pd.read_csv('../../../dataset/odds/odds_dataset.csv', low_memory=False)
+odds_dataset = pd.read_csv('../../../dataset/odds/odds_dataset_copy.csv', low_memory=False)
 odds_dataset_u_o = odds_dataset[['id'] + [c for c in odds_dataset.columns if 'under' in c or 'over' in c]]
 odds_dataset_u_o = odds_dataset_u_o.dropna(axis=1, thresh=6000)
 
