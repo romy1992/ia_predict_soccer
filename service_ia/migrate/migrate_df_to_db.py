@@ -87,6 +87,9 @@ def migrate_dataset():
                 'Substitutions': search_value(stat, 'Substitutions'),
                 'Throwins': search_value(stat, 'Throwins'),
                 'Medical Treatment': search_value(stat, 'Medical Treatment')
+            },
+            'mean_season_at_today': {
+
             }
         }
 
@@ -314,6 +317,7 @@ def create_dataset_mean():
     # Salvo in Excel
     df_final.to_excel("dataset_mean_history.xlsx", index=False)
 
+
 def create_dataset_mean_2():
     # Legge CSV
     dataset_df = pd.read_csv('../dataset/statistics/dataset_statistics_history.csv', low_memory=False)
@@ -361,6 +365,7 @@ def create_dataset_mean_2():
 
     df_final.to_excel("dataset_mean_history.xlsx", index=False)
     print("✅ Dataset salvato con medie in 'dataset_mean_history.xlsx'")
+
 
 create_dataset_mean_2()
 # convert_csv_to_exel('../dataset/statistics/dataset_statistics_history_temp_2.csv')
