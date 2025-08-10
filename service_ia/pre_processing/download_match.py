@@ -9,8 +9,11 @@ import json
 import logging
 from datetime import datetime, timedelta
 
+import pandas as pd
+
 from repository.match_repository import MatchRepository
-from service_ia.model.match import Match
+from service_ia.model.match import Match, Statistics, Odds
+from service_ia.pre_processing.statistics_service import form_last_5_tot, get_attribute_statistics
 from service_ia.utility.request_api import base_api_statistics
 
 logging.basicConfig(level=logging.DEBUG)
@@ -57,19 +60,101 @@ def get_statistics():
 
 
 def map_base_match():
+    teams_home = fixture['teams']['home']
+    teams_away = fixture['teams']['away']
+
+    def get_val(team, value):
+        return team[value]
+
     return {
-        'id_fixture': search_value(fixture, 'id_fixture'),
-        'name_home': search_value(fixture, 'team_name'),
-        'id_team_home': search_value(fixture, 'team_id'),
-        'name_away': search_value(fixture, 'team_name'),
-        'id_team_away': search_value(fixture, 'team_id'),
-        'date_match': search_value(fixture, 'date_fixture'),
-        'current_league': search_value(fixture, 'current_league'),
-        'league_match': search_value(fixture, 'league_match'),
-        'referee': search_value(fixture, 'referee'),
-        'round': search_value(fixture, 'round_fixture'),
-        'season': search_value(fixture, 'season'),
+        'id_fixture': id_fix,
+        'name_home': get_val(teams_home, 'name'),
+        'id_team_home': get_val(teams_home, 'id'),
+        'name_away': get_val(teams_away, 'name'),
+        'id_team_away': get_val(teams_away, 'id'),
+        'date_match': fixture['fixture']['date'],
+        'current_league': league,
+        'league_match': fixture['league']['id'],
+        'referee': fixture['fixture']['referee'],
+        'round': fixture['league']['round'],
+        'season': season
     }
+
+
+def map_statistic(stat, team):
+    id_team = stat['team']['id']
+    stat = stat['statistics']
+
+    attribute_stat = get_attribute_statistics(stat)
+    attribute_stat.update(form_last_5_tot(id_fix, id_team))
+
+    def search_key_value(index_key):
+        return {key: value for key, value in attribute_stat.items() if pd.notna(value) and index_key in key}
+
+    return {
+        'statistics_team_id': id_team,
+        'score_ht': fixture['score']['halftime'][team],
+        'score_ft': fixture['score']['fulltime'][team],
+        'shots': search_key_value('Shots'),
+        'fouls': attribute_stat['Fouls'],
+        'corners': attribute_stat['Corner Kicks'],
+        'offside': attribute_stat['Offsides'],
+        'bass_possession': attribute_stat['Ball Possession'],
+        'yellow_cards': attribute_stat['Yellow Cards'],
+        'red_cards': attribute_stat['Red Cards'],
+        'goal_keeper': attribute_stat['Goalkeeper Saves'],
+        'passes': search_key_value('asses'),
+        'form': search_key_value('form_'),
+        'for_': search_key_value('for_'),
+        'against': search_key_value('against_'),
+        'preview_matches': {
+            'wins_home': attribute_stat['wins_home'],
+            'wins_away': attribute_stat['wins_away'],
+            'draws_home': attribute_stat['draws_home'],
+            'draws_away': attribute_stat['draws_away'],
+            'loses_home': attribute_stat['loses_home'],
+            'loses_away': attribute_stat['loses_away']
+        },
+        'comparison': search_key_value('comparison_'),
+        'predict': search_key_value('predict_'),
+        'generic_statistics': {
+            'expected_goals': attribute_stat['expected_goals'],
+            'goals_prevented': attribute_stat['goals_prevented'],
+            'Assists': attribute_stat['Assists'],
+            'Counter Attacks': attribute_stat['Counter Attacks'],
+            'Cross Attacks': attribute_stat['Cross Attacks'],
+            'Free Kicks': attribute_stat['Free Kicks'],
+            'Goals': attribute_stat['Goals'],
+            'Goal Attempts': attribute_stat['Goal Attempts'],
+            'Substitutions': attribute_stat['Substitutions'],
+            'Throwins': attribute_stat['Throwins'],
+            'Medical Treatment': attribute_stat['Medical Treatment']
+        },
+        'mean_season_at_today': {
+
+        }
+    }
+
+
+def map_odds():
+    fixture_bookmakers = base_api_statistics(path='/odds', params={'fixture': id_fix})
+    odd_bet = {
+        'odds_from': 'sports-api'
+    }
+    if len(fixture_bookmakers) > 0:
+        # Inizia a creare il dizionario prima di aggiungere le quote
+        bookmakers_filters = [bookmaker for bookmaker in fixture_bookmakers[0]['bookmakers']]
+
+        for bookmaker in bookmakers_filters:
+            # Crea il dizionario della fixture aggregando tutti gli eventi con le sue quote
+            name_book = bookmaker['name']
+            filter_bet = [bet for bet in bookmaker['bets'] if bet['id'] in ids_bets]
+            for filter_bet_name in filter_bet:
+                for value in filter_bet_name['values']:
+                    odd_bet.update({
+                        f'{name_book}_{filter_bet_name['name']}_{value['value']}': value['odd']
+                    })
+    return odd_bet
 
 
 try:
@@ -85,19 +170,21 @@ try:
                         # 'date': date
                         })
             for fixture in fixtures:
-                id_fix = fixture['id_fixture']
+                id_fix = fixture['fixture']['id']
+
+                # Mappa la base del match
                 dict_match = map_base_match()
 
+                # Mappa una serie di statistiche
                 statistics = get_statistics()
                 if len(statistics) > 0:
                     logging.info(f'Statistics match {id_fix} : {statistics}')
-                    for statistic in statistics:
-                        pass
+                    dict_match.update(
+                        {'statistics': [
+                            Statistics(**map_statistic(statistic, '') for statistic in statistics)]})
 
-                fixture_bookmakers = base_api_statistics(path='/odds', params={'fixture': id_fix})
-                if len(fixture_bookmakers) > 0:
-                    # Inizia a creare il dizionario prima di aggiungere le quote
-                    bookmakers_filters = [bookmaker for bookmaker in fixture_bookmakers[0]['bookmakers']]
+                # Mappa le quote
+                dict_match.update({'odds': Odds(**map_odds())})
 
                 if len(dict_match) > 0:
                     match = Match(**dict_match)
