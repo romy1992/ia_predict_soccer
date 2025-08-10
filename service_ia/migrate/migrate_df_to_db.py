@@ -138,6 +138,10 @@ def migrate_dataset():
             }
 
     def map_odds(odd):
+        h2h = search_value_columns(odd, 'home_', ['_team', 'under_', 'over_'])
+        h2h.update(search_value_columns(odd, 'draw_', ['_team', 'under_', 'over_']))
+        h2h.update(search_value_columns(odd, 'away_', ['_team', 'under_', 'over_']))
+
         dc = search_value_columns(odd, '1X')
         dc.update(search_value_columns(odd, 'X2'))
         dc.update(search_value_columns(odd, '12'))
@@ -150,7 +154,7 @@ def migrate_dataset():
 
         return {'odds': [Odds(**{
             'odds_from': search_value(odd, 'api_from'),
-            'h2h': search_value_columns(odd, 'home_', ['_team', 'under_', 'over_']),
+            'h2h': h2h,
             'under_over_1_5': search_value_columns(odd, '1_5', ['_home', '_away']),
             'under_over_2_5': under_over_2_5,
             'under_over_3_5': search_value_columns(odd, '3_5', ['_home', '_away']),

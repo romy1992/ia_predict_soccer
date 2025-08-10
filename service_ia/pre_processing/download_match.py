@@ -24,7 +24,7 @@ SEASONS = [2025]
 with open('../json/bet.json', 'r', encoding='utf-8') as file:
     BET_BOOKMAKERS = json.load(file)
 
-# ( - 0 -> Oggi , - 1 -> Ieri , + 1 -> Domani , + 2 DopoDomani)
+# ( 0 -> Oggi , - 1 -> Ieri, - 2 -> altro ieri , + 1 -> Domani , + 2 DopoDomani)
 
 # Formato richiesto è esempio:"2025-02-12"
 format_data = '%Y-%m-%d'
@@ -137,7 +137,37 @@ def map_statistic(stat, team):
 
 
 def map_odds():
-    fixture_bookmakers = base_api_statistics(path='/odds', params={'fixture': id_fix})
+    """
+    Mappa le quote dei bookmakers
+    :return: nuovo dizionario di quote
+    """
+
+    def switch_bet(bet, alternate_bet):
+        match bet:
+            case 'Match Winner':
+                return 'h2h'
+            case 'Goals Over/Under':
+                if alternate_bet == 'Over 1.5' or 'Under 1.5':
+                    return 'under_over_1_5'
+                elif alternate_bet == 'Over 2.5' or 'Under 2.5':
+                    return 'under_over_2_5'
+                elif alternate_bet == 'Over 3.5' or 'Under 3.5':
+                    return 'under_over_3_5'
+                elif alternate_bet == 'Over 4.5' or 'Under 4.5':
+                    return 'under_over_4_5'
+            case 'Both Teams Score':
+                return 'goal_no_goal'
+            case 'Corners Over Under':
+                return 'corners'
+            case 'Cards Over/Under':
+                return 'cards'
+            case 'Double Chance':
+                return 'dc'
+
+    # fixture_bookmakers = base_api_statistics(path='/odds', params={'fixture': id_fix})
+    with open("response_test.json", "r", encoding="utf-8") as f:
+        fixture_bookmakers = json.load(f)['response']
+
     odd_bet = {
         'odds_from': 'sports-api'
     }
@@ -151,124 +181,140 @@ def map_odds():
             filter_bet = [bet for bet in bookmaker['bets'] if bet['id'] in ids_bets]
             for filter_bet_name in filter_bet:
                 for value in filter_bet_name['values']:
-                    odd_bet.update({
-                        f'{name_book}_{filter_bet_name['name']}_{value['value']}': value['odd']
-                    })
+                    alternate_value = str(value['value']).lower()
+                    if alternate_value in ['yes', 'no']:
+                        alternate_value = 'goal_' if alternate_value == 'Yes' else 'no_goal_'
+                    elif alternate_value in ['home/draw', 'home/away', 'Draw/away']:
+                        alternate_value = '1X' if alternate_value == 'home/draw' else '12' if alternate_value == 'home/away' else 'X2'
+
+                    name_bet = switch_bet(bet=filter_bet_name['name'], alternate_bet=value['value'])
+                    if odd_bet.get(name_bet):
+                        odd_bet[name_bet].update({f'{alternate_value}_{name_book}': value['odd']})
+                    else:
+                        odd_bet.update({
+                            name_bet: {f'{alternate_value}_{name_book}': value['odd']}
+                        })
     return odd_bet
 
 
-try:
-    for season in SEASONS:
-        logging.info(f'<<< Start season {season} >>>')
-
-        for league in LEAGUES:
-            logging.info(f'<<< Start season {season} for league {league} >>>')
-
-            fixtures = base_api_statistics(
-                path='fixtures',
-                params={'from': from_date, 'to': to_date, 'status': status_list, 'league': league,
-                        # 'date': date
-                        })
-            for fixture in fixtures:
-                id_fix = fixture['fixture']['id']
-
-                # Mappa la base del match
-                dict_match = map_base_match()
-
-                # Mappa una serie di statistiche
-                statistics = get_statistics()
-                if len(statistics) > 0:
-                    logging.info(f'Statistics match {id_fix} : {statistics}')
-                    dict_match.update(
-                        {'statistics': [
-                            Statistics(**map_statistic(statistic, '') for statistic in statistics)]})
-
-                # Mappa le quote
-                dict_match.update({'odds': Odds(**map_odds())})
-
-                if len(dict_match) > 0:
-                    match = Match(**dict_match)
-
-                    list_dict_match.append(match)
+map_odds()
 
 
-except Exception as e:
-    logging.error('Errore durante il download : ', str(e))
-finally:
-    try:
-        # Salva tutto
-        repo_match.insert_massive(list_dict_match)
-    except Exception as e_db:
-        logging.info('Errore durante il salvataggio a db.Salvato in un file temporaneo :', str(e_db))
-        # TODO salvare il dizionario come json da poter riprocessare manualmente
+# try:
+#     for season in SEASONS:
+#         logging.info(f'<<< Start season {season} >>>')
+#
+#         for league in LEAGUES:
+#             logging.info(f'<<< Start season {season} for league {league} >>>')
+#
+#             fixtures = base_api_statistics(
+#                 path='fixtures',
+#                 params={'from': from_date, 'to': to_date, 'status': status_list, 'league': league,
+#                         # 'date': date
+#                         })
+#             for fixture in fixtures:
+#                 id_fix = fixture['fixture']['id']
+#
+#                 # Mappa la base del match
+#                 dict_match = map_base_match()
+#
+#                 # Mappa una serie di statistiche
+#                 statistics = get_statistics()
+#                 if len(statistics) > 0:
+#                     logging.info(f'Statistics match {id_fix} : {statistics}')
+#                     dict_match.update(
+#                         {'statistics': [
+#                             Statistics(**map_statistic(statistic, '') for statistic in statistics)]})
+#
+#                 # Mappa le quote
+#                 dict_match.update({'odds': Odds(**map_odds())})
+#
+#                 if len(dict_match) > 0:
+#                     match = Match(**dict_match)
+#
+#                     list_dict_match.append(match)
+#
+#
+# except Exception as e:
+#     logging.error('Errore durante il download : ', str(e))
+# finally:
+#     try:
+#         # Salva tutto
+#         repo_match.insert_massive(list_dict_match)
+#     except Exception as e_db:
+#         logging.info('Errore durante il salvataggio a db.Salvato in un file temporaneo :', str(e_db))
+#         # Salvataggio in un file JSON
+#         with open("error_save_dict.json", "w", encoding="utf-8") as f:
+#             json.dump(list_dict_match, f, ensure_ascii=False, indent=4)
 
 
-def re_processor_error():
-    pass
+def re_processor_error():  # TODO
+    # Lettura da file JSON
+    with open("error_save_dict.json", "r", encoding="utf-8") as f:
+        dict_error = json.load(f)
 
-
-def added_odds():
-    dataset_odds = pd.read_csv(name_odds_base)
-
-    ids_bookmakers = [ids_book['id'] for ids_book in BOOKMAKERS_SPORTS]
-    ids_bets = [id_bet['id'] for id_bet in BET_BOOKMAKERS]
-    for league in leagues:
-        fixtures = base_api_statistics(
-            path='fixtures',
-            params={
-                'from': from_date, 'to': to_date,
-                'status': status_list,
-                'league': league,
-                # 'date': date
-            })
-        odds_bet = []
-        for fixture in fixtures:
-            id_fixture = fixture['fixture']['id']
-            data_fix = fixture['fixture']['date']
-            league_id = fixture['league']['id']
-            name_league = fixture['league']['name']
-            season = fixture['league']['season']
-            round_fixture = fixture['league']['round']
-            home_id = fixture['teams']['home']['id']
-            home_team = fixture['teams']['home']['name']
-            away_id = fixture['teams']['away']['id']
-            away_team = fixture['teams']['away']['name']
-            fixture_bookmakers = base_api_statistics(path='/odds', params={'fixture': id_fixture})
-
-            if len(fixture_bookmakers) > 0:
-                # Inizia a creare il dizionario prima di aggiungere le quote
-                bookmakers_filters = [bookmaker for bookmaker in fixture_bookmakers[0]['bookmakers'] if
-                                      bookmaker['id'] in ids_bookmakers]
-
-                odd_bet = {
-                    'id_fixture_from_stat': id_fixture,
-                    'api_from': 'sports-api',
-                    'sport_key': league_id,
-                    'sport_title': name_league,
-                    'commence_time': data_fix,
-                    'home_id': home_id,
-                    'home_team': home_team,
-                    'away_id': away_id,
-                    'away_team': away_team,
-                    'season': season,
-                    'round_fixture': round_fixture,
-                }
-
-                for bookmaker in bookmakers_filters:
-                    # Crea il dizionario della fixture aggregando tutti gli eventi con le sue quote
-                    name_book = bookmaker['name']
-                    filter_bet = [bet for bet in bookmaker['bets'] if bet['id'] in ids_bets]
-                    for filter_bet_name in filter_bet:
-                        for value in filter_bet_name['values']:
-                            odd_bet.update({
-                                f'{name_book}_{filter_bet_name['name']}_{value['value']}': value['odd']
-                            })
-
-                odds_bet.append(odd_bet)
-
-            if len(odds_bet) > 0:
-                # Inserisci e modifica il dataset attuale solo se c'è almeno un elemento
-                odd_bet_dt = pd.DataFrame(odds_bet)
-                concat_odds = pd.concat([dataset_odds, odd_bet_dt], axis=0)
-                print(concat_odds)
-                # TODO concat_odds.to_csv(name_odds_base, index=False)
+# def added_odds():
+#     dataset_odds = pd.read_csv(name_odds_base)
+#
+#     ids_bookmakers = [ids_book['id'] for ids_book in BOOKMAKERS_SPORTS]
+#     ids_bets = [id_bet['id'] for id_bet in BET_BOOKMAKERS]
+#     for league in leagues:
+#         fixtures = base_api_statistics(
+#             path='fixtures',
+#             params={
+#                 'from': from_date, 'to': to_date,
+#                 'status': status_list,
+#                 'league': league,
+#                 # 'date': date
+#             })
+#         odds_bet = []
+#         for fixture in fixtures:
+#             id_fixture = fixture['fixture']['id']
+#             data_fix = fixture['fixture']['date']
+#             league_id = fixture['league']['id']
+#             name_league = fixture['league']['name']
+#             season = fixture['league']['season']
+#             round_fixture = fixture['league']['round']
+#             home_id = fixture['teams']['home']['id']
+#             home_team = fixture['teams']['home']['name']
+#             away_id = fixture['teams']['away']['id']
+#             away_team = fixture['teams']['away']['name']
+#             fixture_bookmakers = base_api_statistics(path='/odds', params={'fixture': id_fixture})
+#
+#             if len(fixture_bookmakers) > 0:
+#                 # Inizia a creare il dizionario prima di aggiungere le quote
+#                 bookmakers_filters = [bookmaker for bookmaker in fixture_bookmakers[0]['bookmakers'] if
+#                                       bookmaker['id'] in ids_bookmakers]
+#
+#                 odd_bet = {
+#                     'id_fixture_from_stat': id_fixture,
+#                     'api_from': 'sports-api',
+#                     'sport_key': league_id,
+#                     'sport_title': name_league,
+#                     'commence_time': data_fix,
+#                     'home_id': home_id,
+#                     'home_team': home_team,
+#                     'away_id': away_id,
+#                     'away_team': away_team,
+#                     'season': season,
+#                     'round_fixture': round_fixture,
+#                 }
+#
+#                 for bookmaker in bookmakers_filters:
+#                     # Crea il dizionario della fixture aggregando tutti gli eventi con le sue quote
+#                     name_book = bookmaker['name']
+#                     filter_bet = [bet for bet in bookmaker['bets'] if bet['id'] in ids_bets]
+#                     for filter_bet_name in filter_bet:
+#                         for value in filter_bet_name['values']:
+#                             odd_bet.update({
+#                                 f'{name_book}_{filter_bet_name['name']}_{value['value']}': value['odd']
+#                             })
+#
+#                 odds_bet.append(odd_bet)
+#
+#             if len(odds_bet) > 0:
+#                 # Inserisci e modifica il dataset attuale solo se c'è almeno un elemento
+#                 odd_bet_dt = pd.DataFrame(odds_bet)
+#                 concat_odds = pd.concat([dataset_odds, odd_bet_dt], axis=0)
+#                 print(concat_odds)
+#                 # TODO concat_odds.to_csv(name_odds_base, index=False)
