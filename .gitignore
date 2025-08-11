@@ -1,7 +1,7 @@
-/service_ia/model/__pycache__/
-/repository/base/__pycache__/
-/repository/__pycache__/
+/src/service_ia/model/__pycache__/
+/src/repository/base/__pycache__/
+/src/repository/__pycache__/
 /alembic/__pycache__/
 /alembic/versions/__pycache__/
-/service_ia/utility/__pycache__/request_api.cpython-312.pyc
-/service_ia/utility/__pycache__/utils.cpython-312.pyc
+/src/service_ia/utility/__pycache__/request_api.cpython-312.pyc
+/src/service_ia/utility/__pycache__/utils.cpython-312.pyc
