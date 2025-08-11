@@ -5,3 +5,6 @@
 /alembic/versions/__pycache__/
 /src/service_ia/utility/__pycache__/request_api.cpython-312.pyc
 /src/service_ia/utility/__pycache__/utils.cpython-312.pyc
+/src/__pycache__/__init__.cpython-312.pyc
+/src/service_ia/__pycache__/__init__.cpython-312.pyc
+/src/service_ia/utility/__pycache__/__init__.cpython-312.pyc
