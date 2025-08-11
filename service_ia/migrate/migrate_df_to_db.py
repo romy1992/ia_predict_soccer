@@ -87,9 +87,6 @@ def migrate_dataset():
                 'Substitutions': search_value(stat, 'Substitutions'),
                 'Throwins': search_value(stat, 'Throwins'),
                 'Medical Treatment': search_value(stat, 'Medical Treatment')
-            },
-            'mean_season_at_today': {
-
             }
         }
 
