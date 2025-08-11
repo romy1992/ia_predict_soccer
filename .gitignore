@@ -8,3 +8,12 @@
 /src/__pycache__/__init__.cpython-312.pyc
 /src/service_ia/__pycache__/__init__.cpython-312.pyc
 /src/service_ia/utility/__pycache__/__init__.cpython-312.pyc
+/src/service_ia/dataset/odds/dataset_events.xlsx
+/src/service_ia/dataset/odds/odds_dataset_copy.xlsx
+/src/service_ia/dataset/odds/odds_dataset.xlsx
+/src/service_ia/dataset/statistics/dataset_statistics_history.xlsx
+/src/service_ia/migrate/dataset_mean_history.xlsx
+/src/service_ia/pre_processing/__pycache__/__init__.cpython-312.pyc
+/src/service_ia/pre_processing/__pycache__/download_match.cpython-312.pyc
+/src/service_ia/pre_processing/__pycache__/statistics_service.cpython-312.pyc
+/tests/service/__pycache__/download_match_test.cpython-312-pytest-8.2.0.pyc
