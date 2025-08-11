@@ -109,22 +109,4 @@ class CrudRepository:
                 session.rollback()
                 raise
 
-    from sqlalchemy.dialects.postgresql import insert
 
-    # def upsert_massive_pg(session, Model, rows: list[dict], conflict_cols: list[str],
-    #                       update_cols: list[str] | None = None):
-    #     if not rows:
-    #         return
-    #     stmt = insert(Model.__table__).values(rows)
-    #
-    #     # colonne da aggiornare (di default tutte tranne le di conflitto e la PK)
-    #     if update_cols is None:
-    #         exclude = set(conflict_cols)
-    #         update_cols = [c.name for c in Model.__table__.columns if c.name not in exclude]
-    #
-    #     stmt = stmt.on_conflict_do_update(
-    #         index_elements=[Model.__table__.c[c] for c in conflict_cols],
-    #         set_={c: stmt.excluded[c] for c in update_cols}
-    #     )
-    #     session.execute(stmt)
-    #     session.commit()
