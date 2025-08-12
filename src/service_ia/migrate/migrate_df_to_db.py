@@ -254,13 +254,13 @@ def migrate_dataset():
 
     matches = []
     try:
-        # matches.extend(match_stat_odd())  # Migra tutte le statistiche che sono accomunate a odds + odds orfani di stat
+        matches.extend(match_stat_odd())  # Migra tutte le statistiche che sono accomunate a odds + odds orfani di stat
         matches.extend(match_only_stat())  # Migra solo le statistiche SENZA odds
     except Exception as e:
         logging.error(str(e))
     finally:
         # Salva tutto
-        repo_match.insert_massive(matches)
+        repo_match.save_all(matches)
 
 
 # migrate_dataset()

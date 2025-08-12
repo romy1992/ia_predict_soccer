@@ -15,9 +15,10 @@ class CrudRepository:
         self.session = SessionLocal()  # Apre la connessione al db
         self.entity = entity  # Nome dell'entità
 
-    def insert(self, obj):
+    def save(self, obj):
         """
-        Inserisce un nuovo record
+        Inserisce un nuovo record se NON esiste
+        Aggiorna se esiste gestendo le relazioni
         :return: None
         """
         with self.session as session:
@@ -30,7 +31,7 @@ class CrudRepository:
                 session.rollback()
                 raise
 
-    def insert_massive(self, list_obj: list):
+    def save_all(self, list_obj: list):
         """
         Inserisce in maniera massiva le entità
         :return:
@@ -44,7 +45,6 @@ class CrudRepository:
                     logging.error(str(e))
                     session.rollback()
                     raise
-
 
     def search_all(self):
         """
@@ -108,5 +108,3 @@ class CrudRepository:
                 logging.error(str(e))
                 session.rollback()
                 raise
-
-

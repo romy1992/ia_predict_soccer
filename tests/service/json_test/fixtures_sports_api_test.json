@@ -34,14 +34,14 @@
     },
     "teams": {
       "home": {
-        "id": 1598,
-        "name": "Orlando City SC",
+        "id": 505,
+        "name": "Inter",
         "logo": "https:\/\/media.api-sports.io\/football\/teams\/1598.png",
         "winner": true
       },
       "away": {
-        "id": 9568,
-        "name": "Inter Miami",
+        "id": 487,
+        "name": "Lazio",
         "logo": "https:\/\/media.api-sports.io\/football\/teams\/9568.png",
         "winner": false
       }
