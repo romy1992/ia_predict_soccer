@@ -35,6 +35,7 @@ LAVORARE QUINDI IN MANIERA INDIPEDENTE
 import ast
 import json
 import logging
+import os
 from datetime import datetime, timezone, timedelta
 
 import pandas as pd
@@ -48,15 +49,18 @@ name_id_odds_h2h_totals = f'{base_dataset}/id_odds_h2h_totals.csv'  # Dataset an
 name_odds_bookmakers = f'{base_dataset}/odds_h2h_totals_bookmakers.csv'  # Dataset conseguenza del precedente dove prende i bookmakers(colonna) che è solo json e crea un dataset solo con quote
 name_odds_base = f'{base_dataset}/odds_dataset.csv'  # Dataset che unisce il primo e il secondo precedenti ripuliti per duplicati
 
-with open('../json/bookmakers.json', 'r', encoding='utf-8') as file:
+BASE_DIR = os.path.dirname(__file__)
+
+with open(os.path.abspath(os.path.join(BASE_DIR, '..', 'json', 'bookmakers.json')), 'r', encoding='utf-8') as file:
     BOOKMAKERS_SPORTS = json.load(file)
 
-with open('../json/bet.json', 'r', encoding='utf-8') as file:
+with open(os.path.abspath(os.path.join(BASE_DIR, '..', 'json', 'bet.json')), 'r', encoding='utf-8') as file:
     BET_BOOKMAKERS = json.load(file)
 
 regions = 'us,eu'
 markets_base = 'h2h,totals'
-markets_events = 'alternate_totals,btts,team_totals,double_chance,alternate_team_totals,alternate_totals_corners,alternate_totals_cards'  # TODO ci saranno da inserire gli altri non appena scatterà il nuovo abbonamento :  https://the-odds-api.com/sports-odds-data/betting-markets.html#featured-betting-markets -> qui ci sono tutte:leggere anche "Soccer Player Props API" e "Other soccer betting markets" per cartellini e angoli
+# TODO ci saranno da inserire gli altri non appena scatterà il nuovo abbonamento :  https://the-odds-api.com/sports-odds-data/betting-markets.html#featured-betting-markets -> qui ci sono tutte:leggere anche "Soccer Player Props API" e "Other soccer betting markets" per cartellini e angoli
+markets_events = 'alternate_totals,btts,team_totals,double_chance,alternate_team_totals,alternate_totals_corners,alternate_totals_cards'
 # Data iniziale
 start_date = datetime(2020, 6, 6, 10, 5, tzinfo=timezone.utc)
 
@@ -670,7 +674,8 @@ def aggregate_events_into_dataset():
 
 
     """
-    dataset_odds = pd.read_csv(f'{base_dataset}/odds_dataset_copy.csv', low_memory=False)
+    path_csv = os.path.abspath(os.path.join(BASE_DIR, base_dataset, 'odds_dataset.csv'))
+    dataset_odds = pd.read_csv(path_csv, low_memory=False)
     dict_ods = dataset_odds.to_dict(orient='records')
     # TODO : Check per controllare quante ne ha fatte fino ad ora -> 04/08/2025 = 853
     #   dict_ods = [d for d in dataset_odds.to_dict(orient='records') if
@@ -713,11 +718,14 @@ def aggregate_events_into_dataset():
                         # double_chance : Doppia Chance 1x x2 12
                         final_row.update(get_double_chance(bookmaker, title, home_team, away_team))
                     # Applica final_row alla riga corrente
+                    filter_final_row = {}
                     for col, val in final_row.items():
                         if val:  # Solo se la colonna ha un valore altrimenti lascia stare
-                            dataset_odds.at[index, col] = val
+                            filter_final_row.update({col: val})
                     # Per eventi futuri, marchio la riga come UTILIZZATA per questa api
-                    dataset_odds.at[index, 'event_used'] = 1
+                    filter_final_row.update({'event_used': 1})
+                    for col, val in filter_final_row.items():
+                        dataset_odds.at[index, col] = val
     except Exception as e:
         logging.warning(str(e))
     finally:
@@ -727,20 +735,19 @@ def aggregate_events_into_dataset():
 
 
 # aggregate_events_into_dataset()
-# =============================================== STEP 2 ===============================================
-# dict_ods = [d for d in pd.read_csv(f'{base_dataset}/odds_dataset_copy.csv').to_dict(orient='records') if
-#             pd.to_datetime(d['commence_time']).tz_convert(None) >= pd.Timestamp('2023-05-03') and pd.notna(
-#                 d['event_used'])]
-#
-# d = pd.DataFrame(dict_ods)
-# columns = [a for a in d.columns if 'corner_' in a and 'or ' in a]
-# d.drop(columns=columns, inplace=True)
-# d.to_excel(f'{base_dataset}/dataset_events.xlsx', index=False)
 
-with open('../../../tests/service/json_test/odds_api_test.json', 'r', encoding='utf-8') as file:
-    test = json.load(file)
-for b in test['data']['bookmakers']:
-    title = b.get('title')
-    print(get_corners(b, title))
-    print(get_cards(b, title))
-    print(get_double_chance(b, title, test['data']['home_team'], test['data']['away_team']))
+# =============================================== STEP 2 ===============================================
+# TODO test per eliminare lo sbaglio con corner e cards e salvare in un dataset di test
+d = pd.read_csv(f'{base_dataset}/odds_dataset.csv')
+columns = [a for a in d.columns if 'corner_' in a and 'or ' in a]
+d.drop(columns=columns, inplace=True)
+d.to_excel(f'{base_dataset}/dataset_events.xlsx', index=False)
+
+# TODO questo qui sotto era per un test, ma magari facciamo uno unit
+# with open('../../../tests/service/json_test/odds_api_test.json', 'r', encoding='utf-8') as file:
+#     test = json.load(file)
+# for b in test['data']['bookmakers']:
+#     title = b.get('title')
+#     print(get_corners(b, title))
+#     print(get_cards(b, title))
+#     print(get_double_chance(b, title, test['data']['home_team'], test['data']['away_team']))
