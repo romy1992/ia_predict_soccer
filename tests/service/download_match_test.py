@@ -3,7 +3,7 @@ import unittest
 from unittest.mock import patch, call, ANY
 
 from src.service_ia.model.match import Match, Statistics, Odds
-from src.service_ia.pre_processing.download_match import download_import_matches
+from src.service_ia.pre_processing.download_match_service import download_import_matches
 
 
 def base_test(mock_form, mock_api):
@@ -22,9 +22,9 @@ def base_test(mock_form, mock_api):
         elif path == "/odds":
             # Ritorna le quote
             return read_open_file('json_test/odds_sports_api_test.json')
-        # elif path == '/predictions':
-        #     # Per predizioni
-        #     return read_open_file('json_test/predictions_sports_api_test.json')
+        elif path == '/predictions':
+            # Per predizioni
+            return read_open_file('json_test/predictions_sports_api_test.json')
         return []
 
     mock_api.side_effect = fake_api
@@ -238,10 +238,10 @@ class TestDownloadMatch(unittest.TestCase):
         self.match = match
 
     # ordine inverso negli argomenti del test: l'ultimo @patch è il primo parametro!
-    @patch("src.service_ia.pre_processing.download_match.repo_match.save_all")
-    @patch("src.service_ia.pre_processing.download_match.base_api_statistics")
-    @patch("src.service_ia.pre_processing.statistics_service.base_api_statistics")
-    @patch("src.service_ia.pre_processing.download_match.repo_match.filter_by")
+    @patch("src.service_ia.pre_processing.download_match_service.repo_match.save_all")
+    @patch("src.service_ia.pre_processing.download_match_service.base_api_statistics")
+    @patch("src.service_ia.mapper.statistic_mapper.base_api_statistics")
+    @patch("src.service_ia.pre_processing.download_match_service.repo_match.filter_by")
     def test_download_import_matches_ok(self, mock_get, mock_form, mock_api, mock_insert):
         base_test(mock_form, mock_api)
         mock_insert.return_value = None
@@ -262,10 +262,10 @@ class TestDownloadMatch(unittest.TestCase):
         # ha salvato a DB una sola volta?
         mock_insert.assert_called_once()
 
-    @patch("src.service_ia.pre_processing.download_match.repo_match.save_all")
-    @patch("src.service_ia.pre_processing.download_match.base_api_statistics")
-    @patch("src.service_ia.pre_processing.statistics_service.base_api_statistics")
-    @patch("src.service_ia.pre_processing.download_match.repo_match.filter_by")
+    @patch("src.service_ia.pre_processing.download_match_service.repo_match.save_all")
+    @patch("src.service_ia.pre_processing.download_match_service.base_api_statistics")
+    @patch("src.service_ia.mapper.statistic_mapper.base_api_statistics")
+    @patch("src.service_ia.pre_processing.download_match_service.repo_match.filter_by")
     def test_download_import_matches_ko(self, mock_get, mock_form, mock_api, mock_insert):
         base_test(mock_form, mock_api)
         mock_insert.side_effect = Exception("DB KO")
@@ -280,11 +280,11 @@ class TestDownloadMatch(unittest.TestCase):
         # # ripulisci
         # os.remove("error_save_dict.json")
 
-    @patch("src.service_ia.pre_processing.download_match.repo_match.save_all")
-    @patch("src.service_ia.pre_processing.download_match.base_api_statistics")
-    @patch("src.service_ia.pre_processing.statistics_service.base_api_statistics")
-    @patch("src.service_ia.pre_processing.download_match.repo_match.filter_by")
-    @patch("src.service_ia.pre_processing.download_match.repo_match.save")
+    @patch("src.service_ia.pre_processing.download_match_service.repo_match.save_all")
+    @patch("src.service_ia.pre_processing.download_match_service.base_api_statistics")
+    @patch("src.service_ia.mapper.statistic_mapper.base_api_statistics")
+    @patch("src.service_ia.pre_processing.download_match_service.repo_match.filter_by")
+    @patch("src.service_ia.pre_processing.download_match_service.repo_match.save")
     def test_download_import_matches_update(self, mock_save, mock_get, mock_form, mock_api, mock_insert):
         base_test(mock_form, mock_api)
         mock_get.return_value = self.match

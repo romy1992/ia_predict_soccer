@@ -13,8 +13,8 @@ from datetime import datetime, timedelta
 import pandas as pd
 
 from src.repository.match_repository import MatchRepository
+from src.service_ia.mapper.statistic_mapper import get_attribute_statistics, form_last_5_tot
 from src.service_ia.model.match import Match, Statistics, Odds
-from src.service_ia.pre_processing.statistics_service import form_last_5_tot, get_attribute_statistics
 from src.service_ia.utility.request_api import base_api_statistics
 
 logging.basicConfig(level=logging.DEBUG)
@@ -312,4 +312,5 @@ def re_processor_error():
         repo_match.save(match)
 
 
-re_processor_error()
+download_import_matches()
+# re_processor_error()
