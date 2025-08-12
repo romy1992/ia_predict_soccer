@@ -47,11 +47,10 @@ date_manual = '2025-03-07'
 # PEN è per partita finita ai rigori (QUINDI PER COPPE)
 status_list = ['FT', 'AET', 'PEN']
 
-list_dict_match = []
 repo_match = MatchRepository()
 
 
-def map_base_match(id_fix, fixture, league, season):
+def map_base_match(match, id_fix, fixture, league, season):
     teams_home = fixture['teams']['home']
     teams_away = fixture['teams']['away']
 
@@ -59,6 +58,7 @@ def map_base_match(id_fix, fixture, league, season):
         return team[value]
 
     return {
+        'id_match_fk': match.id_match_fk if match else None,
         'id_fixture': id_fix,
         'name_home': get_val(teams_home, 'name'),
         'id_team_home': get_val(teams_home, 'id'),
@@ -73,7 +73,7 @@ def map_base_match(id_fix, fixture, league, season):
     }
 
 
-def map_statistic(stat, team, id_fix, fixture):
+def map_statistic(match, stat, team, id_fix, fixture):
     """
     Mappa statistiche, forma fisica, comparison e prediction
     :return: nuovo dizionario di statistiche
@@ -87,49 +87,62 @@ def map_statistic(stat, team, id_fix, fixture):
     def search_key_value(index_key):
         return {key: value for key, value in attribute_stat.items() if pd.notna(value) and index_key in key}
 
+    def default_attribute(attribute):
+        return attribute_stat.get(attribute) or 0
+
+    id_stat = None
+    id_match = None
+    if match and match.statistics:
+        id_match = match.id_match_fk
+        id_stat = [st for st in match.statistics if st.statistics_team_id == id_team]
+        if len(id_stat) > 0:
+            id_stat = id_stat[0]
+
     return {
+        'id_statistics_fk': id_stat,
+        'id_match': id_match,
         'statistics_team_id': id_team,
         'score_ht': fixture['score']['halftime'][team],
         'score_ft': fixture['score']['fulltime'][team],
         'shots': search_key_value('Total Shots'),
-        'fouls': attribute_stat['Fouls'],
-        'corners': attribute_stat['Corner Kicks'],
-        'offside': attribute_stat['Offsides'],
-        'bass_possession': attribute_stat['Ball Possession'],
-        'yellow_cards': attribute_stat['Yellow Cards'],
-        'red_cards': attribute_stat['Red Cards'],
-        'goal_keeper': attribute_stat['Goalkeeper Saves'],
+        'fouls': default_attribute('Fouls'),
+        'corners': default_attribute('Corner Kicks'),
+        'offside': default_attribute('Offsides'),
+        'bass_possession': default_attribute('Ball Possession'),
+        'yellow_cards': default_attribute('Yellow Cards'),
+        'red_cards': default_attribute('Red Cards'),
+        'goal_keeper': default_attribute('Goalkeeper Saves'),
         'passes': search_key_value('asses'),
         'form': search_key_value('form_'),
         'for_': search_key_value('for_'),
         'against': search_key_value('against_'),
         'preview_matches': {
-            'wins_home': attribute_stat['wins_home'],
-            'wins_away': attribute_stat['wins_away'],
-            'draws_home': attribute_stat['draws_home'],
-            'draws_away': attribute_stat['draws_away'],
-            'loses_home': attribute_stat['loses_home'],
-            'loses_away': attribute_stat['loses_away']
+            'wins_home': default_attribute('wins_home'),
+            'wins_away': default_attribute('wins_away'),
+            'draws_home': default_attribute('draws_home'),
+            'draws_away': default_attribute('draws_away'),
+            'loses_home': default_attribute('loses_home'),
+            'loses_away': default_attribute('loses_away')
         },
         'comparison': search_key_value('comparison_'),
         'predict': search_key_value('predict_'),
         'generic_statistics': {
-            'expected_goals': attribute_stat['expected_goals'],
-            'goals_prevented': attribute_stat['goals_prevented'],
-            'Assists': attribute_stat.get('Assists') or 0,
-            'Counter Attacks': attribute_stat.get('Counter Attacks') or 0,
-            'Cross Attacks': attribute_stat.get('Cross Attacks') or 0,
-            'Free Kicks': attribute_stat.get('Free Kicks') or 0,
-            'Goals': attribute_stat.get('Goals') or 0,
-            'Goal Attempts': attribute_stat.get('Goal Attempts') or 0,
-            'Substitutions': attribute_stat.get('Substitutions') or 0,
-            'Throwins': attribute_stat.get('Throwins') or 0 ,
-            'Medical Treatment': attribute_stat.get('Medical Treatment') or 0
+            'expected_goals': default_attribute('expected_goals'),
+            'goals_prevented': default_attribute('goals_prevented'),
+            'Assists': default_attribute('Assists'),
+            'Counter Attacks': default_attribute('Counter Attacks'),
+            'Cross Attacks': default_attribute('Cross Attacks'),
+            'Free Kicks': default_attribute('Free Kicks'),
+            'Goals': default_attribute('Goals'),
+            'Goal Attempts': default_attribute('Goal Attempts'),
+            'Substitutions': default_attribute('Substitutions'),
+            'Throwins': default_attribute('Throwins'),
+            'Medical Treatment': default_attribute('Medical Treatment')
         }
     }
 
 
-def map_odds(id_fix):
+def map_odds(match, id_fix):
     """
     Mappa le quote dei bookmakers
     :return: nuovo dizionario di quote
@@ -160,6 +173,8 @@ def map_odds(id_fix):
 
     fixture_bookmakers = base_api_statistics(path='/odds', params={'fixture': id_fix})
     odd_bet = {
+        'id_odds_fk': match.odds[0].id_odds_fk if match and len(match.odds) > 0 else None,
+        'id_match': match.id_match_fk if match else None,
         'odds_from': 'sports-api'
     }
     if len(fixture_bookmakers) > 0:
@@ -183,18 +198,24 @@ def map_odds(id_fix):
                     if name_bet:
                         head_title = f'{alternate_value}_{name_book}'
                         context = {head_title: value['odd']}
-                        odd_bet.get(name_bet).update(context) \
-                            if odd_bet.get(name_bet) else odd_bet.update({name_bet: context})
+                        if context and head_title and value['odd']:
+                            odd_bet.get(name_bet).update(context) \
+                                if odd_bet.get(name_bet) else odd_bet.update({name_bet: context})
 
     return odd_bet
 
 
-def download_import_matches():
+def download_import_matches(seasons=None, leagues=None):
+    seasons = SEASONS if seasons is None else seasons
+    leagues = LEAGUES if leagues is None else leagues
+
+    list_matches = []
+    list_dict_matches = []
     try:
-        for season in SEASONS:
+        for season in seasons:
             logging.info(f'<<< Start season {season} >>>')
 
-            for league in LEAGUES:
+            for league in leagues:
                 logging.info(f'<<< Start season {season} for league {league} >>>')
 
                 fixtures = base_api_statistics(
@@ -205,8 +226,12 @@ def download_import_matches():
                 for fixture in fixtures:
                     id_fix = fixture['fixture']['id']
 
+                    # Cerco in db se esiste già match
+                    match = repo_match.filter_by(dict_search={'id_fixture': id_fix})
+
                     # Mappa la base del match
-                    dict_match = map_base_match(id_fix=id_fix, fixture=fixture, league=league, season=season)
+                    dict_match = map_base_match(match=match, id_fix=id_fix, fixture=fixture, league=league,
+                                                season=season)
 
                     def get_statistics():
                         # Recupero le statistiche dal nodo fixture principale
@@ -218,45 +243,73 @@ def download_import_matches():
 
                     # Mappa una serie di statistiche
                     statistics = get_statistics()
+                    stats_objs = []
                     if len(statistics) > 0:
                         logging.info(f'Statistics match {id_fix} : {statistics}')
-                        dict_match.update({
-                            'statistics': [
-                                Statistics(
-                                    **map_statistic(
-                                        statistic,
-                                        'home' if statistic['team']['id'] == fixture['teams']['home']['id'] else 'away',
-                                        id_fix,
-                                        fixture
-                                    )
+                        stats_objs = [
+                            Statistics(
+                                **map_statistic(
+                                    match,
+                                    statistic,
+                                    'home' if statistic['team']['id'] == fixture['teams']['home']['id'] else 'away',
+                                    id_fix,
+                                    fixture
                                 )
-                                for statistic in statistics
-                            ]
-                        })
+                            )
+                            for statistic in statistics
+                        ]
 
                     # Mappa le quote
-                    dict_match.update({'odds': Odds(**map_odds(id_fix))})
+                    odds_objs = [Odds(**map_odds(match, id_fix))]
 
-                    if len(dict_match) > 0:
+                    # AGGIUNGO A LIVELLO DI ORM LE CLASSI
+                    dict_match['statistics'] = stats_objs
+                    dict_match['odds'] = odds_objs
+
+                    # LE GESTISCO COME DIZIONARI
+                    dict_match_json = dict(dict_match)
+                    dict_match_json['statistics'] = [s.to_dict() for s in stats_objs]
+                    dict_match_json['odds'] = [o.to_dict() for o in odds_objs]
+
+                    if match is None:
+                        # LE AGGIUNGO PER PERSISTERE DOPO
                         match = Match(**dict_match)
-                        list_dict_match.append(match)
+                        list_matches.append(match)
+                        list_dict_matches.append(dict_match_json)
+                    else:
+                        # Aggiorno man mano se esiste già quel match
+                        repo_match.save(match)
     except Exception as e:
         logging.error('Errore durante il download : ', str(e))
     finally:
         try:
-            # Salva tutto
-            repo_match.insert_massive(list_dict_match)
-        except Exception as e_db:
-            logging.info('Errore durante il salvataggio a db.Salvato in un file temporaneo :', str(e_db))
+            # Salva tutto in maniera massiva SE NON ESISTE
+            repo_match.save_all(list_matches)
+        except Exception as err:
+            logging.error('Errore nel salvataggio a db. File temporaneo salvato')
             # Salvataggio in un file JSON
-            with open("error_save_dict.json", "w", encoding="utf-8") as f:
-                json.dump(list_dict_match, f, ensure_ascii=False, indent=4)
-    # TODO insert va bene nel primo inserimento ma questo sarà in continuo aggiornamento
-    # TODO linea 223
+            if len(list_dict_matches) > 0:
+                with open("error_save_dict.json", "w", encoding="utf-8") as f:
+                    json.dump(list_dict_matches, f, ensure_ascii=False, indent=4)
+
+    # TODO insert va bene nel primo inserimento ma questo sarà in continuo aggiornamento -> Testare con dati reali
     # TODO media statistiche
 
 
-def re_processor_error():  # TODO
+def re_processor_error():
     # Lettura da file JSON
     with open("error_save_dict.json", "r", encoding="utf-8") as f:
         dict_error = json.load(f)
+
+    for element in dict_error:
+        stat = element['statistics']
+        odd = element['odds']
+        element.pop('statistics')
+        element.pop('odds')
+        match = Match(**dict(element))
+        match.statistics = [Statistics(**dict(s)) for s in stat]
+        match.odds = [Odds(**dict(odd[0]))]
+        repo_match.save(match)
+
+
+re_processor_error()
