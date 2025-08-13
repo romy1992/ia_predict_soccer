@@ -12,7 +12,6 @@
 /src/__pycache__/
 /src/service_ia/__pycache__/
 /src/service_ia/dataset/odds/dataset_events.xlsx
-/src/service_ia/dataset/odds/odds_dataset_copy.xlsx
 /src/service_ia/dataset/odds/odds_dataset.xlsx
 /src/service_ia/dataset/statistics/dataset_statistics_history.xlsx
 /src/service_ia/migrate/dataset_mean_history.xlsx

@@ -3,7 +3,6 @@ import unittest
 from unittest.mock import patch, call, ANY
 
 from src.service_ia.model.match import Match, Statistics, Odds
-from src.service_ia.pre_processing.download_match_service import download_import_matches
 
 
 def base_test(mock_form, mock_api):
@@ -19,12 +18,12 @@ def base_test(mock_form, mock_api):
         elif path == "fixtures/statistics":
             # ritorna la lista di statistiche per home/away
             return read_open_file('json_test/fixtures_statistics_sports_api_test.json')
-        elif path == "/odds":
+        elif path == "odds":
             # Ritorna le quote
             return read_open_file('json_test/odds_sports_api_test.json')
-        elif path == '/predictions':
-            # Per predizioni
-            return read_open_file('json_test/predictions_sports_api_test.json')
+        # elif path == '/predictions':
+        #     # Per predizioni
+        #     return read_open_file('json_test/predictions_sports_api_test.json')
         return []
 
     mock_api.side_effect = fake_api
@@ -247,13 +246,14 @@ class TestDownloadMatch(unittest.TestCase):
         mock_insert.return_value = None
         mock_get.return_value = None
 
+        from src.service_ia.pre_processing.download_match_service import download_import_matches
         download_import_matches(seasons=[2024], leagues=[135])
 
         # Verifiche: è stata chiamata? con quale sequenza?
         expected_calls = [
             call(path="fixtures", params=ANY),  # prima prende le fixture
             call(path="fixtures/statistics", params={"fixture": 1326590}),  # poi stats (perché "statistics" era vuoto)
-            call(path="/odds", params={"fixture": 1326590}),  # poi le quote
+            call(path="odds", params={"fixture": 1326590}),  # poi le quote
         ]
         # La funzione è chiamata più volte nel loop: controlla ordine per la prima fixture
         mock_api.assert_has_calls(expected_calls, any_order=False)
@@ -271,14 +271,15 @@ class TestDownloadMatch(unittest.TestCase):
         mock_insert.side_effect = Exception("DB KO")
         mock_get.return_value = None
 
+        from src.service_ia.pre_processing.download_match_service import download_import_matches
         download_import_matches(seasons=[2024], leagues=[135])
         mock_insert.assert_called_once()
 
         # opzionale: verifica che venga usato il fallback su file
-        # import os, json
-        # assert os.path.exists("error_save_dict.json")
-        # # ripulisci
-        # os.remove("error_save_dict.json")
+        import os
+        assert os.path.exists("error_save_dict.json")
+        # ripulisci
+        os.remove("error_save_dict.json")
 
     @patch("src.service_ia.pre_processing.download_match_service.repo_match.save_all")
     @patch("src.service_ia.pre_processing.download_match_service.base_api_statistics")
@@ -291,13 +292,14 @@ class TestDownloadMatch(unittest.TestCase):
         mock_save.return_value = None
         mock_insert.return_value = None
 
+        from src.service_ia.pre_processing.download_match_service import download_import_matches
         download_import_matches(seasons=[2024], leagues=[135])
 
         # Verifiche: è stata chiamata? con quale sequenza?
         expected_calls = [
             call(path="fixtures", params=ANY),  # prima prende le fixture
             call(path="fixtures/statistics", params={"fixture": 1326590}),  # poi stats (perché "statistics" era vuoto)
-            call(path="/odds", params={"fixture": 1326590}),  # poi le quote
+            call(path="odds", params={"fixture": 1326590}),  # poi le quote
         ]
         # La funzione è chiamata più volte nel loop: controlla ordine per la prima fixture
         mock_api.assert_has_calls(expected_calls, any_order=False)
