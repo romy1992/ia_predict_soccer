@@ -16,7 +16,7 @@ pd.set_option('future.no_silent_downcasting', True)
 def migrate_dataset():
     statistics = pd.read_csv('../dataset/statistics/dataset_statistics_history.csv', low_memory=False).to_dict(
         orient='records')
-    odds = pd.read_csv('../dataset/odds/odds_dataset_copy.csv', low_memory=False).to_dict(
+    odds = pd.read_csv('../dataset/odds/odds_dataset.csv', low_memory=False).to_dict(
         orient='records')
     repo_match = MatchRepository()
 
@@ -273,52 +273,6 @@ columns_mean = ['Shots on Goal', 'Shots off Goal', 'Total Shots', 'Blocked Shots
 
 
 def create_dataset_mean():
-    dataset = pd.read_csv('../dataset/statistics/dataset_statistics_history.csv', low_memory=False)
-    dataset['date_fixture'] = pd.to_datetime(dataset['date_fixture']).dt.tz_localize(None)
-    dataset = dataset.to_dict(orient='records')
-    seasons = set([season['season'] for season in dataset])
-    id_teams = set([team['team_id'] for team in dataset])
-    df_final = pd.DataFrame()
-    all_mean = []
-
-    def replace_dataset(df):
-        """
-         Ripulisco il dizionario eliminando la '%' e calcolandola
-         Trova colonne con valori di tipo stringa e con '%'
-        """
-        for record in df:
-            for col, value in record.items():
-                try:
-                    if isinstance(value, str) and '%' in value:
-                        record[col] = float(value.replace('%', '')) / 100
-                except Exception:
-                    pass  # ignora valori non gestibili
-        return df
-
-    for season in seasons:
-        for id_team in id_teams:
-            # Recupero le partite della squadra della stagione
-            team = replace_dataset([df for df in dataset if df['team_id'] == id_team and df['season'] == season])
-            if len(team) > 0:
-                team = sorted(team, key=lambda x: x["date_fixture"])
-                for date_match in team:
-                    team_fixture = [t for t in team if t['date_fixture'] < date_match['date_fixture']]
-                    mean_team = team_fixture[columns_mean].mean()
-                    all_mean.append(mean_team)  # Aggiungo le colonne della media al DataFrame originale
-                # Imposto tutte le medie come dataset e ci aggiungo il prefisso
-                dataset_mean = pd.DataFrame(all_mean, columns=columns_mean).add_prefix('mean_')
-                team = team.reset_index(drop=True)
-                dataset_mean = dataset_mean.reset_index(drop=True)
-                team = pd.concat([team, dataset_mean], axis=1)  # Le concateno
-                team = team.iloc[1:]  # Rimuove la prima riga perché sarà sempre senza statistiche essendo la prima
-                all_mean = []  # Reimposto a 0 il dizionario delle medie
-                df_final = pd.concat([df_final.fillna(0), team.fillna(0)], axis=0)  # Incolonno uno sotto l'altro
-
-    # Salvo in Excel
-    df_final.to_excel("dataset_mean_history.xlsx", index=False)
-
-
-def create_dataset_mean_2():
     # Legge CSV
     dataset_df = pd.read_csv('../dataset/statistics/dataset_statistics_history.csv', low_memory=False)
     dataset_df['date_fixture'] = pd.to_datetime(dataset_df['date_fixture']).dt.tz_localize(None)
@@ -367,33 +321,4 @@ def create_dataset_mean_2():
     print("✅ Dataset salvato con medie in 'dataset_mean_history.xlsx'")
 
 
-create_dataset_mean_2()
-# convert_csv_to_exel('../dataset/statistics/dataset_statistics_history_temp_2.csv')
-# match = Match()
-# match.name_home = d[0]['team_name']
-# stat = Statistics()
-# stat.score_ft = '{"test":"ciao"}'
-# match.statistics.append(stat)
-# crud.insert(match)
-
-# matches = crud.search_all()
-# for match in matches:
-#     print(getattr(match, 'name_home'))
-#
-# dict_search = {
-#     'id_match_fk': 'e3c84abc-5389-4148-b70f-0e9f84e07e8a'
-# }
-# match = crud.filter_by(dict_search=dict_search)
-# print(getattr(match.first(), 'name_home'))
-
-# dict_search = {
-#     'id_match_fk': 'e3c84abc-5389-4148-b70f-0e9f84e07e8a',
-#     'name_home': 'Lazio233333'
-# }
-# m = crud.update(dict_search=dict_search, field_change='name_home', value_change='Lazio2', to_dict=True)
-# print(m)
-
-# dict_search = {
-#     'id_match_fk': "01a8dc4f-19e3-480d-84f2-d80a53e650ea"
-# }
-# crud.delete(dict_search=dict_search)
+create_dataset_mean()

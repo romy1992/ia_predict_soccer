@@ -171,7 +171,7 @@ def map_odds(match, id_fix):
                 return 'dc'
         return None
 
-    fixture_bookmakers = base_api_statistics(path='/odds', params={'fixture': id_fix})
+    fixture_bookmakers = base_api_statistics(path='odds', params={'fixture': id_fix})
     odd_bet = {
         'id_odds_fk': match.odds[0].id_odds_fk if match and len(match.odds) > 0 else None,
         'id_match': match.id_match_fk if match else None,
@@ -312,5 +312,5 @@ def re_processor_error():
         repo_match.save(match)
 
 
-download_import_matches()
+# download_import_matches()
 # re_processor_error()

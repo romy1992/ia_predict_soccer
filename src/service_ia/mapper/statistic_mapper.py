@@ -59,7 +59,7 @@ def form_last_5_tot(id_fixture, id_team):
     forma dell'attacco e forma della difesa più predizioni
     """
     # Predict della partita
-    fixtures_predict = base_api_statistics(path='/predictions', params={'fixture': id_fixture})
+    fixtures_predict = base_api_statistics(path='predictions', params={'fixture': id_fixture})
 
     if len(fixtures_predict) == 0:
         return None
