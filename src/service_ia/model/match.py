@@ -9,10 +9,10 @@ Base = declarative_base()
 class Match(Base):
     __tablename__ = 'match'
     id_match_fk = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    id_events = Column(String(32), unique=True)  # Id proveniente da odds.api (per quote)
+    id_events = Column(String(32))#, unique=True)  # Id proveniente da odds.api (per quote)
     # id_alternate_events: Id proveniente da odds.api (per quote) - In caso di mach rinviato o spostato
     id_alternate_events = Column(String(32))
-    id_fixture = Column(Integer, unique=True)  # Id proveniente da api.sports (per statistiche ed eventuali nuove quote)
+    id_fixture = Column(Integer)#, unique=True)  # Id proveniente da api.sports (per statistiche ed eventuali nuove quote)
     name_home = Column(String)  # Nome team casa
     id_team_home = Column(Integer)  # Id team casa
     name_away = Column(String)  # Nome tema ospite
@@ -28,13 +28,13 @@ class Match(Base):
     season = Column(Integer)  # Stagione
     statistics = relationship("Statistics",
                               back_populates="match",  # back_populates crea la relazione # 👈 One-to-Many
-                              cascade="all, delete-orphan")
+                              cascade="all, delete-orphan", lazy="selectin")
     odds = relationship("Odds",
                         back_populates="match",  # back_populates crea la relazione # 👈 One-to-Many
-                        cascade="all, delete-orphan")
+                        cascade="all, delete-orphan", lazy="selectin")
 
-    mean_statistics = Column(JSON,
-                             nullable=True)  # Medie stagionali alla giornata corrente (cioè PRIMA CHE INIZIASSE LA PARTITA CORRENTE)
+    # Medie stagionali alla giornata corrente (cioè PRIMA CHE INIZIASSE LA PARTITA CORRENTE)
+    mean_statistics = Column(JSON, nullable=True)
 
     def to_dict(self):
         return {column.name: getattr(self, column.name) for column in self.__table__.columns}

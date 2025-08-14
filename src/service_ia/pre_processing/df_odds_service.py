@@ -60,7 +60,7 @@ with open(os.path.abspath(os.path.join(BASE_DIR, '..', 'json', 'bet.json')), 'r'
 regions = 'us,eu'
 markets_base = 'h2h,totals'
 # TODO ci saranno da inserire gli altri non appena scatterà il nuovo abbonamento :  https://the-odds-api.com/sports-odds-data/betting-markets.html#featured-betting-markets -> qui ci sono tutte:leggere anche "Soccer Player Props API" e "Other soccer betting markets" per cartellini e angoli
-markets_events = 'alternate_totals,btts,team_totals,double_chance,alternate_team_totals,alternate_totals_corners,alternate_totals_cards'
+markets_events = 'alternate_totals,btts,double_chance,alternate_team_totals,team_totals'  # TODO : alternate_totals_corners,alternate_totals_cards' -> Per poter elaborare una grossa quantità di eventi,meglio tenere da parte angoli e cartellini
 # Data iniziale
 start_date = datetime(2020, 6, 6, 10, 5, tzinfo=timezone.utc)
 
@@ -683,6 +683,7 @@ def aggregate_events_into_dataset():
     #                 d['event_used'])]
     try:
         for index, row in enumerate(dict_ods):
+            logging.info(f'Row {index}/{len(dict_ods)}')
             data_row = row['commence_time']
             if pd.to_datetime(data_row).tz_convert(None) >= pd.Timestamp('2023-05-03') and pd.isna(row['event_used']):
                 logging.info(f'Row {index}')
@@ -733,15 +734,13 @@ def aggregate_events_into_dataset():
         dataset_odds.to_csv(f'{base_dataset}/odds_dataset_copy.csv', index=False)
         logging.info(f'{name_odds_base} Aggiornato')
 
-
 # aggregate_events_into_dataset()
-
 # =============================================== STEP 2 ===============================================
 # TODO test per eliminare lo sbaglio con corner e cards e salvare in un dataset di test
-d = pd.read_csv(f'{base_dataset}/odds_dataset.csv')
-columns = [a for a in d.columns if 'corner_' in a and 'or ' in a]
-d.drop(columns=columns, inplace=True)
-d.to_excel(f'{base_dataset}/dataset_events.xlsx', index=False)
+# d = pd.read_csv(f'{base_dataset}/odds_dataset.csv')
+# columns = [a for a in d.columns if 'corner_' in a and 'or ' in a]
+# d.drop(columns=columns, inplace=True)
+# d.to_excel(f'{base_dataset}/dataset_events.xlsx', index=False)
 
 # TODO questo qui sotto era per un test, ma magari facciamo uno unit
 # with open('../../../tests/service/json_test/odds_api_test.json', 'r', encoding='utf-8') as file:

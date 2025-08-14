@@ -9,6 +9,7 @@ import json
 import logging
 import os
 from datetime import datetime, timedelta
+from statistics import mean
 
 import pandas as pd
 
@@ -19,8 +20,10 @@ from src.service_ia.utility.request_api import base_api_statistics
 
 logging.basicConfig(level=logging.DEBUG)
 
+# Variabili
 LEAGUES = [135, 136, 140, 78, 39, 94, 203, 2, 3, 848, 492]
 SEASONS = [2025]
+repo_match = MatchRepository()
 
 BASE_DIR = os.path.dirname(__file__)
 BET_FILE = os.path.join(BASE_DIR, '..', 'json', 'bet.json')
@@ -28,26 +31,10 @@ BET_FILE = os.path.join(BASE_DIR, '..', 'json', 'bet.json')
 with open(os.path.abspath(BET_FILE), 'r', encoding='utf-8') as file:
     BET_BOOKMAKERS = json.load(file)
 
-# ( 0 -> Oggi , - 1 -> Ieri, - 2 -> altro ieri , + 1 -> Domani , + 2 DopoDomani)
-
-# Formato richiesto è esempio:"2025-02-12"
-format_data = '%Y-%m-%d'
-current_data = datetime.now()
-# Scegliere da che giorno indietro si vuole andare per recuperare le partite
-from_date = (current_data - timedelta(days=3)).strftime(format_data)
-# Fino a ...
-to_date = (current_data - timedelta(days=0)).strftime(format_data)
-
-# Scegliere i giorni indietro che si vuole andare per recuperare le partite (ESEGUIRA' solo un giorno)
-date = (current_data - timedelta(days=0)).strftime(format_data)
-date_manual = '2025-03-07'
-
 # FT è partita finita
 # AET è per partita finita ai supplementari (QUINDI PER COPPE)
 # PEN è per partita finita ai rigori (QUINDI PER COPPE)
 status_list = ['FT', 'AET', 'PEN']
-
-repo_match = MatchRepository()
 
 
 def map_base_match(match, id_fix, fixture, league, season):
@@ -209,6 +196,30 @@ def download_import_matches(seasons=None, leagues=None):
     seasons = SEASONS if seasons is None else seasons
     leagues = LEAGUES if leagues is None else leagues
 
+    def calculate_date():
+        """
+        0: Oggi
+        -1: Ieri
+        -2: Altro ieri
+        +1: Domani
+        +2: DopoDomani
+        :return:
+        """
+        # Formato richiesto è esempio:"2025-02-12"
+        format_data = '%Y-%m-%d'
+        current_data = datetime.now()
+        # Scegliere da che giorno indietro si vuole andare per recuperare le partite
+        from_date = (current_data - timedelta(days=3)).strftime(format_data)
+        # Fino a ...
+        to_date = (current_data - timedelta(days=0)).strftime(format_data)
+
+        # Scegliere i giorni indietro che si vuole andare per recuperare le partite (ESEGUIRA' solo un giorno)
+        date = (current_data - timedelta(days=0)).strftime(format_data)
+        date_manual = '2025-03-07'
+        return from_date, to_date, date, date_manual
+
+    from_date, to_date, date, date_manual = calculate_date()
+
     list_matches = []
     list_dict_matches = []
     try:
@@ -223,6 +234,9 @@ def download_import_matches(seasons=None, leagues=None):
                     params={'from': from_date, 'to': to_date, 'status': status_list, 'league': league,
                             # 'date': date
                             })
+
+                # TODO : aggiungere l'estrazione anche per partite che devono ancora disputarsi cosi che si creino gli odds e le medie
+
                 for fixture in fixtures:
                     id_fix = fixture['fixture']['id']
 
@@ -293,7 +307,7 @@ def download_import_matches(seasons=None, leagues=None):
                     json.dump(list_dict_matches, f, ensure_ascii=False, indent=4)
 
     # TODO insert va bene nel primo inserimento ma questo sarà in continuo aggiornamento -> Testare con dati reali
-    # TODO media statistiche
+    # TODO media statistiche -> Testare con dati reali
 
 
 def re_processor_error():
@@ -312,5 +326,134 @@ def re_processor_error():
         repo_match.save(match)
 
 
+# TODO
+"""
+- Capire perché le medie non vengono calcolate bene
+
+- Aggiungere l'estrazione anche per partite che devono ancora disputarsi cosi che si creino gli odds e le medie
+
+- Insert va bene nel primo inserimento ma questo sarà in continuo aggiornamento -> Testare con dati reali
+
+- Media statistiche -> Testare con dati reali
+
+"""
+
+# TODO Capire perché le medie non vengono calcolate bene
+def calculate_mean(with_season: int = None, force_mean: bool = False, teams: list = None):
+    """
+    Calcola le medie stagionali di ogni squadra prima del match corrente o in maniera puntuale/massiva
+    :param with_season: int -> se valorizzata, calcola solo la stagione indicata
+    :param force_mean: forza il calcolo della media ANCHE per match che hanno già la media persistita
+    :param teams : Un array di id teams
+    :return: Persist in update massive (bulk)
+    """
+    columns_mean = ['Shots on Goal', 'Shots off Goal', 'Total Shots', 'Blocked Shots', 'Shots insidebox',
+                    'Shots outsidebox', 'Fouls',
+                    'Corner Kicks', 'Offsides', 'Ball Possession', 'Yellow Cards', 'Red Cards',
+                    'Goalkeeper Saves',
+                    'Total passes', 'Passes accurate', 'Passes %']
+
+    # Ricerca per id_fixture valorizzati
+    filters = {
+        'id_fixture': "not None"
+    }
+    if with_season:
+        filters.update({'season': with_season})
+    if teams:
+        filters.update({"OR": [
+            ("id_team_home", teams),
+            ("id_team_away", teams)
+        ]})
+
+    all_match = repo_match.search_filter(filters=filters)
+    seasons = set(match.season for match in all_match)
+    id_teams_home = [match.id_team_home for match in all_match]
+    id_teams_away = [match.id_team_away for match in all_match]
+    id_teams = set(list(id_teams_home) + list(id_teams_away))
+    list_obj = []  # Update in maniera massiva con bulk_update_mappings
+    for season in seasons:
+        logging.info(f'<<< Start season {season} >>>')
+        for id_team in id_teams:
+            logging.info(f'<<< Start id_team {id_team} >>>')
+            # Filtra partite della squadra in quella stagione
+            team_matches = [rec for rec in all_match if
+                            (rec.id_team_home == id_team or rec.id_team_away == id_team) and rec.season == season]
+            if len(team_matches) > 0:
+                # Ordina per data
+                team_matches = sorted(team_matches, key=lambda x: x.date_match)
+                logging.info(f'<<< Total row match {len(team_matches)} for id_team {id_team} >>>')
+
+                mean_rows = {}
+                for idx, match in enumerate(team_matches):
+                    # Dalla seconda partita stagionale in poi
+                    # Se il match NON ha ancora le medie calcolate O la forzatura per il calcolo è True
+                    if idx > 0 and (match.mean_statistics is None or force_mean):
+                        prev_matches = team_matches[:idx]  # Recupera tutti gli elementi precedenti
+                        stat_prev = [s for stat in prev_matches for s in stat.statistics if
+                                     s.statistics_team_id == id_team]
+                        if len(stat_prev) > 0:
+                            def create_dict_stat_prev():
+                                array_prev = []
+
+                                def get_value(val, des_val=None):
+                                    real_attr = getattr(s, val)
+                                    if des_val:
+                                        return real_attr.get(des_val) if real_attr and real_attr.get(des_val) else 0
+                                    else:
+                                        return real_attr or 0
+
+                                for s in stat_prev:
+                                    array_prev.append({
+                                        'Shots on Goal': get_value('shots', 'Shots on Goal'),
+                                        'Shots off Goal': get_value('shots', 'Shots off Goal'),
+                                        'Total Shots': get_value('shots', 'Total Goal'),
+                                        'Blocked Shots': get_value('shots', 'Blocked Goal'),
+                                        'Shots insidebox': get_value('shots', 'Shots insidebox'),
+                                        'Shots outsidebox': get_value('shots', 'Shots outsidebox'),
+
+                                        'Fouls': get_value('fouls'),
+                                        'Corner Kicks': get_value('corners'),
+                                        'Offsides': get_value('offside'),
+                                        'Ball Possession': get_value('bass_possession'),
+                                        'Yellow Cards': get_value('yellow_cards'),
+                                        'Red Cards': get_value('red_cards'),
+                                        'Goalkeeper Saves': get_value('goal_keeper'),
+
+                                        'Total passes': get_value('passes', 'Total passes'),
+                                        'Passes accurate': get_value('passes', 'Passes accurate'),
+                                        'Passes %': get_value('passes', 'Passes %')
+                                    })
+
+                                return array_prev
+
+                            mean_rows.update({
+                                f'mean_{key}': mean(m[key] for m in create_dict_stat_prev())
+                                for key in columns_mean
+                            })
+                            mean_rows.update({'id_team': id_team})
+
+                            # TODO : capire se è un caso possibile
+                            # if match.mean_statistics:  # Se il match ha già medie di una delle 2 squadre eseguito
+                            #     # Aggiunge la seconda squadra per evitare che cancelli il precedente calcolo
+                            #     mean_rows.update(match.mean_statistics)
+
+                            # Controlla se esiste già un elemento con la stessa partita
+                            check_l_obj = [l_o for l_o in list_obj if l_o.get('id_match_fk') == match.id_match_fk]
+                            # Oggetto che verrà salvato/aggiornato
+                            save_obj = {'id_match_fk': match.id_match_fk, 'mean_statistics': mean_rows}
+                            # Se esiste nella lista che sto per creare già lo stesso id partita, devo solo aggiornare array con quel dizionario
+                            if len(check_l_obj) > 0:
+                                old_mean = check_l_obj[0]['mean_statistics']
+                                total_mean_match = [old_mean, mean_rows]
+                                check_l_obj[0].update(
+                                    {'id_match_fk': match.id_match_fk, 'mean_statistics': total_mean_match})
+                            else:
+                                # Creo le righe che verranno poi aggiornate massivamente
+                                list_obj.append(save_obj)
+    # Salvataggio massivo
+    repo_match.massive_update_bulk(list_obj)
+
+
 # download_import_matches()
 # re_processor_error()
+calculate_mean(with_season=2024, force_mean=True, teams=[487])
