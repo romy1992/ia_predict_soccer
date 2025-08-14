@@ -7,20 +7,17 @@ from src.service_ia.mapper.statistic_mapper import get_attribute_statistics, for
 from src.service_ia.utility.request_api import base_api_statistics
 
 # 135, 136, 140, 78, 39, 94, 203,492 , (2,3,848) -> sono le coppe, ma non ha molto senso rieseguirle
-LEAGUES = [39, 94]  # Prossimo
+LEAGUES = [848]  # Prossimo
 # SEASONS = [2014, 2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024]
 # todo  League 2 - 2023 deve completarsi
 # todo  League 3 - 2023 deve completarsi
 # todo  League 2 - 2024 deve completarsi
 # todo  League 3 - 2024 deve completarsi MAI INIZIATO
-# todo  League 848 - 2023 deve completarsi
+# todo  League 848 - 2023 deve completarsi ANCORA
 # todo  League 144 - 2023 deve completarsi
-# todo  League 78 - 2024 deve completarsi
 # todo  League 848 - 2024 deve completarsi MAI INIZIATO
 # todo  League 492 - 2024 deve completarsi MAI INIZIATO
-# todo  League 140 - 2019 deve completarsi CONTROLLARE SE BISOGNA COMPLETARLO
-# todo  League 39 - 2020 deve completarsi Ma domani 14/08 farò di nuovo partire 39 e 40 2020
-SEASONS = [2020]
+SEASONS = [2023]
 INDEX = 0
 JSON_DICT = []
 name_history = '../dataset/statistics/dataset_statistics_history.csv'
