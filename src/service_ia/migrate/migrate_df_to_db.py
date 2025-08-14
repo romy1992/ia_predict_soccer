@@ -3,6 +3,7 @@ Operazione di migrazione da dataset al db.
 Nasce dalla necessità di avere tutto organizzato in un db e non nei csv o excel
 """
 import logging
+import os
 
 import pandas as pd
 
@@ -11,13 +12,14 @@ from src.service_ia.model.match import Match, Statistics, Odds
 
 logging.basicConfig(level=logging.DEBUG)
 pd.set_option('future.no_silent_downcasting', True)
+BASE_DIR = os.path.dirname(__file__)
+path_df_h_stat = os.path.join(BASE_DIR, '..', 'dataset', 'statistics', 'dataset_statistics_history.csv')
+path_df_h_odds = os.path.join(BASE_DIR, '..', 'dataset', 'odds', 'odds_dataset.csv')
 
 
 def migrate_dataset():
-    statistics = pd.read_csv('../dataset/statistics/dataset_statistics_history.csv', low_memory=False).to_dict(
-        orient='records')
-    odds = pd.read_csv('../dataset/odds/odds_dataset.csv', low_memory=False).to_dict(
-        orient='records')
+    statistics = pd.read_csv(path_df_h_stat, low_memory=False).to_dict(orient='records')
+    odds = pd.read_csv(path_df_h_odds, low_memory=False).to_dict(orient='records')
     repo_match = MatchRepository()
 
     list_id_odds = set([odd['id'] for odd in odds])
@@ -263,62 +265,5 @@ def migrate_dataset():
         repo_match.save_all(matches)
 
 
-# migrate_dataset()
+migrate_dataset()
 
-columns_mean = ['Shots on Goal', 'Shots off Goal', 'Total Shots', 'Blocked Shots', 'Shots insidebox',
-                'Shots outsidebox', 'Fouls',
-                'Corner Kicks', 'Offsides', 'Ball Possession', 'Yellow Cards', 'Red Cards',
-                'Goalkeeper Saves',
-                'Total passes', 'Passes accurate', 'Passes %']
-
-
-def create_dataset_mean():
-    # Legge CSV
-    dataset_df = pd.read_csv('../dataset/statistics/dataset_statistics_history.csv', low_memory=False)
-    dataset_df['date_fixture'] = pd.to_datetime(dataset_df['date_fixture']).dt.tz_localize(None)
-
-    # Rimuove % e converte in decimali
-    for col in dataset_df.columns:
-        if dataset_df[col].dtype == object and dataset_df[col].str.contains('%', na=False).any():
-            dataset_df[col] = dataset_df[col].str.replace('%', '', regex=False).astype(float) / 100
-
-    # Converte in lista di dizionari
-    dataset = dataset_df.to_dict(orient='records')
-
-    seasons = set(season['season'] for season in dataset)
-    id_teams = set(team['team_id'] for team in dataset)
-
-    df_final = pd.DataFrame()
-
-    for season in seasons:
-        for id_team in id_teams:
-            # Filtra partite della squadra in quella stagione
-            team = [rec for rec in dataset if rec['team_id'] == id_team and rec['season'] == season]
-
-            if team:
-                # Ordina per data
-                team = sorted(team, key=lambda x: x["date_fixture"])
-
-                mean_rows = []
-                for idx, match in enumerate(team):
-                    if idx == 0:
-                        mean_rows.append([None] * len(columns_mean))
-                    else:
-                        prev_matches = team[:idx]
-                        prev_df = pd.DataFrame(prev_matches)
-                        mean_rows.append(prev_df[columns_mean].mean().tolist())
-
-                # DataFrame delle medie
-                dataset_mean = pd.DataFrame(mean_rows, columns=columns_mean).add_prefix('mean_')
-
-                # Converte team in DataFrame per concatenare
-                team_df = pd.DataFrame(team).reset_index(drop=True)
-                team_df = pd.concat([team_df, dataset_mean], axis=1)
-
-                df_final = pd.concat([df_final, team_df], ignore_index=True)
-
-    df_final.to_excel("dataset_mean_history.xlsx", index=False)
-    print("✅ Dataset salvato con medie in 'dataset_mean_history.xlsx'")
-
-
-create_dataset_mean()

@@ -4,7 +4,10 @@ import pandas as pd
 import unicodedata
 from rapidfuzz import fuzz
 
-with open('../json/black_name.json', 'r', encoding='utf-8') as file:
+from src.service_ia.model.match import Statistics, Odds, Match
+
+BASE_DIR = os.path.dirname(__file__)
+with open(os.path.join(BASE_DIR, '..', 'json', 'black_name.json'), 'r', encoding='utf-8') as file:
     black_names = json.load(file)
 
 
@@ -84,4 +87,31 @@ def check_name(**kwargs):
     score_away_ritorno = fuzzy_score(stat['opponent_name'], home_odds)
 
     return ((score_home_andata >= soglia) and (score_away_andata >= soglia)) or (
-                (score_home_ritorno >= soglia) and (score_away_ritorno >= soglia))
+            (score_home_ritorno >= soglia) and (score_away_ritorno >= soglia))
+
+
+def convert_orm_match_to_dict(matches):
+    matches_all = []
+    for m in matches:
+        stat = [s.to_dict() for s in m.statistics]
+        odds = [o.to_dict() for o in m.odds]
+        m = m.to_dict()
+        m['statistics'] = stat
+        m['odds'] = odds
+        m['mean_statistics'] = {}
+        matches_all.append(m)
+    return matches_all
+
+
+def convert_dict_match_to_orm(dict_json):
+    matches_all = []
+    for d in dict_json:
+        stat = [Statistics(**s) for s in d['statistics']]
+        odds = [Odds(**o) for o in d['odds']]
+        d.pop('statistics')
+        d.pop('odds')
+        match = Match(**d)
+        match.statistics = stat
+        match.odds = odds
+        matches_all.append(match)
+    return matches_all
