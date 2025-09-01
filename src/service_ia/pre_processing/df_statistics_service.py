@@ -5,19 +5,11 @@ import pandas as pd
 
 from src.service_ia.mapper.statistic_mapper import get_attribute_statistics, form_last_5_tot, get_predict
 from src.service_ia.utility.request_api import base_api_statistics
+from src.service_ia.utility.utils import convert_csv_to_exel
 
 # 135, 136, 140, 78, 39, 94, 203,492 , (2,3,848) -> sono le coppe, ma non ha molto senso rieseguirle
-LEAGUES = [848]  # Prossimo
-# SEASONS = [2014, 2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024]
-# todo  League 2 - 2023 deve completarsi
-# todo  League 3 - 2023 deve completarsi
-# todo  League 2 - 2024 deve completarsi
-# todo  League 3 - 2024 deve completarsi MAI INIZIATO
-# todo  League 848 - 2023 deve completarsi ANCORA
-# todo  League 144 - 2023 deve completarsi
-# todo  League 848 - 2024 deve completarsi MAI INIZIATO
-# todo  League 492 - 2024 deve completarsi MAI INIZIATO
-SEASONS = [2023]
+LEAGUES = [135, 136, 140, 78, 39, 94, 203, 492]
+SEASONS = [2022]
 INDEX = 0
 JSON_DICT = []
 name_history = '../dataset/statistics/dataset_statistics_history.csv'
@@ -29,20 +21,15 @@ def generate_statistics_dataset():
     """
 
     def save_dataset():
-        path_temp = '../dataset/statistics/dataset_statistics_history_temp.csv'  # TODO : TEMPORANEO perché il 06/08/2025 ho dovuto rielaborare tutto
         if len(JSON_DICT) > 0:
-            data_all = pd.concat([pd.read_csv(path_temp, low_memory=False), pd.DataFrame(JSON_DICT)],
-                                 ignore_index=True) if os.path.exists(path_temp) else pd.DataFrame(JSON_DICT)
-            data_all.to_csv(path_temp, index=False)
+            data_all = pd.concat([pd.read_csv(name_history, low_memory=False), pd.DataFrame(JSON_DICT)],
+                                 ignore_index=True) if os.path.exists(name_history) else pd.DataFrame(JSON_DICT)
+            data_all.to_csv(name_history, index=False)
 
     global JSON_DICT
     try:
         # CONSEGUENZA DELL'AGGIORNAMENTO 15/07 FATTO SOTTO : LEGGERò IL DF PER CAPIRE SE ESISTONO LE PARTITE
         df = pd.read_csv(name_history, low_memory=False).to_dict(orient='records')
-
-        # TODO DI SUPPORTO
-        ids_fix_excluded = pd.read_csv('../dataset/statistics/dataset_statistics_history_temp.csv',
-                                       low_memory=False).to_dict(orient='records')
 
         for season in SEASONS:
             logging.info(f'<<< Start season {season} >>>')
@@ -109,11 +96,6 @@ def generate_statistics_dataset():
                         attribute_fixture = get_attribute_fixture()
                         id_fix = attribute_fixture['id_fixture']
 
-                        # TODO PER ELIMINARE EVENTUALI FIXTURE GIA' INSERITE NEL FILE TEMP
-                        is_duplicate_temp = [id_ for id_ in ids_fix_excluded if id_['id_fixture'] == id_fix
-                                             and id_['team_id'] == attribute_fixture['team_id']
-                                             and id_['opponent_id'] == attribute_fixture['opponent_id']]
-
                         # AGGIORNAMENTO 15/07 : AGGIORNARE IL DF DI STATISTICS PRENDENDO LE ULTIME PARTITE
                         # DA MARZO 2025 AD OGGI (CONTROLLERò SE NEL DF HISTORY ESISTE GIà L'ID_FIXTURE)
                         is_duplicate = [id_ for id_ in df if id_['id_fixture'] == id_fix
@@ -124,8 +106,7 @@ def generate_statistics_dataset():
                         match_id_from_odds = is_duplicate[0]['match_id_from_odds'] if len(is_duplicate) > 0 else None
                         attribute_fixture.update({'match_id_from_odds': match_id_from_odds})
 
-                        # TODO is_duplicate_temp dovrà poi essere sostituito da is_duplicate che a sua volta dovrà puntare al nuovo dataset aggiornato(ora è TEMP)
-                        if len(is_duplicate_temp) == 0:
+                        if len(is_duplicate) == 0:
                             # Chiamo la API delle statistiche di quella partita e di quella squadra
                             # Recupero le statistiche dal nodo fixture principale
                             statistics = fixture.get('statistics') or []
@@ -195,5 +176,22 @@ def reload_statistics():
         print('Aggiornato')
 
 
-generate_statistics_dataset()
+# generate_statistics_dataset()
 # reload_statistics()
+
+convert_csv_to_exel(name_history)
+
+dt = pd.read_csv(name_history, low_memory=False).to_dict(orient='records')
+dt = [d for d in dt if d['current_league'] not in (2, 3, 848)]
+print('Totale : ', len(dt))
+print(2014, len([d for d in dt if d['season'] == 2014]))
+print(2015, len([d for d in dt if d['season'] == 2015]))
+print(2016, len([d for d in dt if d['season'] == 2016]))
+print(2017, len([d for d in dt if d['season'] == 2017]))
+print(2018, len([d for d in dt if d['season'] == 2018]))
+print(2019, len([d for d in dt if d['season'] == 2019]))
+print(2020, len([d for d in dt if d['season'] == 2020]))
+print(2021, len([d for d in dt if d['season'] == 2021]))
+print(2022, len([d for d in dt if d['season'] == 2022]))
+print(2023, len([d for d in dt if d['season'] == 2023]))
+print(2024, len([d for d in dt if d['season'] == 2024]))

@@ -21,7 +21,7 @@ from src.service_ia.utility.request_api import base_api_statistics
 logging.basicConfig(level=logging.DEBUG)
 
 # Variabili
-LEAGUES = [135, 136, 140, 78, 39, 94, 203, 2, 3, 848, 492]
+LEAGUES = [135, 136, 140, 78, 39, 94, 203, 492]  # 2, 3, 848
 SEASONS = [2025]
 repo_match = MatchRepository()
 
@@ -83,7 +83,7 @@ def map_statistic(match, stat, team, id_fix, fixture):
         id_match = match.id_match_fk
         id_stat = [st for st in match.statistics if st.statistics_team_id == id_team]
         if len(id_stat) > 0:
-            id_stat = id_stat[0]
+            id_stat = id_stat[0].id_statistics_fk
 
     return {
         'id_statistics_fk': id_stat,
@@ -91,7 +91,13 @@ def map_statistic(match, stat, team, id_fix, fixture):
         'statistics_team_id': id_team,
         'score_ht': fixture['score']['halftime'][team],
         'score_ft': fixture['score']['fulltime'][team],
-        'shots': search_key_value('Total Shots'),
+        'shots': {
+            'Shots on Goal': default_attribute('Shots on Goal'),
+            'Shots off Goal': default_attribute('Shots off Goal'),
+            'Blocked Shots': default_attribute('Blocked Shots'),
+            'Shots insidebox': default_attribute('Shots insidebox'),
+            'Shots outsidebox': default_attribute('Shots outsidebox')
+        },
         'fouls': default_attribute('Fouls'),
         'corners': default_attribute('Corner Kicks'),
         'offside': default_attribute('Offsides'),
@@ -209,13 +215,13 @@ def download_import_matches(seasons=None, leagues=None):
         format_data = '%Y-%m-%d'
         current_data = datetime.now()
         # Scegliere da che giorno indietro si vuole andare per recuperare le partite
-        from_date = (current_data - timedelta(days=3)).strftime(format_data)
+        from_date = (current_data - timedelta(days=1)).strftime(format_data)
         # Fino a ...
         to_date = (current_data - timedelta(days=0)).strftime(format_data)
 
         # Scegliere i giorni indietro che si vuole andare per recuperare le partite (ESEGUIRA' solo un giorno)
         date = (current_data - timedelta(days=0)).strftime(format_data)
-        date_manual = '2025-03-07'
+        date_manual = '2025-08-16'
         return from_date, to_date, date, date_manual
 
     from_date, to_date, date, date_manual = calculate_date()
@@ -231,9 +237,12 @@ def download_import_matches(seasons=None, leagues=None):
 
                 fixtures = base_api_statistics(
                     path='fixtures',
-                    params={'from': from_date, 'to': to_date, 'status': status_list, 'league': league,
-                            # 'date': date
-                            })
+                    params={
+                        'from': from_date, 'to': to_date,
+                        'status': 'FT', 'league': league,
+                        # 'date': date_manual,
+                        'season': season
+                    })
 
                 # TODO : aggiungere l'estrazione anche per partite che devono ancora disputarsi cosi che si creino gli odds e le medie
 
@@ -241,7 +250,7 @@ def download_import_matches(seasons=None, leagues=None):
                     id_fix = fixture['fixture']['id']
 
                     # Cerco in db se esiste già match
-                    match = repo_match.filter_by(dict_search={'id_fixture': id_fix})
+                    match = repo_match.filter_by(dict_search={'id_fixture': id_fix}).first()
 
                     # Mappa la base del match
                     dict_match = map_base_match(match=match, id_fix=id_fix, fixture=fixture, league=league,
@@ -291,8 +300,9 @@ def download_import_matches(seasons=None, leagues=None):
                         list_matches.append(match)
                         list_dict_matches.append(dict_match_json)
                     else:
+                        new_match = Match(**dict_match)
                         # Aggiorno man mano se esiste già quel match
-                        repo_match.save(match)
+                        repo_match.save(new_match)
     except Exception as e:
         logging.error('Errore durante il download : ', str(e))
     finally:
@@ -337,6 +347,7 @@ def re_processor_error():
 - Media statistiche -> Testare con dati reali
 
 """
+
 
 # TODO Capire perché le medie non vengono calcolate bene
 def calculate_mean(with_season: int = None, force_mean: bool = False, teams: list = None):
@@ -454,6 +465,6 @@ def calculate_mean(with_season: int = None, force_mean: bool = False, teams: lis
     repo_match.massive_update_bulk(list_obj)
 
 
-# download_import_matches()
+download_import_matches()
 # re_processor_error()
-calculate_mean(with_season=2024, force_mean=True, teams=[487])
+# calculate_mean(with_season=2024, force_mean=True, teams=[487])
