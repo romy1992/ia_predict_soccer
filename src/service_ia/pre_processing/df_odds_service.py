@@ -679,7 +679,7 @@ def aggregate_events_into_dataset():
     path_csv = os.path.abspath(os.path.join(BASE_DIR, base_dataset, 'odds_dataset.csv'))
     dataset_odds = pd.read_csv(path_csv, low_memory=False)
     dict_ods = dataset_odds.to_dict(orient='records')
-    # TODO : Check per controllare quante ne ha fatte fino ad ora -> 04/08/2025 = 853
+    # TODO : Check per controllare quante ne ha fatte fino ad ora -> 01/09/2025 = 5309
     # dict_ods = [d for d in dataset_odds.to_dict(orient='records') if
     #             pd.to_datetime(d['commence_time']).tz_convert(None) >= pd.Timestamp('2023-05-03') and pd.notna(
     #                 d['event_used'])]
