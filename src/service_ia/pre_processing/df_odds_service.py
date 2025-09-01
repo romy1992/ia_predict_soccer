@@ -687,7 +687,7 @@ def aggregate_events_into_dataset():
         for index, row in enumerate(dict_ods):
             logging.info(f'Row {index}/{len(dict_ods)}')
             data_row = row['commence_time']
-            if pd.to_datetime(data_row).tz_convert(None) >= pd.Timestamp('2023-05-03') and pd.isna(row['event_used']):
+            if pd.to_datetime(data_row).tz_convert(None) >= pd.Timestamp('2023-05-03') :#and pd.isna(row['event_used'])
                 logging.info(f'Row {index}')
                 home_team, away_team = row['home_team'], row['away_team']  # Nomi delle squadre
 
