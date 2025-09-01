@@ -34,7 +34,7 @@ def base_api_odds(type_api=None, path='', params=None):
     def check_response(response):
         # Check per utilizzo API
         used = int(response.headers.get("X-Requests-Used", 0))
-        remaining = int(response.headers.get("X-Requests-Remaining", 0))
+        remaining = float(response.headers.get("X-Requests-Remaining", 0))
         percent_used = (used / (used + remaining)) * 100
         logging.info(f'Percent used {percent_used}%')
         if percent_used > 99:

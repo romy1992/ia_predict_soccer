@@ -42,6 +42,7 @@ import pandas as pd
 from dateutil.relativedelta import relativedelta
 
 from src.service_ia.utility.request_api import base_api_odds, base_api_statistics
+from src.service_ia.utility.utils import convert_csv_to_exel
 
 logging.basicConfig(level=logging.DEBUG)
 base_dataset = '../dataset/odds'
@@ -60,7 +61,8 @@ with open(os.path.abspath(os.path.join(BASE_DIR, '..', 'json', 'bet.json')), 'r'
 regions = 'us,eu'
 markets_base = 'h2h,totals'
 # TODO ci saranno da inserire gli altri non appena scatterà il nuovo abbonamento :  https://the-odds-api.com/sports-odds-data/betting-markets.html#featured-betting-markets -> qui ci sono tutte:leggere anche "Soccer Player Props API" e "Other soccer betting markets" per cartellini e angoli
-markets_events = 'alternate_totals,btts,double_chance,alternate_team_totals,team_totals'  # TODO : alternate_totals_corners,alternate_totals_cards' -> Per poter elaborare una grossa quantità di eventi,meglio tenere da parte angoli e cartellini
+# TODO : eventi completati : alternate_totals
+markets_events = 'btts'  # TODO :alternate_team_totals,team_totals, double_chance, alternate_totals_corners,alternate_totals_cards' -> Per poter elaborare una grossa quantità di eventi,meglio tenere da parte angoli e cartellini
 # Data iniziale
 start_date = datetime(2020, 6, 6, 10, 5, tzinfo=timezone.utc)
 
@@ -453,7 +455,7 @@ def clean_dataset_odds():
 # remap_json_bookmakers()
 # aggregate_odds_bookmakers_base()
 # remove_duplicate_match_by_names()
-# convert_csv_to_exel(f'{base_dataset}/odds_dataset_copy.csv')
+# convert_csv_to_exel(f'{base_dataset}/odds_dataset.csv')
 # added_odds()
 # clean_dataset_odds()
 
@@ -678,7 +680,7 @@ def aggregate_events_into_dataset():
     dataset_odds = pd.read_csv(path_csv, low_memory=False)
     dict_ods = dataset_odds.to_dict(orient='records')
     # TODO : Check per controllare quante ne ha fatte fino ad ora -> 04/08/2025 = 853
-    #   dict_ods = [d for d in dataset_odds.to_dict(orient='records') if
+    # dict_ods = [d for d in dataset_odds.to_dict(orient='records') if
     #             pd.to_datetime(d['commence_time']).tz_convert(None) >= pd.Timestamp('2023-05-03') and pd.notna(
     #                 d['event_used'])]
     try:
@@ -731,10 +733,11 @@ def aggregate_events_into_dataset():
         logging.warning(str(e))
     finally:
         # Salva il DataFrame aggiornato
-        dataset_odds.to_csv(f'{base_dataset}/odds_dataset_copy.csv', index=False)
+        dataset_odds.to_csv(path_csv, index=False)
         logging.info(f'{name_odds_base} Aggiornato')
 
-# aggregate_events_into_dataset()
+
+aggregate_events_into_dataset()
 # =============================================== STEP 2 ===============================================
 # TODO test per eliminare lo sbaglio con corner e cards e salvare in un dataset di test
 # d = pd.read_csv(f'{base_dataset}/odds_dataset.csv')
