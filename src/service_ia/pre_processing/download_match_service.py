@@ -394,7 +394,6 @@ def calculate_mean(with_season: int = None, force_mean: bool = False, teams: lis
                 team_matches = sorted(team_matches, key=lambda x: x.date_match)
                 logging.info(f'<<< Total row match {len(team_matches)} for id_team {id_team} >>>')
 
-                mean_rows = {}
                 for idx, match in enumerate(team_matches):
                     # Dalla seconda partita stagionale in poi
                     # Se il match NON ha ancora le medie calcolate O la forzatura per il calcolo è True
@@ -403,6 +402,8 @@ def calculate_mean(with_season: int = None, force_mean: bool = False, teams: lis
                         stat_prev = [s for stat in prev_matches for s in stat.statistics if
                                      s.statistics_team_id == id_team]
                         if len(stat_prev) > 0:
+                            mean_rows = {}
+
                             def create_dict_stat_prev():
                                 array_prev = []
 
@@ -417,8 +418,8 @@ def calculate_mean(with_season: int = None, force_mean: bool = False, teams: lis
                                     array_prev.append({
                                         'Shots on Goal': get_value('shots', 'Shots on Goal'),
                                         'Shots off Goal': get_value('shots', 'Shots off Goal'),
-                                        'Total Shots': get_value('shots', 'Total Goal'),
-                                        'Blocked Shots': get_value('shots', 'Blocked Goal'),
+                                        'Total Shots': get_value('shots', 'Total Shots'),
+                                        'Blocked Shots': get_value('shots', 'Blocked Shots'),
                                         'Shots insidebox': get_value('shots', 'Shots insidebox'),
                                         'Shots outsidebox': get_value('shots', 'Shots outsidebox'),
 
@@ -450,8 +451,6 @@ def calculate_mean(with_season: int = None, force_mean: bool = False, teams: lis
 
                             # Controlla se esiste già un elemento con la stessa partita
                             check_l_obj = [l_o for l_o in list_obj if l_o.get('id_match_fk') == match.id_match_fk]
-                            # Oggetto che verrà salvato/aggiornato
-                            save_obj = {'id_match_fk': match.id_match_fk, 'mean_statistics': mean_rows}
                             # Se esiste nella lista che sto per creare già lo stesso id partita, devo solo aggiornare array con quel dizionario
                             if len(check_l_obj) > 0:
                                 old_mean = check_l_obj[0]['mean_statistics']
@@ -460,11 +459,10 @@ def calculate_mean(with_season: int = None, force_mean: bool = False, teams: lis
                                     {'id_match_fk': match.id_match_fk, 'mean_statistics': total_mean_match})
                             else:
                                 # Creo le righe che verranno poi aggiornate massivamente
-                                list_obj.append(save_obj)
+                                list_obj.append({'id_match_fk': match.id_match_fk, 'mean_statistics': mean_rows})
     # Salvataggio massivo
     repo_match.massive_update_bulk(list_obj)
 
-
-download_import_matches()
+# download_import_matches()
 # re_processor_error()
 # calculate_mean(with_season=2024, force_mean=True, teams=[487])
