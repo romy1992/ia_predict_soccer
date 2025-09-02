@@ -192,12 +192,10 @@ def refused_join_insert():
         id_event = element['id']
 
         # Search id_fixtures
-        start_date = (commence_time - pd.Timedelta(
-            days=100)).date()  # Caso in cui le partite sono state inserite con una data precedente
-        # start_date = (commence_time - pd.Timedelta(days=5)).date()
-        # end_date = (commence_time + pd.Timedelta(days=5)).date()  # Di base metto sempre 5 giorni dopo
-        end_date = (commence_time + pd.Timedelta(
-            days=130)).date()  # Caso in cui le partite sono state disputate qualche mese dopo
+        # start_date = (commence_time - pd.Timedelta(days=100)).date()  # Caso in cui le partite sono state inserite con una data precedente
+        start_date = (commence_time - pd.Timedelta(days=5)).date()
+        end_date = (commence_time + pd.Timedelta(days=5)).date()  # Di base metto sempre 5 giorni dopo
+        # end_date = (commence_time + pd.Timedelta(days=130)).date()  # Caso in cui le partite sono state disputate qualche mese dopo
 
         dict_id = [
             (index, ele['id_fixture']) for index, ele in enumerate(dataset_h_dic)
@@ -225,8 +223,8 @@ def refused_join_insert():
 #  L'ALTERNATIVA E CORRISPONDEZA PRINCIPALE..
 #  DA PROVARE SE I LORO ID SONO STATI DISABILITATI
 
-aggregate_ids_into_dataset(partial=True)
-# refused_join_insert()
+#aggregate_ids_into_dataset(partial=True)
+refused_join_insert()
 
 # TODO questi convert sotto sono solo per comodità
 # convert_excel_to_csv('../dataset/statistics/dataset_statistics_history.xlsx')
