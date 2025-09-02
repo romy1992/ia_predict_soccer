@@ -309,8 +309,8 @@ class TestDownloadMatch(unittest.TestCase):
         mock_form.assert_called()  # /predictions usato da form_last_5_tot
         mock_save.assert_called()
 
+    @patch("src.service_ia.pre_processing.download_match_service.repo_match.massive_update_bulk")
     @patch("src.service_ia.pre_processing.download_match_service.repo_match.search_filter")
-    @patch("src.service_ia.pre_processing.download_match_service.repo_match.search_by_id_fixture_None_and_season")
     def test_calculate_mean(self, mock_search_filter, mock_update_bulk):
         with open('json_test/all_match_mean.json', 'r', encoding='utf-8') as file:
             dict_json = json.load(file)
