@@ -183,7 +183,9 @@ def refused_join_insert():
     dataset_h_dic = dataset_history_copy.to_dict(orient='records')
     dataset_history_odds = pd.read_csv(name_odds_history, low_memory=False)
 
-    for element in dataset_refused:
+    tot = len(dataset_refused)
+    for i, element in enumerate(dataset_refused):
+        logging.info(f'Row {i}/{tot}')
         name_home = element['home_team']
         name_away = element['away_team']
         commence_time = element['commence_time']
@@ -222,8 +224,8 @@ def refused_join_insert():
 #  L'ALTERNATIVA E CORRISPONDEZA PRINCIPALE..
 #  DA PROVARE SE I LORO ID SONO STATI DISABILITATI
 
-aggregate_ids_into_dataset()
-# refused_join_insert()
+# aggregate_ids_into_dataset()
+refused_join_insert()
 
 # TODO questi convert sotto sono solo per comodità
 # convert_excel_to_csv('../dataset/statistics/dataset_statistics_history.xlsx')
