@@ -184,6 +184,7 @@ def refused_join_insert():
     dataset_history_odds = pd.read_csv(name_odds_history, low_memory=False)
 
     tot = len(dataset_refused)
+    list_d = []
     for i, element in enumerate(dataset_refused):
         logging.info(f'Row {i}/{tot}')
         name_home = element['home_team']
@@ -207,23 +208,28 @@ def refused_join_insert():
         ]
 
         if len(dict_id) == 2 and dict_id[0][1] == dict_id[1][1]:
+            logging.info('Dict is size 2')
             rows = [dict_id[0][0], dict_id[1][0]]
             id_fix = dict_id[0][1]
             for index in rows:
                 dataset_history_stat.loc[index, 'match_id_from_odds'] = id_event
             dataset_history_odds.loc[element['original_index'], 'id_fixture_from_stat'] = id_fix
+        elif len(dict_id) == 1:
+            logging.info('Dict is size 1')
+            list_d.extend(dict_id)
 
     dataset_history_stat.to_csv(name_statistics_history, index=False)
     dataset_history_odds.to_csv(name_odds_history, index=False)
 
     count_ids_analyze()
+    print(list_d)
 
 
 # TODO 19/07 : CI SONO ANCORA MATCH SENZA CORRISPONDEZA DOVUTI DA ALCUNE PARTITE DEL DF ODDS NON HANNO
 #  L'ALTERNATIVA E CORRISPONDEZA PRINCIPALE..
 #  DA PROVARE SE I LORO ID SONO STATI DISABILITATI
 
-#aggregate_ids_into_dataset(partial=True)
+# aggregate_ids_into_dataset(partial=True)
 refused_join_insert()
 
 # TODO questi convert sotto sono solo per comodità
