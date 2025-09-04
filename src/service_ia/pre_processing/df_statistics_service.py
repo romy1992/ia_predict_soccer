@@ -5,14 +5,13 @@ import pandas as pd
 
 from src.service_ia.mapper.statistic_mapper import get_attribute_statistics, form_last_5_tot, get_predict
 from src.service_ia.utility.request_api import base_api_statistics
-from src.service_ia.utility.utils import convert_csv_to_exel
 
-# 135, 136, 140, 78, 39, 94, 203,492 , (2,3,848) -> sono le coppe, ma non ha molto senso rieseguirle
-LEAGUES = [135, 136, 140, 78, 39, 94, 203, 492]
-SEASONS = [2022]
+# 135, 136, 140,61, 78, 39, 94, 203,492
+LEAGUES = [61]
+SEASONS = [2014, 2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2022, 2023, 2024]
 INDEX = 0
 JSON_DICT = []
-name_history = '../dataset/statistics/dataset_statistics_history.csv'
+name_history = '../dataset/statistics/dataset_statistics_history_temp.csv'  # TODO temp
 
 
 def generate_statistics_dataset():
@@ -176,13 +175,12 @@ def reload_statistics():
         print('Aggiornato')
 
 
-# generate_statistics_dataset()
+generate_statistics_dataset()
 # reload_statistics()
 
-convert_csv_to_exel(name_history)
+# convert_csv_to_exel(name_history)
 
 dt = pd.read_csv(name_history, low_memory=False).to_dict(orient='records')
-dt = [d for d in dt if d['current_league'] not in (2, 3, 848)]
 print('Totale : ', len(dt))
 print(2014, len([d for d in dt if d['season'] == 2014]))
 print(2015, len([d for d in dt if d['season'] == 2015]))
