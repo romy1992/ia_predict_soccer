@@ -16,7 +16,7 @@ logging.basicConfig(level=logging.DEBUG)
 
 # =============================================== STEP 3 ===============================================
 base_dataset = '../dataset'
-name_statistics_history = f'{base_dataset}/statistics/dataset_statistics_history.csv'  # DT storico di statistiche partite
+name_statistics_history = f'{base_dataset}/statistics/dataset_statistics_history_temp.csv'  # DT storico di statistiche partite
 name_odds_history = f'{base_dataset}/odds/odds_dataset.csv'  # DT storico di odds
 
 
@@ -193,10 +193,10 @@ def refused_join_insert():
         id_event = element['id']
 
         # Search id_fixtures
-        # start_date = (commence_time - pd.Timedelta(days=100)).date()  # Caso in cui le partite sono state inserite con una data precedente
-        start_date = (commence_time - pd.Timedelta(days=5)).date()
-        end_date = (commence_time + pd.Timedelta(days=5)).date()  # Di base metto sempre 5 giorni dopo
-        # end_date = (commence_time + pd.Timedelta(days=130)).date()  # Caso in cui le partite sono state disputate qualche mese dopo
+        start_date = (commence_time - pd.Timedelta(days=100)).date()  # Caso in cui le partite sono state inserite con una data precedente
+        #start_date = (commence_time - pd.Timedelta(days=5)).date()
+        #end_date = (commence_time + pd.Timedelta(days=5)).date()  # Di base metto sempre 5 giorni dopo
+        end_date = (commence_time + pd.Timedelta(days=130)).date()  # Caso in cui le partite sono state disputate qualche mese dopo
 
         dict_id = [
             (index, ele['id_fixture']) for index, ele in enumerate(dataset_h_dic)
@@ -214,9 +214,9 @@ def refused_join_insert():
             for index in rows:
                 dataset_history_stat.loc[index, 'match_id_from_odds'] = id_event
             dataset_history_odds.loc[element['original_index'], 'id_fixture_from_stat'] = id_fix
-        elif len(dict_id) == 1:
-            logging.info('Dict is size 1')
-            list_d.extend(dict_id)
+        else:
+            logging.info(f'Dict is size {len(dict_id)}')
+            list_d.append(dict_id)
 
     dataset_history_stat.to_csv(name_statistics_history, index=False)
     dataset_history_odds.to_csv(name_odds_history, index=False)
@@ -229,7 +229,7 @@ def refused_join_insert():
 #  L'ALTERNATIVA E CORRISPONDEZA PRINCIPALE..
 #  DA PROVARE SE I LORO ID SONO STATI DISABILITATI
 
-# aggregate_ids_into_dataset(partial=True)
+#aggregate_ids_into_dataset()
 refused_join_insert()
 
 # TODO questi convert sotto sono solo per comodità
