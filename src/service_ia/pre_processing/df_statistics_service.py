@@ -8,7 +8,7 @@ from src.service_ia.utility.request_api import base_api_statistics
 
 # 135, 136, 140,61, 78, 39, 94, 203,492
 LEAGUES = [61]
-SEASONS = [2014, 2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2022, 2023, 2024]
+SEASONS = [2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2022, 2023, 2024]
 INDEX = 0
 JSON_DICT = []
 name_history = '../dataset/statistics/dataset_statistics_history_temp.csv'  # TODO temp
