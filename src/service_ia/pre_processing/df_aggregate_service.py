@@ -78,16 +78,65 @@ def aggregate_ids_into_dataset(partial=False):
 
     for index_odds, row_odds in enumerate(dict_data_odds_updated):
         check_id_fix_partial = True if not partial else pd.isna(row_odds['id_fixture_from_stat'])
-        if check_id_fix_partial:
+        if check_id_fix_partial and index_odds > 10441:
             logging.info(f'Row number : {index_odds}')
             home_odds = row_odds['home_team']
             away_odds = row_odds['away_team']
             data_match = isoparse(row_odds['commence_time'])
 
+            def added_match_into_dataset(match_event):
+                """
+                Per stessi match, inserisce l'd nei dataset
+                """
+                dataset_odds.at[index_odds, 'id_fixture_from_stat'] = match_event[0][0]['id_fixture']
+                # Aggiunta al dataset_statistics
+                for stat in match_event:
+                    idx_stat = dataset_statistics[
+                        (dataset_statistics['team_name'] == stat[0]['team_name']) &
+                        (dataset_statistics['date_fixture'] == stat[0]['date_fixture'])
+                        ].index
+
+                    if not idx_stat.empty:
+                        if match_event[0][1] is None:
+                            dataset_statistics.loc[idx_stat, 'match_id_from_odds'] = row_odds['id']
+                        else:
+                            dataset_statistics.loc[idx_stat, 'match_id_from_odds'] = match_event[0][1]
+
             match_statistics = search_statistics()
 
-            # Todo : per test
-            if len(match_statistics) == 1 or len(match_statistics) > 2:
+            # Se è di 2 partite, ci troviamo nel caso base
+            # Se è di 3 Solitamente è perché o i nomi non fanno match bene o c'è un round che è un'eliminazione diretta
+            # Se è 4 è perchè può avere 2 partite con le stesse squadre ma di un range annuo ma che fanno riferimento a 2 stagioni differenti
+            if len(match_statistics) == 4:
+                list_id = set([m[0]['id_fixture'] for m in match_statistics])
+                for id_match in list_id:
+                    match = [m for m in match_statistics if m[0]['id_fixture'] == id_match]
+                    added_match_into_dataset(match)
+            elif len(match_statistics) == 3:
+                def remove_duplicate():
+                    list_round = set([m[0]['round_fixture'] for m in match_statistics])
+                    list_id_team = set([m[0]['team_id'] for m in match_statistics])
+                    # Potrebbero esserci match duplicati
+                    ms = [m for m in match_statistics if m[0]['round_fixture'] in list_round]
+                    l_ms = []
+                    for m in ms:
+                        if len(l_ms) == 1:
+                            for lid in list_id_team:
+                                if lid not in set([l_i[0]['team_id'] for l_i in l_ms]):
+                                    l_ms.append(m)
+                        else:
+                            l_ms.append(m)
+                    return l_ms
+
+                match = remove_duplicate()
+                if len(match) == 2:
+                    added_match_into_dataset(list(match))
+            elif len(match_statistics) == 2:  # Caso base con soli 2 elementi
+                added_match_into_dataset(match_statistics)
+            # elif len(match_statistics) == 1:  # Caso in cui c'è solo un match come può succedere per le coppe
+            #     # TODO ATTIVARLO SOLO PER EMERGENZA
+            #     added_match_into_dataset(match_statistics)
+            elif len(match_statistics) > 0:
                 [container.append(
                     {
                         "id_fixture": stat[0]["id_fixture"],
@@ -100,43 +149,6 @@ def aggregate_ids_into_dataset(partial=False):
                         'type_error': len(match_statistics)
                     }
                 ) for stat in match_statistics]
-
-            # Se è di 2 partite, ci troviamo nel caso base
-            # Se è di 3 Solitamente è perchè o i nomi non fanno match bene o c'è un round che è un'eliminazione diretta
-            # Se è 4 è perchè può avere 2 partite con le stesse squadre ma di un range annuo ma che fanno riferimento a 2 stagioni differenti
-            if 2 <= len(match_statistics) < 5:
-
-                def added_match_into_dataset(match_event):
-                    """
-                    Per stessi match, inserisce l'd nei dataset
-                    """
-                    dataset_odds.at[index_odds, 'id_fixture_from_stat'] = match_event[0][0]['id_fixture']
-                    # Aggiunta al dataset_statistics
-                    for stat in match_event:
-                        idx_stat = dataset_statistics[
-                            (dataset_statistics['team_name'] == stat[0]['team_name']) &
-                            (dataset_statistics['date_fixture'] == stat[0]['date_fixture'])
-                            ].index
-
-                        if not idx_stat.empty:
-                            if match_event[0][1] is None:
-                                dataset_statistics.loc[idx_stat, 'match_id_from_odds'] = row_odds['id']
-                            else:
-                                dataset_statistics.loc[idx_stat, 'match_id_from_odds'] = match_event[0][1]
-
-                if len(match_statistics) == 4:
-                    list_id = set([m[0]['id_fixture'] for m in match_statistics])
-                    for id_match in list_id:
-                        match = [m for m in match_statistics if m[0]['id_fixture'] == id_match]
-                        added_match_into_dataset(match)
-                elif len(match_statistics) == 3:
-                    list_round = set([m[0]['round_fixture'] for m in match_statistics])
-                    for r in list_round:
-                        match = [m for m in match_statistics if m[0]['round_fixture'] == r]
-                        if len(match) == 2:
-                            added_match_into_dataset(list(match))
-                elif len(match_statistics) == 2:  # Caso base con soli 2 elementi
-                    added_match_into_dataset(match_statistics)
 
     # Update
     dataset_odds.to_csv(name_odds_history, index=False)
@@ -193,10 +205,12 @@ def refused_join_insert():
         id_event = element['id']
 
         # Search id_fixtures
-        start_date = (commence_time - pd.Timedelta(days=100)).date()  # Caso in cui le partite sono state inserite con una data precedente
-        #start_date = (commence_time - pd.Timedelta(days=5)).date()
-        #end_date = (commence_time + pd.Timedelta(days=5)).date()  # Di base metto sempre 5 giorni dopo
-        end_date = (commence_time + pd.Timedelta(days=130)).date()  # Caso in cui le partite sono state disputate qualche mese dopo
+        start_date = (commence_time - pd.Timedelta(
+            days=100)).date()  # Caso in cui le partite sono state inserite con una data precedente
+        # start_date = (commence_time - pd.Timedelta(days=5)).date()
+        # end_date = (commence_time + pd.Timedelta(days=5)).date()  # Di base metto sempre 5 giorni dopo
+        end_date = (commence_time + pd.Timedelta(
+            days=130)).date()  # Caso in cui le partite sono state disputate qualche mese dopo
 
         dict_id = [
             (index, ele['id_fixture']) for index, ele in enumerate(dataset_h_dic)
@@ -229,8 +243,8 @@ def refused_join_insert():
 #  L'ALTERNATIVA E CORRISPONDEZA PRINCIPALE..
 #  DA PROVARE SE I LORO ID SONO STATI DISABILITATI
 
-#aggregate_ids_into_dataset()
-refused_join_insert()
+aggregate_ids_into_dataset(partial=True)
+# refused_join_insert()
 
 # TODO questi convert sotto sono solo per comodità
 # convert_excel_to_csv('../dataset/statistics/dataset_statistics_history.xlsx')
