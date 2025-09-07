@@ -243,7 +243,7 @@ def refused_join_insert():
 #  L'ALTERNATIVA E CORRISPONDEZA PRINCIPALE..
 #  DA PROVARE SE I LORO ID SONO STATI DISABILITATI
 
-aggregate_ids_into_dataset(partial=True)
+# aggregate_ids_into_dataset(partial=True)
 # refused_join_insert()
 
 # TODO questi convert sotto sono solo per comodità

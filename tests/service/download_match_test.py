@@ -48,7 +48,7 @@ class TestDownloadMatch(unittest.TestCase):
     def test_download_import_matches_ok(self, mock_get, mock_form, mock_api, mock_insert):
         base_test(mock_form, mock_api)
         mock_insert.return_value = None
-        mock_get.return_value = None
+        mock_get.return_value.first.return_value = None
 
         from src.service_ia.pre_processing.download_match_service import download_import_matches
         download_import_matches(seasons=[2024], leagues=[135])
@@ -73,7 +73,7 @@ class TestDownloadMatch(unittest.TestCase):
     def test_download_import_matches_ko(self, mock_get, mock_form, mock_api, mock_insert):
         base_test(mock_form, mock_api)
         mock_insert.side_effect = Exception("DB KO")
-        mock_get.return_value = None
+        mock_get.return_value.first.return_value = None
 
         from src.service_ia.pre_processing.download_match_service import download_import_matches
         download_import_matches(seasons=[2024], leagues=[135])
@@ -291,7 +291,7 @@ class TestDownloadMatch(unittest.TestCase):
         match = match
 
         base_test(mock_form, mock_api)
-        mock_get.return_value = match
+        mock_get.return_value.first.return_value = match
         mock_save.return_value = None
         mock_insert.return_value = None
 

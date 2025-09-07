@@ -21,7 +21,7 @@ from src.service_ia.utility.request_api import base_api_statistics
 logging.basicConfig(level=logging.DEBUG)
 
 # Variabili
-LEAGUES = [135, 136, 140, 78, 39, 94, 203, 492]  # 2, 3, 848
+LEAGUES = [135, 136, 140, 78, 61, 39, 94, 203, 492]  # 2, 3, 848
 SEASONS = [2025]
 repo_match = MatchRepository()
 
@@ -69,7 +69,10 @@ def map_statistic(match, stat, team, id_fix, fixture):
     stat = stat['statistics']
 
     attribute_stat = get_attribute_statistics(stat)
-    attribute_stat.update(form_last_5_tot(id_fix, id_team))
+
+    last_5 = form_last_5_tot(id_fix, id_team)
+    if last_5:
+        attribute_stat.update(last_5)
 
     def search_key_value(index_key):
         return {key: value for key, value in attribute_stat.items() if pd.notna(value) and index_key in key}
@@ -165,37 +168,42 @@ def map_odds(match, id_fix):
         return None
 
     fixture_bookmakers = base_api_statistics(path='odds', params={'fixture': id_fix})
-    odd_bet = {
-        'id_odds_fk': match.odds[0].id_odds_fk if match and len(match.odds) > 0 else None,
-        'id_match': match.id_match_fk if match else None,
-        'odds_from': 'sports-api'
-    }
     if len(fixture_bookmakers) > 0:
         # Inizia a creare il dizionario prima di aggiungere le quote
         bookmakers_filters = [bookmaker for bookmaker in fixture_bookmakers[0]['bookmakers']]
 
-        for bookmaker in bookmakers_filters:
-            # Crea il dizionario della fixture aggregando tutti gli eventi con le sue quote
-            name_book = bookmaker['name']
-            filter_bet = [bet for bet in bookmaker['bets'] if
-                          bet['id'] in [id_bet['id'] for id_bet in BET_BOOKMAKERS]]  # SOLO QUOTE DI EVENTI AMMESSI
-            for filter_bet_name in filter_bet:
-                for value in filter_bet_name['values']:
-                    alternate_value = str(value['value']).lower()
-                    if alternate_value in ['yes', 'no']:
-                        alternate_value = 'goal_' if alternate_value == 'Yes' else 'no_goal_'
-                    elif alternate_value in ['home/draw', 'home/away', 'Draw/away']:
-                        alternate_value = '1X' if alternate_value == 'home/draw' else '12' if alternate_value == 'home/away' else 'X2'
+        if len(bookmakers_filters) > 0:
+            # Odds base se tutti i nodi esistono altrimenti usa quelli che già ha (sempre se ci sono)
+            odd_bet = {
+                'id_odds_fk': match.odds[0].id_odds_fk if match and len(match.odds) > 0 else None,
+                'id_match': match.id_match_fk if match else None,
+                'odds_from': 'sports-api'
+            }
+            for bookmaker in bookmakers_filters:
+                # Crea il dizionario della fixture aggregando tutti gli eventi con le sue quote
+                name_book = bookmaker['name']
+                filter_bet = [bet for bet in bookmaker['bets'] if
+                              bet['id'] in [id_bet['id'] for id_bet in BET_BOOKMAKERS]]  # SOLO QUOTE DI EVENTI AMMESSI
+                for filter_bet_name in filter_bet:
+                    for value in filter_bet_name['values']:
+                        alternate_value = str(value['value']).lower()
+                        if alternate_value in ['yes', 'no']:
+                            alternate_value = 'goal_' if alternate_value == 'Yes' else 'no_goal_'
+                        elif alternate_value in ['home/draw', 'home/away', 'Draw/away']:
+                            alternate_value = '1X' if alternate_value == 'home/draw' else '12' if alternate_value == 'home/away' else 'X2'
 
-                    name_bet = switch_bet(bet=filter_bet_name['name'], alternate_bet=value['value'])
-                    if name_bet:
-                        head_title = f'{alternate_value}_{name_book}'
-                        context = {head_title: value['odd']}
-                        if context and head_title and value['odd']:
-                            odd_bet.get(name_bet).update(context) \
-                                if odd_bet.get(name_bet) else odd_bet.update({name_bet: context})
+                        name_bet = switch_bet(bet=filter_bet_name['name'], alternate_bet=value['value'])
+                        if name_bet:
+                            head_title = f'{alternate_value}_{name_book}'
+                            context = {head_title: value['odd']}
+                            if context and head_title and value['odd']:
+                                odd_bet.get(name_bet).update(context) \
+                                    if odd_bet.get(name_bet) else odd_bet.update({name_bet: context})
 
-    return odd_bet
+            return odd_bet  # ritorna odds
+
+    # ritorna quello che già ha se non ci sono nodi delle api chiamate
+    return match.odds[0].to_dict() if match and match.odds and len(match.odds) > 0 else None
 
 
 def download_import_matches(seasons=None, leagues=None):
@@ -215,7 +223,7 @@ def download_import_matches(seasons=None, leagues=None):
         format_data = '%Y-%m-%d'
         current_data = datetime.now()
         # Scegliere da che giorno indietro si vuole andare per recuperare le partite
-        from_date = (current_data - timedelta(days=2)).strftime(format_data)
+        from_date = (current_data - timedelta(days=10)).strftime(format_data)
         # Fino a ...
         to_date = (current_data - timedelta(days=0)).strftime(format_data)
 
@@ -283,16 +291,21 @@ def download_import_matches(seasons=None, leagues=None):
                         ]
 
                     # Mappa le quote
-                    odds_objs = [Odds(**map_odds(match, id_fix))]
+                    odds_map = map_odds(match, id_fix)
+                    odds_objs = None
+                    if odds_map:
+                        odds_objs = [Odds(**odds_map)]
 
                     # AGGIUNGO A LIVELLO DI ORM LE CLASSI
                     dict_match['statistics'] = stats_objs
-                    dict_match['odds'] = odds_objs
+                    if odds_objs:
+                        dict_match['odds'] = odds_objs
 
                     # LE GESTISCO COME DIZIONARI
                     dict_match_json = dict(dict_match)
                     dict_match_json['statistics'] = [s.to_dict() for s in stats_objs]
-                    dict_match_json['odds'] = [o.to_dict() for o in odds_objs]
+                    if odds_objs:
+                        dict_match_json['odds'] = [o.to_dict() for o in odds_objs]
 
                     if match is None:
                         # LE AGGIUNGO PER PERSISTERE DOPO
@@ -321,6 +334,10 @@ def download_import_matches(seasons=None, leagues=None):
 
 
 def re_processor_error():
+    """
+    Riprocessa il file di errori avvenuto durante il download
+    :return: prova a salvare tutto a db
+    """
     # Lettura da file JSON
     with open("error_save_dict.json", "r", encoding="utf-8") as f:
         dict_error = json.load(f)
@@ -463,6 +480,6 @@ def calculate_mean(with_season: int = None, force_mean: bool = False, teams: lis
     # Salvataggio massivo
     repo_match.massive_update_bulk(list_obj)
 
-download_import_matches()
+# download_import_matches()
 # re_processor_error()
 # calculate_mean(with_season=2024, force_mean=True, teams=[487])
