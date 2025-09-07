@@ -256,7 +256,7 @@ def migrate_dataset():
 
     matches = []
     try:
-        matches.extend(match_stat_odd())  # Migra tutte le statistiche che sono accomunate a odds + odds orfani di stat
+        # matches.extend(match_stat_odd())  # Migra tutte le statistiche che sono accomunate a odds + odds orfani di stat
         matches.extend(match_only_stat())  # Migra solo le statistiche SENZA odds
     except Exception as e:
         logging.error(str(e))
@@ -266,4 +266,3 @@ def migrate_dataset():
 
 
 migrate_dataset()
-
