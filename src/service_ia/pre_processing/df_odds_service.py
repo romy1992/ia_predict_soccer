@@ -737,7 +737,7 @@ def aggregate_events_into_dataset():
         logging.info(f'{name_odds_base} Aggiornato')
 
 
-aggregate_events_into_dataset()
+# aggregate_events_into_dataset()
 # =============================================== STEP 2 ===============================================
 # TODO test per eliminare lo sbaglio con corner e cards e salvare in un dataset di test
 # d = pd.read_csv(f'{base_dataset}/odds_dataset.csv')
