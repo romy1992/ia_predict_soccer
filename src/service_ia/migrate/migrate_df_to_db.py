@@ -13,7 +13,7 @@ from src.service_ia.model.match import Match, Statistics, Odds
 logging.basicConfig(level=logging.DEBUG)
 pd.set_option('future.no_silent_downcasting', True)
 BASE_DIR = os.path.dirname(__file__)
-path_df_h_stat = os.path.join(BASE_DIR, '..', 'dataset', 'statistics', 'dataset_statistics_history.csv')
+path_df_h_stat = os.path.join(BASE_DIR, '..', 'dataset', 'statistics', 'dataset_statistics_history_temp.csv')
 path_df_h_odds = os.path.join(BASE_DIR, '..', 'dataset', 'odds', 'odds_dataset.csv')
 
 
