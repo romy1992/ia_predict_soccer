@@ -223,7 +223,7 @@ def download_import_matches(seasons=None, leagues=None):
         format_data = '%Y-%m-%d'
         current_data = datetime.now()
         # Scegliere da che giorno indietro si vuole andare per recuperare le partite
-        from_date = (current_data - timedelta(days=10)).strftime(format_data)
+        from_date = (current_data - timedelta(days=1)).strftime(format_data)
         # Fino a ...
         to_date = (current_data - timedelta(days=0)).strftime(format_data)
 
@@ -480,6 +480,7 @@ def calculate_mean(with_season: int = None, force_mean: bool = False, teams: lis
     # Salvataggio massivo
     repo_match.massive_update_bulk(list_obj)
 
-# download_import_matches()
+
+download_import_matches()
 # re_processor_error()
 # calculate_mean(with_season=2024, force_mean=True, teams=[487])

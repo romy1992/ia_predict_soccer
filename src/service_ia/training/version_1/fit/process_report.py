@@ -432,18 +432,24 @@ def search_best_model(estimator, t='base', event='under_over_2_5'):
 
 
 # Params base
-event = 'under_over_2_5'
-t = 'mean'
+events = ['under_over_1_5', 'under_over_2_5', 'under_over_3_5']
+t = ['mean', 'std']
+is_grid = True
+estimators_grid = ['lgbn', 'xgb']
 
 # Test
 # X, y = split_dataset(t='std')
 # print(X, y)
-
-# search_best_model(estimator='random', t=t, event=event)
-fit_stacking_classifier(t=t, event=event)
-# fit_xgb(t=t, event=event)
-# fit_gradient_boosting(t=t, event=event)
-# fit_adaboost(t=t, event=event)
-# fit_random_(t=t, event=event)
-# fit_process_bagging_pasting(t=t, event=event)
-# fit_process_voting(t=t, event=event)
+for event in events:
+    for ty in t:
+        if is_grid:
+            for est in estimators_grid:
+                search_best_model(estimator=est, t=ty, event=event)
+        else:
+            fit_stacking_classifier(t=ty, event=event)
+            fit_xgb(t=ty, event=event)
+            fit_gradient_boosting(t=ty, event=event)
+            fit_adaboost(t=ty, event=event)
+            fit_random_(t=ty, event=event)
+            fit_process_bagging_pasting(t=ty, event=event)
+            # fit_process_voting(t=ty, event=event)

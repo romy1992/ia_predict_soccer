@@ -147,7 +147,7 @@ class UtilityFit:
         return {
             'data': datetime.date.today(),
             'description': kwargs.get('des'),
-            'features': self.X.columns,
+            'features': None,  # self.X.columns,
             'best_estimator': str(best_estimator),
             'best_params': str(best_params),
             'best_scorer': str(best_scorer),
