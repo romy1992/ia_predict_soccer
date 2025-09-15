@@ -79,10 +79,10 @@ from sklearn.tree import DecisionTreeClassifier
 from src.repository.match_repository import MatchRepository
 from src.service_ia.training.fit_classifier import FitEnsembleClassifier
 from src.service_ia.training.fit_search_best_model import FitSearchBestModel
-from src.service_ia.utility.utils import convert_orm_match_to_dict
+from src.service_ia.utility.utils import convert_orm_match_to_dict, adapted_percentage
 
 
-def get_matches(event='under_over_2_5'):
+def get_matches(event='under_over_2_5', list_stat=None):
     match_repo = MatchRepository()
     filters = {
         'odds': "not None",
@@ -131,25 +131,36 @@ def get_matches(event='under_over_2_5'):
                     if exclude:  # Elimino features che non mi servono
                         s_home = {key: value for key, value in s_home.items() if key not in exclude}
                         s_away = {key: value for key, value in s_away.items() if key not in exclude}
-                    match_stat.update(
-                        {f'{key}_home_stat': float(value) if pd.notna(value) else 0 for key, value in s_home.items()})
-                    match_stat.update(
-                        {f'{key}_away_stat': float(value) if pd.notna(value) else 0 for key, value in s_away.items()})
+
+                    # Non voglio che siano tutti zero, basta che ce ne sia almeno uno diverso da 0
+                    all_values = list(s_home.values()) + list(s_away.values())
+                    if any(v != 0 for v in all_values):
+                        match_stat.update(
+                            {f'{key}_home_stat': adapted_percentage(value) for key, value in s_home.items()})
+                        match_stat.update(
+                            {f'{key}_away_stat': adapted_percentage(value) for key, value in s_away.items()})
 
                 return match_stat
 
+            match_records = {}
             odds, result = switch_under_over()
-            match_records = {key: value for key, value in odds.items() if pd.notna(value)}
-            match_records.update(get_specific_stat(list_stat=['comparison']))
+            match_records.update({key: value for key, value in odds.items() if pd.notna(value)})
             match_records.update({'id_fixture': match['id_fixture'], 'y': result})
-            dataset.append(match_records)
+
+            if list_stat:  # Se bisogna aggiungere le statistiche
+                stats = get_specific_stat(list_stat=list_stat)  # Se ha statistiche con valore !=0
+                if len(stats) > 0:
+                    match_records.update(stats)
+                    dataset.append(match_records)
+            else:
+                dataset.append(match_records)
 
     return dataset
 
 
-def split_dataset(t='base', event='under_over_2_5'):
+def split_dataset(t='base', event='under_over_2_5', list_stats=None):
     import statistics
-    dataset = get_matches(event=event)
+    dataset = get_matches(event=event, list_stat=list_stats)
 
     X = []
     y = []
@@ -168,15 +179,18 @@ def split_dataset(t='base', event='under_over_2_5'):
         for element in dataset:
             # Rimuovo id_fixture
             element.pop('id_fixture')
-            # Recupero tutte le quote tranne il result label
-            features_under = [float(v) if pd.notna(v) else 0 for k, v in element.items() if 'under' in k]
-            features_over = [float(v) if pd.notna(v) else 0 for k, v in element.items() if 'over' in k]
-            # Recupero tutte le statistiche
-            stats = [v for k, v in element.items() if 'stat' in k]
+            # Recupero tutte le quote tranne il result label e le statistiche
+            features_under = [float(v) if pd.notna(v) else 0 for k, v in element.items() if
+                              'under' in k and 'stat' not in k]
+            features_over = [float(v) if pd.notna(v) else 0 for k, v in element.items() if
+                             'over' in k and 'stat' not in k]
 
             # Skip element if not enough data
             if len(features_under) < 2 or len(features_over) < 2:
                 continue  # Or handle differently if needed
+
+            # Recupero tutte le statistiche
+            stats = [float(v) if pd.notna(v) else 0 for k, v in element.items() if '_stat' in k]
 
             # Applico std
             std_under = statistics.stdev(features_under)
@@ -188,11 +202,13 @@ def split_dataset(t='base', event='under_over_2_5'):
         for element in dataset:
             # Rimuovo id_fixture
             element.pop('id_fixture')
-            # Recupero tutte le quote tranne il result label
-            features_under = [float(v) if pd.notna(v) else 0 for k, v in element.items() if k != 'y' and 'under' in k]
-            features_over = [float(v) if pd.notna(v) else 0 for k, v in element.items() if k != 'y' and 'over' in k]
+            # Recupero tutte le quote tranne il result label e le statistiche
+            features_under = [float(v) if pd.notna(v) else 0 for k, v in element.items() if
+                              'under' in k and 'stat' not in k]
+            features_over = [float(v) if pd.notna(v) else 0 for k, v in element.items() if
+                             'over' in k and 'stat' not in k]
             # Recupero tutte le statistiche
-            stats = [v for k, v in element.items() if 'stat' in k]
+            stats = [float(v) if pd.notna(v) else 0 for k, v in element.items() if '_stat' in k]
 
             # Applico mean
             mean_under = statistics.mean(features_under)
@@ -216,7 +232,7 @@ def fit_process_voting(t='base', event='under_over_2_5'):
     """
     Con Voting che accumula i modelli e restituisce il migliore
     """
-    X, y = split_dataset(t, event='under_over_2_5')
+    X, y = split_dataset(t, event='under_over_2_5', list_stats=list_stats)
 
     X_train, X_test, y_train, y_test = train_test_split(X, y, random_state=42, test_size=0.2)
 
@@ -230,7 +246,7 @@ def fit_process_voting(t='base', event='under_over_2_5'):
     # X_test = st.transform(X_test)
 
     estimators = [('rf', random_forest), ('lg', logistic), ('svc', scv), ('decision', decision)]
-    des = f't={t}/event={event}'
+    des = f't={t}/event={event}/stat={list_stats}'
 
     fit_ensemble_hard = FitEnsembleClassifier(X=X_train, y=y_train, cross_save='cross_save')
     fit_ensemble_hard.fit_voting(estimators=estimators, voting_hs='hard', threshold=0.0, des=des)
@@ -256,18 +272,18 @@ def fit_process_bagging_pasting(t='base', event='under_over_2_5'):
     | Bagging | `True`    | Estrae **con ripetizione** i campioni (bootstrap sampling). È la forma classica usata nei Random Forest.  |
     | Pasting | `False`   | Estrae **senza ripetizione** i campioni (cioè ogni riga può apparire al massimo una volta in ogni clone). |
     """
-    X, y = split_dataset(t=t, event=event)
+    X, y = split_dataset(t=t, event=event, list_stats=list_stats)
     X_train, X_test, y_train, y_test = train_test_split(X, y, random_state=42, test_size=0.2, stratify=y)
 
     estimator = DecisionTreeClassifier(max_leaf_nodes=16, random_state=42)
 
     fit_bagging = FitEnsembleClassifier(X_train, y_train, cross_save='cross_save')
     fit_bagging.fit_bagging_pasting(estimator=estimator, bagging=True,
-                                    des=f't={t}/event={event}/bagging=True')
+                                    des=f't={t}/event={event}/bagging=True/stat={list_stats}')
 
     fit_bagging = FitEnsembleClassifier(X_train, y_train, cross_save='cross_save')
     fit_bagging.fit_bagging_pasting(estimator=estimator, bagging=False,
-                                    des=f't={t}/event={event}/bagging=False')
+                                    des=f't={t}/event={event}/bagging=False/stat={list_stats}')
 
 
 def fit_random_(t='base', event='under_over_2_5'):
@@ -284,14 +300,14 @@ def fit_random_(t='base', event='under_over_2_5'):
     | `min_samples_split` | Campioni minimi per dividere un nodo    |
 
     """
-    X, y = split_dataset(t, event=event)
+    X, y = split_dataset(t, event=event, list_stats=list_stats)
 
     random_oob = FitEnsembleClassifier(X, y, cross_save='cross_save')
-    random_oob.fit_random_(oob=True, des=f't={t}/event={event}/oob=True')
+    random_oob.fit_random_(oob=True, des=f't={t}/event={event}/oob=True/stat={list_stats}')
 
     X_train, X_test, y_train, y_test = train_test_split(X, y, random_state=42, test_size=0.2)
     random = FitEnsembleClassifier(X_train, y_train, cross_save='cross_save')
-    random.fit_random_(oob=False, des=f't={t}/event={event}/oob=False')
+    random.fit_random_(oob=False, des=f't={t}/event={event}/oob=False/stat={list_stats}')
 
 
 def fit_adaboost(t='base', event='under_over_2_5'):
@@ -302,14 +318,14 @@ def fit_adaboost(t='base', event='under_over_2_5'):
      - Algorithm con SAMME.R (che è il default) userà le probabilità il che lo rende più robusto a SAMME che usa solo 1 o 0
      Quindi in base a estimator e al n_estimator, lui man mano si riaddestrerà sulla base degli errori precedenti
     """
-    X, y = split_dataset(t, event=event)
+    X, y = split_dataset(t, event=event, list_stats=list_stats)
     estimator = DecisionTreeClassifier(max_depth=1, max_leaf_nodes=16, random_state=42)
 
     ada_samme = FitEnsembleClassifier(X=X, y=y, cross_save='cross_save')
-    ada_samme.fit_adaboost(estimator=estimator, alg_def=False, des=f't={t}/event={event}/samme')
+    ada_samme.fit_adaboost(estimator=estimator, alg_def=False, des=f't={t}/event={event}/samme/stat={list_stats}')
 
     ada_samme_r = FitEnsembleClassifier(X=X, y=y, cross_save='cross_save')
-    ada_samme_r.fit_adaboost(estimator=estimator, des=f't={t}/event={event}/samme_r')
+    ada_samme_r.fit_adaboost(estimator=estimator, des=f't={t}/event={event}/samme_r/stat={list_stats}')
 
 
 def fit_gradient_boosting(t='base', event='under_over_2_5'):
@@ -320,9 +336,9 @@ def fit_gradient_boosting(t='base', event='under_over_2_5'):
     Quindi se il mio n_estimators ha 200, significa che userà 200 cloni dove ognuno dei quali riadatterà/correggerà
     il precedente.
     """
-    X, y = split_dataset(t, event=event)
+    X, y = split_dataset(t, event=event, list_stats=list_stats)
     gb_fit = FitEnsembleClassifier(X=X, y=y, cross_save='cross_save')
-    gb_fit.fit_gradient_boosting(des=f't={t}/event={event}')
+    gb_fit.fit_gradient_boosting(des=f't={t}/event={event}/stat={list_stats}')
 
 
 def fit_xgb(t='base', event='under_over_2_5'):
@@ -351,9 +367,9 @@ def fit_xgb(t='base', event='under_over_2_5'):
     | `eval_metric`      | Funzione per valutare la performance            | 'logloss', 'error', 'auc' |
 
     """
-    X, y = split_dataset(t, event=event)
+    X, y = split_dataset(t, event=event, list_stats=list_stats)
     gb_fit = FitEnsembleClassifier(X=X, y=y, cross_save='cross_save')
-    gb_fit.fit_xgb(des=f't={t}/event={event}')
+    gb_fit.fit_xgb(des=f't={t}/event={event}/stat={list_stats}')
 
 
 def fit_stacking_classifier(t='base', passthrough=True, stack_method='predict_proba', event='under_over_2_5'):
@@ -401,7 +417,7 @@ def fit_stacking_classifier(t='base', passthrough=True, stack_method='predict_pr
     Richiede più tempo computazionale, soprattutto se cv è alto.
     È facile overfittare se hai pochi dati → regolarizza bene il final_estimator.
     """
-    X, y = split_dataset(t, event=event)
+    X, y = split_dataset(t, event=event, list_stats=list_stats)
 
     estimators = [
         ('dt', DecisionTreeClassifier(max_depth=5)),
@@ -416,15 +432,15 @@ def fit_stacking_classifier(t='base', passthrough=True, stack_method='predict_pr
     staking_fit = FitEnsembleClassifier(X=X, y=y, cross_save='cross_save')
     staking_fit.fit_stacking_classifier(stack_method=stack_method, estimators=estimators,
                                         final_estimator=final_estimator, passthrough=passthrough,
-                                        des=f't={t}/event={event}/stack_method={stack_method}, passthrough={passthrough}')
+                                        des=f't={t}/event={event}/stack_method={stack_method}/stat={list_stats}, passthrough={passthrough}')
 
 
 def search_best_model(estimator, t='base', event='under_over_2_5'):
-    X, y = split_dataset(t)
+    X, y = split_dataset(t, list_stats=list_stats)
     X_train, X_test, y_train, y_test = train_test_split(X, y, random_state=42, test_size=0.2)
     search = FitSearchBestModel(X=X_train, y=y_train, name=estimator, best_cross_save='best_cross_save')
 
-    des = f't={t}/event={event}'
+    des = f't={t}/event={event}/stat={list_stats}'
     # search.fit_grid_search(des=des)
     # search.fit_random_search(des=des)
     search.fit_halving_search(des=des)
@@ -435,10 +451,11 @@ def search_best_model(estimator, t='base', event='under_over_2_5'):
 events = ['under_over_1_5', 'under_over_2_5', 'under_over_3_5']
 t = ['mean', 'std']
 is_grid = True
-estimators_grid = ['lgbn', 'xgb']
+estimators_grid = ['decision']
+list_stats = ['form']
 
 # Test
-# X, y = split_dataset(t='std')
+# X, y = split_dataset(t='std', list_stats=None)
 # print(X, y)
 for event in events:
     for ty in t:

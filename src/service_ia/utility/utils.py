@@ -115,3 +115,13 @@ def convert_dict_match_to_orm(dict_json):
         match.odds = odds
         matches_all.append(match)
     return matches_all
+
+
+def adapted_percentage(value):
+    """
+    Toglio il segno % dalla stringa convertendolo in float numerico
+    :param value: valore stringa
+    :return: float convertito
+    """
+    return (float(value.replace('%', '')) / 100) if (pd.notna(value)
+                                                     and isinstance(value, str)) else value if pd.notna(value) else 0
