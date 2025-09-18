@@ -112,11 +112,11 @@ class FitEnsembleClassifier(UtilityFit):
         """
         algorithm = 'SAMME.R' if alg_def else 'SAMME'  # SAMME.R (default, usa probabilità), SAMME (senza probabilità)
         if algorithm == 'SAMME':
-            model = AdaBoostClassifier(estimator=estimator, n_estimators=500, algorithm=algorithm,
+            model = AdaBoostClassifier(estimator=estimator, n_estimators=1000, algorithm=algorithm,
                                        learning_rate=0.5,
                                        random_state=42)
         else:
-            model = AdaBoostClassifier(estimator=estimator, n_estimators=500, learning_rate=0.5, random_state=42)
+            model = AdaBoostClassifier(estimator=estimator, n_estimators=1000, learning_rate=0.5, random_state=42)
 
         check_cross_val = self.check_cross_save(estimator=model, **kwargs)
         if check_cross_val == 'fit':

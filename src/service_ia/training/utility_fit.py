@@ -27,6 +27,7 @@ class UtilityFit:
         super().__init__()
         self.X = X
         self.y = y
+        self.keys = kwargs.get('keys')
         self.file_path_report = 'report_fit_grid.xlsx'
         self.cross_save = kwargs.get('cross_save')
         self.best_cross_save = kwargs.get('best_cross_save')
@@ -147,7 +148,7 @@ class UtilityFit:
         return {
             'data': datetime.date.today(),
             'description': kwargs.get('des'),
-            'features': None,  # self.X.columns,
+            'features': self.keys if self.keys else self.X.columns,
             'best_estimator': str(best_estimator),
             'best_params': str(best_params),
             'best_scorer': str(best_scorer),
