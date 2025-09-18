@@ -22,6 +22,11 @@ def migrate_dataset():
     odds = pd.read_csv(path_df_h_odds, low_memory=False).to_dict(orient='records')
     repo_match = MatchRepository()
 
+    # Filtro per inserire solo partite aggiunte dopo (Olanda) TODO : attivarlo per emergenza
+    statistics = [s for s in statistics if s['current_league'] == 88]
+    id_f_sta = set([s['id_fixture'] for s in statistics])
+    odds = [o for o in odds if o['id_fixture_from_stat'] in id_f_sta]
+
     list_id_odds = set([odd['id'] for odd in odds])
 
     def search_value(stat, field):
@@ -257,7 +262,7 @@ def migrate_dataset():
     matches = []
     try:
         matches.extend(match_stat_odd())  # Migra tutte le statistiche che sono accomunate a odds + odds orfani di stat
-        matches.extend(match_only_stat())  # Migra solo le statistiche SENZA odds
+        # matches.extend(match_only_stat())  # Migra solo le statistiche SENZA odds
     except Exception as e:
         logging.error(str(e))
     finally:
