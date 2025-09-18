@@ -98,7 +98,7 @@ def convert_orm_match_to_dict(matches):
         m = m.to_dict()
         m['statistics'] = stat
         m['odds'] = odds
-        m['mean_statistics'] = {}
+        m['mean_statistics'] = m['mean_statistics'] if m['mean_statistics'] else {}
         matches_all.append(m)
     return matches_all
 

@@ -21,7 +21,8 @@ from src.service_ia.utility.request_api import base_api_statistics
 logging.basicConfig(level=logging.DEBUG)
 
 # Variabili
-LEAGUES = [135, 136, 140, 78, 61, 39, 94, 203, 492]  # 2, 3, 848
+# LEAGUES = [135, 136, 140, 78, 61, 39, 94, 203, 88, 492, 2, 3, 848]
+LEAGUES = [88]
 SEASONS = [2025]
 repo_match = MatchRepository()
 
@@ -32,9 +33,10 @@ with open(os.path.abspath(BET_FILE), 'r', encoding='utf-8') as file:
     BET_BOOKMAKERS = json.load(file)
 
 # FT è partita finita
+# NS è partita non disputata
 # AET è per partita finita ai supplementari (QUINDI PER COPPE)
 # PEN è per partita finita ai rigori (QUINDI PER COPPE)
-status_list = ['FT', 'AET', 'PEN']
+status_list = "FT-AET-PEN"
 
 
 def map_base_match(match, id_fix, fixture, league, season):
@@ -56,7 +58,8 @@ def map_base_match(match, id_fix, fixture, league, season):
         'league_match': fixture['league']['id'],
         'referee': fixture['fixture']['referee'],
         'round': fixture['league']['round'],
-        'season': season
+        'season': season,
+        'status': fixture['fixture']['status']['short']
     }
 
 
@@ -97,6 +100,7 @@ def map_statistic(match, stat, team, id_fix, fixture):
         'shots': {
             'Shots on Goal': default_attribute('Shots on Goal'),
             'Shots off Goal': default_attribute('Shots off Goal'),
+            'Total Shots': default_attribute('Total Shots'),
             'Blocked Shots': default_attribute('Blocked Shots'),
             'Shots insidebox': default_attribute('Shots insidebox'),
             'Shots outsidebox': default_attribute('Shots outsidebox')
@@ -206,7 +210,14 @@ def map_odds(match, id_fix):
     return match.odds[0].to_dict() if match and match.odds and len(match.odds) > 0 else None
 
 
-def download_import_matches(seasons=None, leagues=None):
+def download_import_matches(seasons=None, leagues=None, is_next=False, current_league=2025):
+    """
+    Scarica tutte le partite storiche o successive con odds, statistiche e dettagli vari salvandoli a db
+    :param seasons: se valorizzato, scarica solo partite di quella stagione altrimenti prende tutte quelle censite
+    :param leagues: se valorizzato, scarica solo partite di quella lega altrimenti prende tutte quelle censite
+    :param is_next: False = recupera le partite con status in @status_list. True = recupera partite non disputate in status NS
+    :return: salva tutto a sb
+    """
     seasons = SEASONS if seasons is None else seasons
     leagues = LEAGUES if leagues is None else leagues
 
@@ -223,7 +234,7 @@ def download_import_matches(seasons=None, leagues=None):
         format_data = '%Y-%m-%d'
         current_data = datetime.now()
         # Scegliere da che giorno indietro si vuole andare per recuperare le partite
-        from_date = (current_data - timedelta(days=1)).strftime(format_data)
+        from_date = (current_data - timedelta(days=40)).strftime(format_data)
         # Fino a ...
         to_date = (current_data - timedelta(days=0)).strftime(format_data)
 
@@ -243,16 +254,35 @@ def download_import_matches(seasons=None, leagues=None):
             for league in leagues:
                 logging.info(f'<<< Start season {season} for league {league} >>>')
 
-                fixtures = base_api_statistics(
-                    path='fixtures',
-                    params={
-                        'from': from_date, 'to': to_date,
-                        'status': 'FT', 'league': league,
-                        # 'date': date_manual,
-                        'season': season
-                    })
+                if is_next:
+                    def switch_next_fix():
+                        """
+                        :return: restituisce il numero delle partite del prossimo round che varia in base ai campionati
+                        """
+                        match league:
+                            case 135 | 136 | 140 | 39:
+                                return 10
+                            case 78 | 61 | 94 | 203 | 492:
+                                return 9
+                            case _:
+                                return 18
 
-                # TODO : aggiungere l'estrazione anche per partite che devono ancora disputarsi cosi che si creino gli odds e le medie
+                    fixtures = base_api_statistics(
+                        path='fixtures',
+                        params={
+                            'status': 'NS', 'league': league,
+                            'next': switch_next_fix(),
+                            'season': season
+                        }) if season == current_league else []
+                else:
+                    fixtures = base_api_statistics(
+                        path='fixtures',
+                        params={
+                            'from': from_date, 'to': to_date,
+                            'status': status_list, 'league': league,
+                            # 'date': date_manual,
+                            'season': season
+                        })
 
                 for fixture in fixtures:
                     id_fix = fixture['fixture']['id']
@@ -268,7 +298,7 @@ def download_import_matches(seasons=None, leagues=None):
                         # Recupero le statistiche dal nodo fixture principale
                         stat = fixture.get('statistics') or []
                         # E se non ci sono chiama l'alternativa
-                        if len(stat) == 0:
+                        if len(stat) == 0 and not is_next:
                             stat = base_api_statistics(path='fixtures/statistics', params={'fixture': id_fix})
                         return stat
 
@@ -316,6 +346,10 @@ def download_import_matches(seasons=None, leagues=None):
                         new_match = Match(**dict_match)
                         # Aggiorno man mano se esiste già quel match
                         repo_match.save(new_match)
+
+            if is_next:  # Creo le medie per i prossimi eventi
+                calculate_mean(with_season=season)
+
     except Exception as e:
         logging.error('Errore durante il download : ', str(e))
     finally:
@@ -330,7 +364,6 @@ def download_import_matches(seasons=None, leagues=None):
                     json.dump(list_dict_matches, f, ensure_ascii=False, indent=4)
 
     # TODO insert va bene nel primo inserimento ma questo sarà in continuo aggiornamento -> Testare con dati reali
-    # TODO media statistiche -> Testare con dati reali
 
 
 def re_processor_error():
@@ -353,29 +386,16 @@ def re_processor_error():
         repo_match.save(match)
 
 
-# TODO
-"""
-- Capire perché le medie non vengono calcolate bene
-
-- Aggiungere l'estrazione anche per partite che devono ancora disputarsi cosi che si creino gli odds e le medie
-
-- Insert va bene nel primo inserimento ma questo sarà in continuo aggiornamento -> Testare con dati reali
-
-- Media statistiche -> Testare con dati reali
-
-"""
-
-
-# TODO Capire perché le medie non vengono calcolate bene
 def calculate_mean(with_season: int = None, force_mean: bool = False, teams: list = None):
     """
     Calcola le medie stagionali di ogni squadra prima del match corrente o in maniera puntuale/massiva
     :param with_season: int -> se valorizzata, calcola solo la stagione indicata
     :param force_mean: forza il calcolo della media ANCHE per match che hanno già la media persistita
-    :param teams : Un array di id teams
+    :param teams : Un array di id teams # TODO trovato un BUG che se nel caso fosse specificato un teams, andrebbe a sovrascrivere le medie degli avversari con cui ha giocato
     :return: Persist in update massive (bulk)
     """
     columns_mean = ['Shots on Goal', 'Shots off Goal', 'Total Shots', 'Blocked Shots', 'Shots insidebox',
+                    'expected_goals', 'goals_prevented',
                     'Shots outsidebox', 'Fouls',
                     'Corner Kicks', 'Offsides', 'Ball Possession', 'Yellow Cards', 'Red Cards',
                     'Goalkeeper Saves',
@@ -394,9 +414,9 @@ def calculate_mean(with_season: int = None, force_mean: bool = False, teams: lis
         ]})
 
     all_match = repo_match.search_filter(filters=filters)
-    seasons = set(match.season for match in all_match)
-    id_teams_home = [match.id_team_home for match in all_match]
-    id_teams_away = [match.id_team_away for match in all_match]
+    seasons = set(match.season for match in all_match if pd.notna(match.season))
+    id_teams_home = [match.id_team_home for match in all_match if pd.notna(match.id_team_home)]
+    id_teams_away = [match.id_team_away for match in all_match if pd.notna(match.id_team_away)]
     id_teams = set(list(id_teams_home) + list(id_teams_away))
     list_obj = []  # Update in maniera massiva con bulk_update_mappings
     for season in seasons:
@@ -440,6 +460,11 @@ def calculate_mean(with_season: int = None, force_mean: bool = False, teams: lis
                                         'Shots insidebox': get_value('shots', 'Shots insidebox'),
                                         'Shots outsidebox': get_value('shots', 'Shots outsidebox'),
 
+                                        'expected_goals': float(get_value('generic_statistics', 'expected_goals')),
+                                        # quanto la squadra avrebbe dovuto segnare.
+                                        'goals_prevented': get_value('generic_statistics', 'goals_prevented'),
+                                        # quanto il portiere ha inciso nel prevenire (o subire) gol rispetto alle attese.
+
                                         'Fouls': get_value('fouls'),
                                         'Corner Kicks': get_value('corners'),
                                         'Offsides': get_value('offside'),
@@ -481,6 +506,6 @@ def calculate_mean(with_season: int = None, force_mean: bool = False, teams: lis
     repo_match.massive_update_bulk(list_obj)
 
 
-download_import_matches()
+download_import_matches(is_next=False)
 # re_processor_error()
-# calculate_mean(with_season=2024, force_mean=True, teams=[487])
+# calculate_mean(force_mean=True)

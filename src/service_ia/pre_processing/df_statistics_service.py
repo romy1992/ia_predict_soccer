@@ -7,11 +7,11 @@ from src.service_ia.mapper.statistic_mapper import get_attribute_statistics, for
 from src.service_ia.utility.request_api import base_api_statistics
 
 # 135, 136, 140,61, 78, 39, 94, 203,492
-LEAGUES = [61]
-SEASONS = [2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2022, 2023, 2024]
+LEAGUES = [88]
+SEASONS = [2018, 2019, 2020, 2021, 2022, 2022, 2023, 2024, 2025]
 INDEX = 0
 JSON_DICT = []
-name_history = '../dataset/statistics/dataset_statistics_history_temp.csv'  # TODO temp
+name_history = '../dataset/statistics/dataset_statistics_history_temp_88.csv'  # TODO temp
 
 
 def generate_statistics_dataset():
@@ -175,7 +175,7 @@ def reload_statistics():
         print('Aggiornato')
 
 
-# generate_statistics_dataset()
+generate_statistics_dataset()
 # reload_statistics()
 
 # convert_csv_to_exel(name_history)

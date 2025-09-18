@@ -51,3 +51,40 @@ WHERE
   EXISTS (SELECT 1 FROM jsonb_object_keys(COALESCE(for_::jsonb, '{}'::jsonb)) AS k WHERE k ~ '^form')
   OR
   EXISTS (SELECT 1 FROM jsonb_object_keys(COALESCE(against::jsonb, '{}'::jsonb)) AS k WHERE k ~ '^form');
+
+-- Inner join status
+SELECT * FROM public.odds o
+inner join public.match m on m.id_match_fk = o.id_match
+where m.status='NS'
+
+SELECT * FROM public.statistics s
+inner join public.match m on m.id_match_fk = s.id_match
+where m.status='NS'
+
+--Query per cambiare/aggiungere valori nei json columns
+UPDATE statistics
+SET shots = (
+  jsonb_set(
+    shots::jsonb,
+    '{Total Shots}',
+    to_jsonb(
+      (ROUND(
+        COALESCE( CASE WHEN (shots->>'Shots insidebox')  ~ '^\s*-?\d+(\.\d+)?\s*$'
+                       THEN (shots->>'Shots insidebox')::numeric ELSE 0 END, 0)
+      + COALESCE( CASE WHEN (shots->>'Shots outsidebox') ~ '^\s*-?\d+(\.\d+)?\s*$'
+                       THEN (shots->>'Shots outsidebox')::numeric ELSE 0 END, 0)
+      ))::int
+    ),
+    true
+  )
+)::json
+WHERE (shots::jsonb ? 'Shots insidebox' OR shots::jsonb ? 'Shots outsidebox')
+RETURNING shots->>'Shots insidebox' AS insidebox,
+          shots->>'Shots outsidebox' AS outsidebox,
+          shots->>'Total Shots'      AS total_after;
+
+-- Query che seleziona solo determinati json
+SELECT *
+FROM public.statistics s
+WHERE (s.generic_statistics->>'expected_goals') IS NOT NULL
+  AND (s.generic_statistics->>'expected_goals')::numeric > 0;

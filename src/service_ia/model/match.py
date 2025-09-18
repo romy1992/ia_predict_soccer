@@ -23,6 +23,8 @@ class Match(Base):
     title_league = Column(String)  # Nome della lega (per odds)
     current_league = Column(Integer)  # Numero della lega corrente (per statistics)
     league_match = Column(Integer)  # Numero della lega partita (per statistics)
+    # status della partita : # NS Non disputata - FT partita finita - AET è per partita finita ai supplementari (QUINDI PER COPPE) - PEN è per partita finita ai rigori (QUINDI PER COPPE)
+    status = Column(String)
     referee = Column(String)  # Arbitro
     round = Column(String)  # Giornata
     season = Column(Integer)  # Stagione
