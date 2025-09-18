@@ -8,7 +8,7 @@ from src.service_ia.utility.request_api import base_api_statistics
 
 # 135, 136, 140,61, 78, 39, 94, 203,492
 LEAGUES = [88]
-SEASONS = [2018, 2019, 2020, 2021, 2022, 2022, 2023, 2024, 2025]
+SEASONS = [2022, 2023, 2024, 2025]
 INDEX = 0
 JSON_DICT = []
 name_history = '../dataset/statistics/dataset_statistics_history_temp_88.csv'  # TODO temp
@@ -102,7 +102,7 @@ def generate_statistics_dataset():
                                         and id_['opponent_id'] == attribute_fixture['opponent_id']]
 
                         # TODO : togliere questo match_id_from_odds che viene aggiunto al dizionario se non serve
-                        match_id_from_odds = is_duplicate[0]['match_id_from_odds'] if len(is_duplicate) > 0 else None
+                        match_id_from_odds = is_duplicate[0].get('match_id_from_odds') if len(is_duplicate) > 0 else None
                         attribute_fixture.update({'match_id_from_odds': match_id_from_odds})
 
                         if len(is_duplicate) == 0:
@@ -180,16 +180,3 @@ generate_statistics_dataset()
 
 # convert_csv_to_exel(name_history)
 
-dt = pd.read_csv(name_history, low_memory=False).to_dict(orient='records')
-print('Totale : ', len(dt))
-print(2014, len([d for d in dt if d['season'] == 2014]))
-print(2015, len([d for d in dt if d['season'] == 2015]))
-print(2016, len([d for d in dt if d['season'] == 2016]))
-print(2017, len([d for d in dt if d['season'] == 2017]))
-print(2018, len([d for d in dt if d['season'] == 2018]))
-print(2019, len([d for d in dt if d['season'] == 2019]))
-print(2020, len([d for d in dt if d['season'] == 2020]))
-print(2021, len([d for d in dt if d['season'] == 2021]))
-print(2022, len([d for d in dt if d['season'] == 2022]))
-print(2023, len([d for d in dt if d['season'] == 2023]))
-print(2024, len([d for d in dt if d['season'] == 2024]))

@@ -16,7 +16,7 @@ logging.basicConfig(level=logging.DEBUG)
 
 # =============================================== STEP 3 ===============================================
 base_dataset = '../dataset'
-name_statistics_history = f'{base_dataset}/statistics/dataset_statistics_history_temp.csv'  # DT storico di statistiche partite
+name_statistics_history = f'{base_dataset}/statistics/dataset_statistics_history_temp_88.csv'  # DT storico di statistiche partite
 name_odds_history = f'{base_dataset}/odds/odds_dataset.csv'  # DT storico di odds
 
 
@@ -243,7 +243,7 @@ def refused_join_insert():
 #  L'ALTERNATIVA E CORRISPONDEZA PRINCIPALE..
 #  DA PROVARE SE I LORO ID SONO STATI DISABILITATI
 
-# aggregate_ids_into_dataset(partial=True)
+aggregate_ids_into_dataset(partial=True)
 # refused_join_insert()
 
 # TODO questi convert sotto sono solo per comodità
