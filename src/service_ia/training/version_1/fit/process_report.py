@@ -493,16 +493,17 @@ def fit_stacking_classifier(passthrough=True, stack_method='predict_proba'):
         smote = SMOTE()
         X, y = smote.fit_resample(X, y)
 
-    if '1.5' in event:
-        estimators = [
-            ('dt', DecisionTreeClassifier(criterion='entropy', max_depth=5, max_features='sqrt', min_samples_split=5)),
-            ('svc', SVC(probability=True)),
-            ('rf', RandomForestClassifier(n_estimators=100)),
-            ('knn', KNeighborsClassifier(metric='euclidean', n_neighbors=3, p=1, weights='distance')),
-            ('xgb', xgb.XGBClassifier(
-                **{'colsample_bytree': 1.0, 'learning_rate': 0.2, 'max_depth': 10, 'n_estimators': 200,
-                   'scale_pos_weight': 2, 'subsample': 0.7}))
-        ]
+    # if '1.5' in event:
+    estimators = [
+        ('dt', DecisionTreeClassifier(criterion='entropy', max_depth=5, max_features='sqrt', min_samples_split=5)),
+        ('svc', SVC(probability=True)),
+        ('rf', RandomForestClassifier(bootstrap=False, class_weight='balanced',
+                                      max_features='log2', n_estimators=4272, warm_start=True)),
+        ('knn', KNeighborsClassifier(metric='euclidean', n_neighbors=3, p=1, weights='distance')),
+        ('xgb', xgb.XGBClassifier(
+            **{'colsample_bytree': 1.0, 'learning_rate': 0.2, 'max_depth': 10, 'n_estimators': 200,
+               'scale_pos_weight': 2, 'subsample': 0.7}))
+    ]
 
     final_estimator = LogisticRegression()
 
@@ -531,7 +532,7 @@ def search_best_model(estimator):
 # Params base
 events = ['under_over_1_5']  # , 'under_over_2_5', 'under_over_3_5'
 ts = ['mean']  # , 'std']
-is_grid = True
+is_grid = False
 with_smote = True
 with_scaler = True
 estimators_grid = ['random']
