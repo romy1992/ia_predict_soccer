@@ -21,8 +21,7 @@ from src.service_ia.utility.request_api import base_api_statistics
 logging.basicConfig(level=logging.DEBUG)
 
 # Variabili
-# LEAGUES = [135, 136, 140, 78, 61, 39, 94, 203, 88, 492, 2, 3, 848]
-LEAGUES = [88]
+LEAGUES = [135, 136, 140, 78, 61, 39, 94, 203, 88, 492, 2, 3, 848]
 SEASONS = [2025]
 repo_match = MatchRepository()
 
@@ -234,7 +233,7 @@ def download_import_matches(seasons=None, leagues=None, is_next=False, current_l
         format_data = '%Y-%m-%d'
         current_data = datetime.now()
         # Scegliere da che giorno indietro si vuole andare per recuperare le partite
-        from_date = (current_data - timedelta(days=40)).strftime(format_data)
+        from_date = (current_data - timedelta(days=1)).strftime(format_data)
         # Fino a ...
         to_date = (current_data - timedelta(days=0)).strftime(format_data)
 
