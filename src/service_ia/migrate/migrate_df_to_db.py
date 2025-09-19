@@ -23,9 +23,9 @@ def migrate_dataset():
     repo_match = MatchRepository()
 
     # Filtro per inserire solo partite aggiunte dopo (Olanda) TODO : attivarlo per emergenza
-    statistics = [s for s in statistics if s['current_league'] == 88]
-    id_f_sta = set([s['id_fixture'] for s in statistics])
-    odds = [o for o in odds if o['id_fixture_from_stat'] in id_f_sta]
+    # statistics = [s for s in statistics if s['current_league'] == 88]
+    # id_f_sta = set([s['id_fixture'] for s in statistics])
+    # odds = [o for o in odds if o['id_fixture_from_stat'] in id_f_sta]
 
     list_id_odds = set([odd['id'] for odd in odds])
 
@@ -222,6 +222,7 @@ def migrate_dataset():
 
             if len(stat_dict) > 0:
                 match = Match(**stat_dict)
+                match.status = 'FT'
                 match.id_events = id_events
                 match.id_fixture = id_fixture
                 stat_odd_list.append(match)
@@ -234,8 +235,8 @@ def migrate_dataset():
         :return: Match
         """
         stat_odd_list = []
-        all_matchs = repo_match.search_all()
-        ids_db_fixtures = [id_ for id_ in [m.to_dict().get('id_fixture') for m in all_matchs] if id_]
+        all_matches = repo_match.search_all()
+        ids_db_fixtures = [id_ for id_ in [m.to_dict().get('id_fixture') for m in all_matches] if id_]
         orphan_stat_id = set([stat['id_fixture'] for stat in statistics if stat['id_fixture'] not in ids_db_fixtures])
         for index, ids_ in enumerate(orphan_stat_id):
             logging.info(f'<<< Row stat {index}/{len(orphan_stat_id)}')
@@ -254,6 +255,7 @@ def migrate_dataset():
 
             if len(stat_dict) > 0:
                 match = Match(**stat_dict)
+                match.status = 'FT'
                 match.id_fixture = id_fixture
                 stat_odd_list.append(match)
 
@@ -262,7 +264,7 @@ def migrate_dataset():
     matches = []
     try:
         matches.extend(match_stat_odd())  # Migra tutte le statistiche che sono accomunate a odds + odds orfani di stat
-        # matches.extend(match_only_stat())  # Migra solo le statistiche SENZA odds
+        matches.extend(match_only_stat())  # Migra solo le statistiche SENZA odds
     except Exception as e:
         logging.error(str(e))
     finally:

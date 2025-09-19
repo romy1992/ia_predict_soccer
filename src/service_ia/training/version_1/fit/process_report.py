@@ -83,7 +83,7 @@ from src.service_ia.training.fit_search_best_model import FitSearchBestModel
 from src.service_ia.utility.utils import convert_orm_match_to_dict, adapted_percentage
 
 
-def get_matches(event='under_over_2_5'):
+def get_matches():
     match_repo = MatchRepository()
     filters = {
         'status': ['FT'],
@@ -122,11 +122,12 @@ def get_matches(event='under_over_2_5'):
                         r = 1 if total >= 4 else 0
                 return match['odds'][0][event], r
 
-            def get_specific_stat(exclude=None):
+            def get_specific_stat(exclude=None, include=None):
                 """
                 Aggrega tutte le statistiche che mi servono per addestrare
                 :param list_stats: lista di nodi dict es: ['form','passes','mean_statistics']
                 :param exclude: casi in cui serve la lista di elementi dict che non servono es: ['Total passes']
+                :param include: casi in cui serve la lista di elementi dict che servono es: ['expected_goal']
                 :return: dict di statistiche di home e away
                 """
                 # Solo media dei alcune statistiche principali
@@ -146,6 +147,12 @@ def get_matches(event='under_over_2_5'):
                                                   key not in exclude}
                                 mean_stat_away = {key: value for key, value in mean_stat_away.items() if
                                                   key not in exclude}
+                            elif include:  # Prendo solo le feature che mi servono
+                                mean_stat_home = {key: value for key, value in mean_stat_home.items() if
+                                                  key in include}
+                                mean_stat_away = {key: value for key, value in mean_stat_away.items() if
+                                                  key in include}
+
                             # Non voglio che siano tutti zero, basta che ce ne sia almeno uno diverso da 0
                             all_values_mean = list(mean_stat_home.values()) + list(mean_stat_away.values())
                             if any(v != 0 for v in all_values_mean):
@@ -179,14 +186,17 @@ def get_matches(event='under_over_2_5'):
 
             if list_stats:  # Se bisogna aggiungere le statistiche
                 stats = get_specific_stat(
-                    exclude=['id_team',
-                             'mean_Shots on Goal', 'mean_Shots off Goal', 'mean_Blocked Shots', 'mean_Shots insidebox',
-                             'mean_Shots outsidebox', 'mean_Corner Kicks',
-                             'mean_Fouls',
-                             'mean_Offsides',
-                             'mean_Yellow Cards', 'mean_Red Cards',
-                             'mean_Goalkeeper Saves',
-                             'mean_Total passes', 'mean_Passes %', 'mean_Passes accurate'])
+                    # exclude=['id_team',
+                    #          'mean_Shots on Goal', 'mean_Shots off Goal', 'mean_Blocked Shots', 'mean_Shots insidebox',
+                    #          'mean_Shots outsidebox', 'mean_Corner Kicks',
+                    #          'mean_Fouls',
+                    #          'mean_Offsides',
+                    #          'mean_Yellow Cards', 'mean_Red Cards',
+                    #          'mean_Goalkeeper Saves',
+                    #          'mean_Total passes', 'mean_Passes %', 'mean_Passes accurate'],
+                    include=['mean_expected_goals']
+
+                )
                 # Se ha statistiche con valore !=0
                 if len(stats) > 0:
                     match_records.update(stats)
@@ -197,9 +207,9 @@ def get_matches(event='under_over_2_5'):
     return dataset
 
 
-def split_dataset(t='base', event='under_over_2_5'):
+def split_dataset():
     import statistics
-    dataset = get_matches(event=event)
+    dataset = get_matches()
     excluded = {"id_fixture", "y"}  # chiavi da escludere manualmente
     keys = {
         key
@@ -277,11 +287,11 @@ def split_dataset(t='base', event='under_over_2_5'):
     return X, y, keys
 
 
-def fit_process_voting(t='base', event='under_over_2_5'):
+def fit_process_voting():
     """
     Con Voting che accumula i modelli e restituisce il migliore
     """
-    X, y, keys = split_dataset(t, event=event)
+    X, y, keys = split_dataset()
 
     X_train, X_test, y_train, y_test = train_test_split(X, y, random_state=42, test_size=0.2)
 
@@ -304,7 +314,7 @@ def fit_process_voting(t='base', event='under_over_2_5'):
     fit_ensemble_soft.fit_voting(estimators=estimators, voting_hs='soft', threshold=0.0, des=des)
 
 
-def fit_process_bagging_pasting(t='base', event='under_over_2_5'):
+def fit_process_bagging_pasting():
     """
     | Caratteristica     | Descrizione                                                                                                       |
     | ------------------ | ----------------------------------------------------------------------------------------------------------------- |
@@ -321,7 +331,7 @@ def fit_process_bagging_pasting(t='base', event='under_over_2_5'):
     | Bagging | `True`    | Estrae **con ripetizione** i campioni (bootstrap sampling). È la forma classica usata nei Random Forest.  |
     | Pasting | `False`   | Estrae **senza ripetizione** i campioni (cioè ogni riga può apparire al massimo una volta in ogni clone). |
     """
-    X, y, keys = split_dataset(t=t, event=event)
+    X, y, keys = split_dataset()
     X_train, X_test, y_train, y_test = train_test_split(X, y, random_state=42, test_size=0.2, stratify=y)
 
     # estimator = DecisionTreeClassifier(max_leaf_nodes=16, random_state=42)
@@ -336,7 +346,7 @@ def fit_process_bagging_pasting(t='base', event='under_over_2_5'):
                                     des=f't={t}/event={event}/bagging=False/stat={list_stats}')
 
 
-def fit_random_(t='base', event='under_over_2_5'):
+def fit_random_():
     """
     L'iper parametro oob, indica che il RandomForest può essere addestrato direttamente con X e y senza dover splittare
     in test. Di fatti per poter poi vedere il risultato finale, non c'è bisogno di fare il predict ma di richiamare una
@@ -350,7 +360,7 @@ def fit_random_(t='base', event='under_over_2_5'):
     | `min_samples_split` | Campioni minimi per dividere un nodo    |
 
     """
-    X, y, keys = split_dataset(t, event=event)
+    X, y, keys = split_dataset()
 
     random_oob = FitEnsembleClassifier(X, y, cross_save='cross_save')
     random_oob.fit_random_(oob=True, des=f't={t}/event={event}/oob=True/stat={list_stats}')
@@ -360,7 +370,7 @@ def fit_random_(t='base', event='under_over_2_5'):
     random.fit_random_(oob=False, des=f't={t}/event={event}/oob=False/stat={list_stats}')
 
 
-def fit_adaboost(t='base', event='under_over_2_5'):
+def fit_adaboost():
     """
      Sulla base di un Algoritmo, proverà ad addestrare e controllare le stime.
      Se alcune stime saranno errate, si riaddestrerà sulla base di quelle stime cercando di migliorare sui suoi errori.
@@ -368,7 +378,7 @@ def fit_adaboost(t='base', event='under_over_2_5'):
      - Algorithm con SAMME.R (che è il default) userà le probabilità il che lo rende più robusto a SAMME che usa solo 1 o 0
      Quindi in base a estimator e al n_estimator, lui man mano si riaddestrerà sulla base degli errori precedenti
     """
-    X, y, keys = split_dataset(t, event=event)
+    X, y, keys = split_dataset()
     # Oversampling con SMOTE
     # smote = SMOTE(random_state=42)
     # X, y = smote.fit_resample(X, y)
@@ -378,7 +388,7 @@ def fit_adaboost(t='base', event='under_over_2_5'):
     #                                    max_features='log2',  # 3.5
     #                                    min_samples_split=5)
     estimator = DecisionTreeClassifier(criterion='log_loss', max_depth=5, max_features='log2',
-                                       min_samples_leaf=2, min_samples_split=5)
+                                       min_samples_leaf=2, min_samples_split=5)  # 2.5
 
     ada_samme = FitEnsembleClassifier(X=X, y=y, cross_save='cross_save')
     ada_samme.fit_adaboost(estimator=estimator, alg_def=False, threshold=threshold,
@@ -389,7 +399,7 @@ def fit_adaboost(t='base', event='under_over_2_5'):
                              des=f't={t}/event={event}/samme_r/stat={list_stats}')
 
 
-def fit_gradient_boosting(t='base', event='under_over_2_5'):
+def fit_gradient_boosting():
     """
     Gradient Boosting è simile ad ADABOOST ma invece che correggere le stime del precedente, lui le riadatta.
     Anche qui troviamo n_estimators che indica quante volte deve ripetere l'operazione per il riadattamento che di
@@ -397,12 +407,12 @@ def fit_gradient_boosting(t='base', event='under_over_2_5'):
     Quindi se il mio n_estimators ha 200, significa che userà 200 cloni dove ognuno dei quali riadatterà/correggerà
     il precedente.
     """
-    X, y, keys = split_dataset(t, event=event)
+    X, y, keys = split_dataset()
     gb_fit = FitEnsembleClassifier(X=X, y=y, cross_save='cross_save')
     gb_fit.fit_gradient_boosting(des=f't={t}/event={event}/stat={list_stats}')
 
 
-def fit_xgb(t='base', event='under_over_2_5'):
+def fit_xgb():
     """
     XGBClassifier è un'evoluzione del GradientBoosting
 
@@ -428,12 +438,12 @@ def fit_xgb(t='base', event='under_over_2_5'):
     | `eval_metric`      | Funzione per valutare la performance            | 'logloss', 'error', 'auc' |
 
     """
-    X, y, keys = split_dataset(t, event=event)
+    X, y, keys = split_dataset()
     gb_fit = FitEnsembleClassifier(X=X, y=y, cross_save='cross_save')
     gb_fit.fit_xgb(des=f't={t}/event={event}/stat={list_stats}')
 
 
-def fit_stacking_classifier(t='base', passthrough=True, stack_method='predict_proba', event='under_over_2_5'):
+def fit_stacking_classifier(passthrough=True, stack_method='predict_proba'):
     """
     Lo stacking classifier combina più algoritmi(level-0) dove le loro previsioni vengono poi passate al modello finale
     (meta-model level-1) che restituisce la predizione finale.
@@ -478,15 +488,21 @@ def fit_stacking_classifier(t='base', passthrough=True, stack_method='predict_pr
     Richiede più tempo computazionale, soprattutto se cv è alto.
     È facile overfittare se hai pochi dati → regolarizza bene il final_estimator.
     """
-    X, y, keys = split_dataset(t, event=event)
+    X, y, keys = split_dataset()
+    if with_smote:
+        smote = SMOTE()
+        X, y = smote.fit_resample(X, y)
 
-    estimators = [
-        ('dt', DecisionTreeClassifier(max_depth=5)),
-        ('svc', SVC(probability=True)),
-        ('rf', RandomForestClassifier(n_estimators=100)),
-        ('knn', KNeighborsClassifier()),
-        ('xgb', xgb.XGBClassifier(eval_metric='logloss'))
-    ]
+    if '1.5' in event:
+        estimators = [
+            ('dt', DecisionTreeClassifier(criterion='entropy', max_depth=5, max_features='sqrt', min_samples_split=5)),
+            ('svc', SVC(probability=True)),
+            ('rf', RandomForestClassifier(n_estimators=100)),
+            ('knn', KNeighborsClassifier(metric='euclidean', n_neighbors=3, p=1, weights='distance')),
+            ('xgb', xgb.XGBClassifier(
+                **{'colsample_bytree': 1.0, 'learning_rate': 0.2, 'max_depth': 10, 'n_estimators': 200,
+                   'scale_pos_weight': 2, 'subsample': 0.7}))
+        ]
 
     final_estimator = LogisticRegression()
 
@@ -496,9 +512,13 @@ def fit_stacking_classifier(t='base', passthrough=True, stack_method='predict_pr
                                         des=f't={t}/event={event}/stack_method={stack_method}/stat={list_stats}, passthrough={passthrough}')
 
 
-def search_best_model(estimator, t='base', event='under_over_2_5'):
-    X, y, keys = split_dataset(t, event=event)
+def search_best_model(estimator):
+    X, y, keys = split_dataset()
     X_train, X_test, y_train, y_test = train_test_split(X, y, random_state=42, test_size=0.2)
+    if with_smote:
+        smote = SMOTE()
+        X_train, y_train = smote.fit_resample(X_train, y_train)
+
     search = FitSearchBestModel(X=X_train, y=y_train, name=estimator, best_cross_save='best_cross_save', keys=keys)
 
     des = f't={t}/event={event}/stat={list_stats}'
@@ -509,26 +529,28 @@ def search_best_model(estimator, t='base', event='under_over_2_5'):
 
 
 # Params base
-events = ['under_over_2_5']
-t = ['mean']  # , 'std']
-is_grid = False
-estimators_grid = ['decision']
+events = ['under_over_1_5']  # , 'under_over_2_5', 'under_over_3_5'
+ts = ['mean']  # , 'std']
+is_grid = True
+with_smote = True
+with_scaler = True
+estimators_grid = ['random']
 list_stats = ['mean_statistics']
 threshold = 0
 
 # Test
-X, y, keys = split_dataset(t='mean')
-print(X, y, keys)
-# for event in events:
-#     for ty in t:
-#         if is_grid:
-#             for est in estimators_grid:
-#                 search_best_model(estimator=est, t=ty, event=event)
-#         else:
-#             # fit_stacking_classifier(t=ty, event=event)
-#             fit_xgb(t=ty, event=event)
-#             fit_gradient_boosting(t=ty, event=event)
-#             fit_adaboost(t=ty, event=event)
-#             fit_random_(t=ty, event=event)
-#             fit_process_bagging_pasting(t=ty, event=event)
-#             fit_process_voting(t=ty, event=event)
+# X, y, keys = split_dataset()
+# print(X, y, keys)
+for event in events:
+    for t in ts:
+        if is_grid:
+            for est in estimators_grid:
+                search_best_model(estimator=est)
+        else:
+            fit_stacking_classifier()
+            # fit_xgb()
+            # fit_gradient_boosting()
+            # fit_adaboost()
+            # fit_random_()
+            # fit_process_bagging_pasting()
+            # fit_process_voting()
