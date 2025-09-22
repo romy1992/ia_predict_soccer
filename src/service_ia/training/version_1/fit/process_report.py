@@ -70,10 +70,13 @@ import numpy as np
 import pandas as pd
 import xgboost as xgb
 from imblearn.over_sampling import SMOTE
+from sklearn.calibration import CalibratedClassifierCV
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.linear_model import LogisticRegression
+from sklearn.linear_model import LogisticRegression, SGDClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.neighbors import KNeighborsClassifier
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC
 from sklearn.tree import DecisionTreeClassifier
 
@@ -489,28 +492,50 @@ def fit_stacking_classifier(passthrough=True, stack_method='predict_proba'):
     È facile overfittare se hai pochi dati → regolarizza bene il final_estimator.
     """
     X, y, keys = split_dataset()
-    if with_smote:
-        smote = SMOTE()
-        X, y = smote.fit_resample(X, y)
 
     # if '1.5' in event:
+    # estimators = [
+    #     ('dt', DecisionTreeClassifier(criterion='entropy', max_depth=5, max_features='sqrt', min_samples_split=5)),
+    #     ('svc', SVC(probability=True)),
+    #     ('rf', RandomForestClassifier(bootstrap=False, class_weight='balanced',
+    #                                   max_features='log2', n_estimators=4272, warm_start=True)),
+    #     ('knn', KNeighborsClassifier(metric='euclidean', n_neighbors=3, p=1, weights='distance')),
+    #     ('xgb', xgb.XGBClassifier(
+    #         **{'colsample_bytree': 1.0, 'learning_rate': 0.2, 'max_depth': 10, 'n_estimators': 200,
+    #            'scale_pos_weight': 2, 'subsample': 0.7}))
+    # ]
+    # final_estimator = LogisticRegression()
+
+    # --- estimators (come li hai già) ---
     estimators = [
-        ('dt', DecisionTreeClassifier(criterion='entropy', max_depth=5, max_features='sqrt', min_samples_split=5)),
-        ('svc', SVC(probability=True)),
-        ('rf', RandomForestClassifier(bootstrap=False, class_weight='balanced',
-                                      max_features='log2', n_estimators=4272, warm_start=True)),
-        ('knn', KNeighborsClassifier(metric='euclidean', n_neighbors=3, p=1, weights='distance')),
-        ('xgb', xgb.XGBClassifier(
-            **{'colsample_bytree': 1.0, 'learning_rate': 0.2, 'max_depth': 10, 'n_estimators': 200,
-               'scale_pos_weight': 2, 'subsample': 0.7}))
+        ('svc_cal', CalibratedClassifierCV(
+            estimator=SVC(kernel='rbf', probability=True, C=1.0, gamma='scale'),
+            method='sigmoid', cv=3)),
+        ('rf', RandomForestClassifier(
+            n_estimators=800, max_features='sqrt', bootstrap=True,
+            # con SMOTE non serve class_weight, puoi toglierlo:
+            # class_weight='balanced',
+            n_jobs=-1, random_state=42)),
+        ('knn', make_pipeline(StandardScaler(with_mean=False),
+                              KNeighborsClassifier(n_neighbors=21, weights='distance', metric='euclidean'))),
+        ('xgb', CalibratedClassifierCV(
+            estimator=xgb.XGBClassifier(
+                n_estimators=400, max_depth=7, learning_rate=0.07, subsample=0.8,
+                colsample_bytree=0.9, reg_lambda=1.0, reg_alpha=0.0,
+                # con SMOTE rimuovi scale_pos_weight:
+                # scale_pos_weight=2,
+                tree_method='hist', n_jobs=-1, random_state=42),
+            method='isotonic', cv=3)),
+        ('sgd_lin', make_pipeline(StandardScaler(with_mean=False),
+                                  SGDClassifier(loss='log_loss', alpha=1e-4, max_iter=2000, tol=1e-3, random_state=42)))
     ]
 
-    final_estimator = LogisticRegression()
+    final_estimator = LogisticRegression(C=0.5, max_iter=2000)  # senza class_weight col SMOTE
 
     staking_fit = FitEnsembleClassifier(X=X, y=y, cross_save='cross_save')
     staking_fit.fit_stacking_classifier(stack_method=stack_method, estimators=estimators,
-                                        final_estimator=final_estimator, passthrough=passthrough,
-                                        des=f't={t}/event={event}/stack_method={stack_method}/stat={list_stats}, passthrough={passthrough}')
+                                        final_estimator=final_estimator, passthrough=passthrough, with_smote=with_smote,
+                                        des=f't={t}/event={event}/stack_method={stack_method}/stat={list_stats}, passthrough={passthrough}, smote={with_smote}')
 
 
 def search_best_model(estimator):
@@ -548,6 +573,7 @@ for event in events:
             for est in estimators_grid:
                 search_best_model(estimator=est)
         else:
+            fit_stacking_classifier(passthrough=False)
             fit_stacking_classifier()
             # fit_xgb()
             # fit_gradient_boosting()
