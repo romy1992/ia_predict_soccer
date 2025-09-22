@@ -1,8 +1,10 @@
 import logging
 
 import xgboost as xgb
+from imblearn.over_sampling import SMOTE
 from sklearn.ensemble import VotingClassifier, BaggingClassifier, RandomForestClassifier, AdaBoostClassifier, \
     GradientBoostingClassifier, StackingClassifier
+from imblearn.pipeline import Pipeline
 
 from src.service_ia.training.utility_fit import UtilityFit
 
@@ -236,6 +238,8 @@ class FitEnsembleClassifier(UtilityFit):
         #     ('xgb', xgb.XGBClassifier(eval_metric='logloss'))
         # ]
 
+        with_smote = kwargs.get('with_smote')
+
         stacking = StackingClassifier(
             estimators=estimators,
             final_estimator=final_estimator,
@@ -246,11 +250,18 @@ class FitEnsembleClassifier(UtilityFit):
             stack_method=stack_method
         )
 
-        check_cross_val = self.check_cross_save(estimator=stacking, **kwargs)
+        # 🔑 QUI la pipeline con SMOTE (solo se richiesto)
+        if with_smote:
+            model = Pipeline([('smote', SMOTE(random_state=42)), ('stack', stacking)])
+        else:
+            model = stacking
+
+        check_cross_val = self.check_cross_save(estimator=model, **kwargs)
         if check_cross_val == 'fit':
-            logging.info(f'Start fit {stacking}')
-            stacking.fit(self.X, self.y)
-            logging.info(f'End fit {stacking}')
-            return stacking
+            logging.info(f'Start fit {model}')
+            model.fit(self.X, self.y)
+            logging.info(f'End fit {model}')
+            return model
         elif self.cross_save == 'cross':
             return check_cross_val
+        return None
