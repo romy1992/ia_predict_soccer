@@ -21,7 +21,19 @@ from src.service_ia.utility.request_api import base_api_statistics
 logging.basicConfig(level=logging.DEBUG)
 
 # Variabili
-LEAGUES = [135, 136, 140, 78, 61, 39, 94, 203, 88, 492, 2, 3, 848]
+"""
+135 (Serie A) - 136 (Serie B) - 137 (Coppa Italia) - 138, 942, 943 (Serie C - Girone A,B e C) - 
+2 (Champions League) - 3 (Europa League) - 848 (Conference) - 
+140 (Liga Spagnola) - 
+78 (Bundesliga) - 
+39 (Premier League) - 
+88 (Olandese) - 492 (Olanda serie B)
+94 (Portoghese) -
+144 (Belgio) - 
+61 (Francia) - 
+203 (Turchia)
+"""
+LEAGUES = [135, 136, 137, 138, 942, 943, 140, 144, 78, 61, 39, 94, 203, 88, 492, 2, 3, 848]
 SEASONS = [2025]
 repo_match = MatchRepository()
 
