@@ -250,7 +250,7 @@ class FitEnsembleClassifier(UtilityFit):
             stack_method=stack_method
         )
 
-        # 🔑 QUI la pipeline con SMOTE (solo se richiesto)
+        # QUI la pipeline con SMOTE (solo se richiesto)
         if with_smote:
             model = Pipeline([('smote', SMOTE(random_state=42)), ('stack', stacking)])
         else:
