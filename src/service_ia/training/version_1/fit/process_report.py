@@ -557,10 +557,10 @@ def search_best_model(estimator):
 # Params base
 events = ['under_over_1_5']  # , 'under_over_2_5', 'under_over_3_5'
 ts = ['mean']  # , 'std']
-is_grid = False
+is_grid = True
 with_smote = True
 with_scaler = True
-estimators_grid = ['random']
+estimators_grid = ['decision']
 list_stats = ['mean_statistics']
 threshold = 0
 
@@ -573,9 +573,9 @@ for event in events:
             for est in estimators_grid:
                 search_best_model(estimator=est)
         else:
-            fit_stacking_classifier(passthrough=False)
-            fit_stacking_classifier()
-            # fit_xgb()
+            # fit_stacking_classifier(passthrough=False)
+            # fit_stacking_classifier()
+            fit_xgb()
             # fit_gradient_boosting()
             # fit_adaboost()
             # fit_random_()
