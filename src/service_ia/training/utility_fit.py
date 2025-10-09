@@ -4,13 +4,15 @@ import os
 
 import numpy as np
 import pandas as pd
-
-from sklearn.model_selection import StratifiedKFold, cross_val_predict, cross_validate, cross_val_score
+from imblearn.over_sampling import SMOTE
+from imblearn.pipeline import Pipeline
 from sklearn.metrics import (
     roc_curve, auc, precision_recall_curve, average_precision_score,
     log_loss, brier_score_loss, accuracy_score, precision_score, recall_score,
     f1_score, confusion_matrix, classification_report
 )
+from sklearn.model_selection import StratifiedKFold, cross_val_predict, cross_validate, cross_val_score
+from sklearn.preprocessing import StandardScaler
 
 logging.basicConfig(level=logging.DEBUG)
 
@@ -28,6 +30,8 @@ class UtilityFit:
             'cross' -> ritorna tutte le valutazioni
             'cross_save' -> valuta e salva il report finale
             'None' -> ritorna solo il modello addestrato
+            'with_scaler' -> True/false
+            'with_smote' -> True/false
         """
         super().__init__()
         self.X = X
@@ -36,6 +40,8 @@ class UtilityFit:
         self.file_path_report = 'report_fit_grid.xlsx'
         self.cross_save = kwargs.get('cross_save')
         self.best_cross_save = kwargs.get('best_cross_save')
+        self.with_smote = kwargs.get('with_smote', False)
+        self.with_scaler = kwargs.get('with_scaler', False)
 
     def check_cross_save(self, estimator, **kwargs):
         """
@@ -52,13 +58,13 @@ class UtilityFit:
             case 'cross':
                 return self.cross(estimator=estimator, des=des, threshold=threshold, cv=cv)
             case 'cross_save':
-                result = self.cross(estimator=estimator, des=des, threshold=threshold, cv=cv)
-                result_2 = self.cross_2(estimator=estimator, des=des, threshold=threshold, cv=cv)
+                # result = self.cross(estimator=estimator, des=des, threshold=threshold, cv=cv)
+                # result_2 = self.cross_2(estimator=estimator, des=des, threshold=threshold, cv=cv)
                 result_3 = self.evaluate_classification(estimator=estimator, des=des, threshold=threshold, cv=cv)
-                print(result)
-                print(result_2)
+                # print(result)
+                # print(result_2)
                 print(result_3)
-                # self.save_report(results_=result)
+                self.save_report(results_=result_3)
             case 'best_cross':
                 return self.cross_best_search(estimator, des=des)
             case 'best_cross_save':
@@ -150,7 +156,7 @@ class UtilityFit:
             if len(thr_grid) == 0: return 0.5
             best_t, best_cost = thr_grid[0], np.inf
             for t in thr_grid:
-                yp = (s >= t).astype(int)
+                yp = np.array(s >= t, dtype=int)  # correzione: garantisce array int
                 tn, fp, fn, tp = confusion_matrix(y_true, yp, labels=[0, 1]).ravel()
                 cost = c_fp * fp + c_fn * fn
                 if cost < best_cost:
@@ -236,7 +242,7 @@ class UtilityFit:
         cv_metrics = cross_validate(estimator, X, y, cv=cv, scoring=scoring)
 
         # -------------------- main threshold ------------
-        main_thr = float(user_thr) if user_thr is not None else thr_f1
+        main_thr = float(user_thr) if user_thr is not None else float(thr_f1)
         y_main = (scores >= main_thr).astype(int)
 
         cm_abs = confusion_matrix(y, y_main, labels=[0, 1])
@@ -252,6 +258,8 @@ class UtilityFit:
         }
 
         return {
+            'data': datetime.date.today(),
+            'description': kwargs.get('des'),
             'meta': {'estimator': estimator, 'date': str(datetime.date.today()),
                      'pos_label': positive_label, 'cv': str(cv),
                      'notes': 'OOF scores; thresholds evaluated on OOF'},
@@ -269,6 +277,26 @@ class UtilityFit:
         }
 
     def cross(self, estimator, **kwargs):
+        """
+        Esegue una valutazione di classificazione binaria tramite cross-validation.
+        
+        Parametri:
+            estimator: modello sklearn compatibile (deve supportare predict_proba)
+            des: descrizione opzionale (str)
+            threshold: soglia manuale opzionale (float, non usata: la soglia viene ottimizzata su F1)
+            cv: oggetto cross-validation (default StratifiedKFold 5x)
+        
+        Funzionamento:
+            - Calcola le probabilità della classe positiva tramite cross_val_predict
+            - Ottimizza la soglia di classificazione per il massimo F1 sulla curva precision-recall
+            - Genera le predizioni binarie con la soglia ottimale
+            - Calcola metriche di classificazione (accuracy, precision, recall, f1, confusion matrix, report)
+            - Restituisce un dizionario con tutti i risultati principali
+        
+        Output:
+            dict con: estimator, data, description, cross_val_score, cross_val, cross_val_predict,
+            accuracy, f1, precision, recall, threshold, confusion matrix, report
+        """
         logging.info(f'Start cross {estimator} and {kwargs}')
         cv = kwargs.get('cv') or StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
 
@@ -419,6 +447,22 @@ class UtilityFit:
             'best_scorer': str(best_scorer),
             'scorer': str(scorer),
         }
+
+    def build_estimator(self, estimator):
+        """
+        Costruisce un pipeline con scaler e smote opzionali
+        :param estimator: algoritmo sklearn
+        :return: Pipeline o modello singolo
+        """
+        steps = []
+        if self.with_smote:
+            steps.append(('smote', SMOTE(random_state=42)))
+        if self.with_scaler:
+            steps.append(('scaler', StandardScaler()))
+        steps.append(('model', estimator))
+
+        # Se c'è più di un passo, crea una pipeline
+        return Pipeline(steps) if len(steps) > 1 else estimator
 
     def save_report(self, results_, sheet_name='Report ML FIT'):
         """

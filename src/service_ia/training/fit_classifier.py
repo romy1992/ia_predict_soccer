@@ -1,10 +1,8 @@
 import logging
 
 import xgboost as xgb
-from imblearn.over_sampling import SMOTE
 from sklearn.ensemble import VotingClassifier, BaggingClassifier, RandomForestClassifier, AdaBoostClassifier, \
     GradientBoostingClassifier, StackingClassifier
-from imblearn.pipeline import Pipeline
 
 from src.service_ia.training.utility_fit import UtilityFit
 
@@ -37,12 +35,15 @@ class FitEnsembleClassifier(UtilityFit):
           Con Voting che accumula i modelli e restituisce il migliore
         """
         model = VotingClassifier(estimators=estimators, voting=voting_hs, verbose=2, n_jobs=-1)
-        check_cross_val = self.check_cross_save(estimator=model, **kwargs)
+        # Qui la pipeline con SMOTE e Scaler (solo se richiesto)
+        estimator = self.build_estimator(estimator=model)
+        check_cross_val = self.check_cross_save(estimator=estimator, **kwargs)
+
         if check_cross_val == 'fit':
-            logging.info(f'Start fit {model}')
-            model.fit(self.X, self.y)
-            logging.info(f'End fit {model}')
-            return model
+            logging.info(f'Start fit {estimator}')
+            estimator.fit(self.X, self.y)
+            logging.info(f'End fit {estimator}')
+            return estimator
         elif self.cross_save == 'cross':
             return check_cross_val
 
@@ -65,12 +66,16 @@ class FitEnsembleClassifier(UtilityFit):
         """
         model = BaggingClassifier(estimator=estimator, n_estimators=500, n_jobs=-1, verbose=1, max_samples=100,
                                   bootstrap=bagging, random_state=42)
-        check_cross_val = self.check_cross_save(estimator=model, **kwargs)
+
+        # Qui la pipeline con SMOTE e Scaler (solo se richiesto)
+        estimator_pipe = self.build_estimator(estimator=model)
+        check_cross_val = self.check_cross_save(estimator=estimator_pipe, **kwargs)
+
         if check_cross_val == 'fit':
-            logging.info(f'Start fit {model}')
-            model.fit(self.X, self.y)
-            logging.info(f'End fit {model}')
-            return model
+            logging.info(f'Start fit {estimator_pipe}')
+            estimator_pipe.fit(self.X, self.y)
+            logging.info(f'End fit {estimator_pipe}')
+            return estimator_pipe
         elif self.cross_save == 'cross':
             return check_cross_val
 
@@ -86,21 +91,22 @@ class FitEnsembleClassifier(UtilityFit):
         | `max_leaf_nodes`    | Il numero massimo di foglie             |
         | `min_samples_leaf`  | Il numero minimo di campioni per foglia |
         | `min_samples_split` | Campioni minimi per dividere un nodo    |
-
         """
-
         if oob:
             model = RandomForestClassifier(max_leaf_nodes=16, n_estimators=500, random_state=42, n_jobs=-1,
                                            oob_score=True)
         else:
             model = RandomForestClassifier(n_estimators=500, max_leaf_nodes=16, random_state=42, n_jobs=-1)
 
-        check_cross_val = self.check_cross_save(estimator=model, **kwargs)
+        # Qui la pipeline con SMOTE e Scaler (solo se richiesto)
+        estimator = self.build_estimator(estimator=model)
+        check_cross_val = self.check_cross_save(estimator=estimator, **kwargs)
+
         if check_cross_val == 'fit':
-            logging.info(f'Start fit {model}')
-            model.fit(self.X, self.y)
-            logging.info(f'End fit {model}')
-            return model
+            logging.info(f'Start fit {estimator}')
+            estimator.fit(self.X, self.y)
+            logging.info(f'End fit {estimator}')
+            return estimator
         elif self.cross_save == 'cross':
             return check_cross_val
 
@@ -112,7 +118,7 @@ class FitEnsembleClassifier(UtilityFit):
          - Algorithm con SAMME.R (che è il default) userà le probabilità il che lo rende più robusto a SAMME che usa solo 1 o 0
          Quindi in base a estimator e al n_estimator, lui man mano si riaddestrerà sulla base degli errori precedenti
         """
-        algorithm = 'SAMME.R' if alg_def else 'SAMME'  # SAMME.R (default, usa probabilità), SAMME (senza probabilità)
+        algorithm = 'SAMME.R' if alg_def else 'SAMME'
         if algorithm == 'SAMME':
             model = AdaBoostClassifier(estimator=estimator, n_estimators=1000, algorithm=algorithm,
                                        learning_rate=0.5,
@@ -120,12 +126,15 @@ class FitEnsembleClassifier(UtilityFit):
         else:
             model = AdaBoostClassifier(estimator=estimator, n_estimators=1000, learning_rate=0.5, random_state=42)
 
-        check_cross_val = self.check_cross_save(estimator=model, **kwargs)
+        # Qui la pipeline con SMOTE e Scaler (solo se richiesto)
+        estimator = self.build_estimator(estimator=model)
+        check_cross_val = self.check_cross_save(estimator=estimator, **kwargs)
+
         if check_cross_val == 'fit':
-            logging.info(f'Start fit {model}')
-            model.fit(self.X, self.y)
-            logging.info(f'End fit {model}')
-            return model
+            logging.info(f'Start fit {estimator}')
+            estimator.fit(self.X, self.y)
+            logging.info(f'End fit {estimator}')
+            return estimator
         elif self.cross_save == 'cross':
             return check_cross_val
 
@@ -138,12 +147,15 @@ class FitEnsembleClassifier(UtilityFit):
         il precedente.
         """
         model = GradientBoostingClassifier(max_depth=2, n_estimators=200, learning_rate=0.5, random_state=42)
-        check_cross_val = self.check_cross_save(estimator=model, **kwargs)
+        # Qui la pipeline con SMOTE e Scaler (solo se richiesto)
+        estimator = self.build_estimator(estimator=model)
+
+        check_cross_val = self.check_cross_save(estimator=estimator, **kwargs)
         if check_cross_val == 'fit':
-            logging.info(f'Start fit {model}')
-            model.fit(self.X, self.y)
-            logging.info(f'End fit {model}')
-            return model
+            logging.info(f'Start fit {estimator}')
+            estimator.fit(self.X, self.y)
+            logging.info(f'End fit {estimator}')
+            return estimator
         elif self.cross_save == 'cross':
             return check_cross_val
 
@@ -174,13 +186,16 @@ class FitEnsembleClassifier(UtilityFit):
 
         """
         model = xgb.XGBClassifier(n_estimators=500, learning_rate=0.05, max_depth=3, subsample=0.8,
-                                  eval_metric='logloss')  # colsample_bytree=0.8,
-        check_cross_val = self.check_cross_save(estimator=model, **kwargs)
+                                  eval_metric='logloss')
+        # Qui la pipeline con SMOTE e Scaler (solo se richiesto)
+        estimator = self.build_estimator(estimator=model)
+        check_cross_val = self.check_cross_save(estimator=estimator, **kwargs)
+
         if check_cross_val == 'fit':
-            logging.info(f'Start fit {model}')
-            model.fit(self.X, self.y)
-            logging.info(f'End fit {model}')
-            return model
+            logging.info(f'Start fit {estimator}')
+            estimator.fit(self.X, self.y)
+            logging.info(f'End fit {estimator}')
+            return estimator
         elif self.cross_save == 'cross':
             return check_cross_val
 
@@ -237,9 +252,6 @@ class FitEnsembleClassifier(UtilityFit):
         #     ('knn', KNeighborsClassifier()),
         #     ('xgb', xgb.XGBClassifier(eval_metric='logloss'))
         # ]
-
-        with_smote = kwargs.get('with_smote')
-
         stacking = StackingClassifier(
             estimators=estimators,
             final_estimator=final_estimator,
@@ -250,18 +262,15 @@ class FitEnsembleClassifier(UtilityFit):
             stack_method=stack_method
         )
 
-        # QUI la pipeline con SMOTE (solo se richiesto)
-        if with_smote:
-            model = Pipeline([('smote', SMOTE(random_state=42)), ('stack', stacking)])
-        else:
-            model = stacking
+        # Qui la pipeline con SMOTE e Scaler (solo se richiesto)
+        estimator = self.build_estimator(estimator=stacking)
 
-        check_cross_val = self.check_cross_save(estimator=model, **kwargs)
+        check_cross_val = self.check_cross_save(estimator=estimator, **kwargs)
         if check_cross_val == 'fit':
-            logging.info(f'Start fit {model}')
-            model.fit(self.X, self.y)
-            logging.info(f'End fit {model}')
-            return model
+            logging.info(f'Start fit {estimator}')
+            estimator.fit(self.X, self.y)
+            logging.info(f'End fit {estimator}')
+            return estimator
         elif self.cross_save == 'cross':
             return check_cross_val
         return None
