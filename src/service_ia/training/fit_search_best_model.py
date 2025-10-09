@@ -1,5 +1,6 @@
 import logging
 
+from imblearn.pipeline import Pipeline
 from lightgbm import LGBMClassifier
 from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier, AdaBoostClassifier
 from sklearn.experimental import enable_halving_search_cv as enable  # obbligatorio
@@ -145,12 +146,19 @@ class FitSearchBestModel(UtilityFit):
         self.y = y
         self.name = name
         self.estimator, self.params = self.return_est_par_classifier()
+        self.adapter_estimator_params()  # Adatta l'estimatore con SMOTE e Scaler se richiesto
         self.resource = self.check_resource_halving()
         self.cv = kwargs.get('cv') or StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
         self.score = kwargs.get('score') or make_scorer(f1_score, average='weighted', zero_division=1)
         self.max_resources = kwargs.get('max_resources') or len(self.X)
         self.min_resources = kwargs.get('min_resources') or max(50, int(len(
             self.X) * 0.1))  # almeno 10% del dataset o 50 righe
+
+    def adapter_estimator_params(self):
+        # Qui la pipeline con SMOTE e Scaler (solo se richiesto)
+        self.estimator = self.build_estimator(estimator=self.estimator)
+        if isinstance(self.estimator, Pipeline):
+            self.params = {f"model__{k}": v for k, v in self.params.items()}
 
     def return_est_par_classifier(self):
         match self.name:
@@ -183,6 +191,7 @@ class FitSearchBestModel(UtilityFit):
         gs = GridSearchCV(scoring=self.score, estimator=self.estimator,
                           param_grid=self.params, verbose=2, n_jobs=-1,
                           cv=self.cv, return_train_score=True)
+
         logging.info(f"<<< Start {gs} >>>")
         gs.fit(self.X, self.y)
         logging.info(f"<<< End {gs} >>>")
@@ -201,6 +210,7 @@ class FitSearchBestModel(UtilityFit):
                                 n_iter=1000,  # Regola questo valore in base al tempo disponibile
                                 param_distributions=self.params, verbose=2, n_jobs=-1,
                                 cv=self.cv, return_train_score=True)
+
         logging.info(f"<<< Start {rs} >>>")
         rs.fit(self.X, self.y)
         logging.info(f"<<< End {rs} >>>")
@@ -260,7 +270,6 @@ class FitSearchBestModel(UtilityFit):
             estimator=self.estimator, param_grid=self.params,
             factor=factor,  # ogni round dimezza i candidati migliori
             resource=self.resource,  # parametro da aumentare progressivamente -> la "risorsa" è il numero di alberi
-            # max n_estimators da raggiungere # massimo numero di alberi che potrà usare
             max_resources=self.max_resources,
             min_resources=self.min_resources,  # n_estimators iniziali # punto di partenza (alberi iniziali)
             cv=self.cv,  # validazione incrociata
@@ -269,6 +278,7 @@ class FitSearchBestModel(UtilityFit):
             verbose=2, return_train_score=True,
             n_jobs=-1  # usa tutti i core
         )
+
         logging.info(f"<<< Start {hs} >>>")
         hs.fit(self.X, self.y)
         logging.info(f"<<< End {hs} >>>")
@@ -334,7 +344,6 @@ class FitSearchBestModel(UtilityFit):
             factor=factor,  # ogni round dimezza i candidati migliori
             resource=self.resource,  # parametro da aumentare progressivamente -> la "risorsa" è il numero di alberi
             max_resources=self.max_resources,
-            # max n_estimators da raggiungere # massimo numero di alberi che potrà usare
             min_resources=self.min_resources,  # n_estimators iniziali # punto di partenza (alberi iniziali)
             cv=self.cv,  # validazione incrociata
             scoring='accuracy',  # metrica da ottimizzare
@@ -342,6 +351,7 @@ class FitSearchBestModel(UtilityFit):
             verbose=2, return_train_score=True,
             n_jobs=-1  # usa tutti i core
         )
+
         logging.info(f"<<< Start {hrs} >>>")
         hrs.fit(self.X, self.y)
         logging.info(f"<<< End {hrs} >>>")

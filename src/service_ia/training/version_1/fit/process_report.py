@@ -66,10 +66,8 @@ Modelli che richiedono scaling (scaling è fortemente consigliato o obbligatorio
 | **Perceptron / MLP / Reti Neurali**       | Convergenza durante l’ottimizzazione (gradient descent) migliora molto con dati standardizzati |
 | **PCA, LDA**                              | Si basano su varianza, correlazione ⇒ le scale influiscono fortemente                          |
 """
-import numpy as np
 import pandas as pd
 import xgboost as xgb
-from imblearn.over_sampling import SMOTE
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression, SGDClassifier
@@ -211,90 +209,69 @@ def get_matches():
 
 
 def split_dataset():
+    """
+    Splitta il dataset in X e y
+    :param t: tipo di calcolo 'std' o 'mean'
+    :return: X, y, keys
+    """
     import statistics
     dataset = get_matches()
-    excluded = {"id_fixture", "y"}  # chiavi da escludere manualmente
-    keys = {
-        key
-        for el in dataset
-        for key in el.keys()
-        if key not in excluded
-           and "under" not in key.lower()
-           and "over" not in key.lower()
-    }
-    keys.update({event})
 
-    X = []
-    y = []
-    if t == 'base':
-        for element in dataset:
-            # filtro solo le chiavi rilevanti
-            element = {k: v for k, v in element.items() if
-                       'William Hill' in k or k == 'y'}  # TODO : William Hill è quello con più valori odds?
-            features = [v for k, v in element.items() if pd.notna(v) and k != 'y']
-            # Recupero tutte le statistiche
-            stats = [v for k, v in element.items() if 'stat' in k]
-            if len(features) == 4:
-                X.append(features + stats)
-                y.append(element['y'])
-    elif t == 'std':
-        for element in dataset:
-            # Rimuovo id_fixture
-            element.pop('id_fixture')
-            # Recupero tutte le quote tranne il result label e le statistiche
-            features_under = [float(v) if pd.notna(v) else 0 for k, v in element.items() if
-                              'under' in k and 'stat' not in k]
-            features_over = [float(v) if pd.notna(v) else 0 for k, v in element.items() if
-                             'over' in k and 'stat' not in k]
+    def generate_feature(element):
+        """
+        Genera le feature in base al tipo t (std o mean)
+        :param t: tipo di calcolo 'std' o 'mean'
+        :param element: elemento del dataset
+        :return: record con le feature calcolate
+        """
+        # Recupero tutte le quote tranne il result label e le statistiche
+        under_itm = {k: float(v) if pd.notna(v) else 0 for k, v in element.items() if
+                     'under' in k and 'stat' not in k}
+        over_itm = {k: float(v) if pd.notna(v) else 0 for k, v in element.items() if
+                    'over' in k and 'stat' not in k}
+        # Statistiche
+        stat_itm = {k: float(v) if pd.notna(v) else 0 for k, v in element.items() if '_stat' in k}
 
-            # Skip element if not enough data
-            if len(features_under) < 2 or len(features_over) < 2:
-                continue  # Or handle differently if needed
+        if t == 'std':
+            if len(under_itm) >= 2 or len(over_itm) >= 2:
+                # Calcolo std
+                calculate_under = statistics.stdev(list(under_itm.values()))
+                calculate_over = statistics.stdev(list(over_itm.values()))
+            else:
+                # Skip element if not enough data
+                calculate_under = None
+                calculate_over = None
 
-            # Recupero tutte le statistiche
-            stats = [float(v) if pd.notna(v) else 0 for k, v in element.items() if '_stat' in k]
+        elif t == 'mean':
+            # Calcolo la media
+            calculate_under = statistics.mean(list(under_itm.values()))
+            calculate_over = statistics.mean(list(over_itm.values()))
+        else:
+            raise Exception
 
-            # Applico std
-            std_under = statistics.stdev(features_under)
-            std_over = statistics.stdev(features_over)
-            # Aggrego
-            X.append([std_under, std_over] + stats)
-            y.append(element['y'])
-    elif t == 'mean':
-        for element in dataset:
-            # Rimuovo id_fixture
-            element.pop('id_fixture')
-            # Recupero tutte le quote tranne il result label e le statistiche
-            features_under = [float(v) if pd.notna(v) else 0 for k, v in element.items() if
-                              'under' in k and 'stat' not in k]
-            features_over = [float(v) if pd.notna(v) else 0 for k, v in element.items() if
-                             'over' in k and 'stat' not in k]
-            # Recupero tutte le statistiche
-            stats = [float(v) if pd.notna(v) else 0 for k, v in element.items() if '_stat' in k]
+        # Costruisco il record
+        return {
+            f"{t}_under": calculate_under,
+            f"{t}_over": calculate_over,
+            **stat_itm,  # aggiunge tutte le statistiche con i loro nomi
+            "y": element['y']
+        } if calculate_over and calculate_under is not None else {}
 
-            # Applico mean
-            mean_under = statistics.mean(features_under)
-            mean_over = statistics.mean(features_over)
-            # Aggrego
-            X.append([mean_under, mean_over] + stats)
-            y.append(element['y'])
-    else:
-        raise Exception
+    df = [generate_feature(element) for element in dataset]
+    df = [d for d in df if len(d) > 0]  # Elimino i record vuoti
+    df = pd.DataFrame(df).fillna(0)
 
-    X = pd.DataFrame(X)
-
-    # converto in numpy array per avere una "matrice piatta" di shape (n_samples, n_features)
-    X = np.array(X, dtype=float)
-    y = np.array(y)
-
-    return X, y, keys
+    return (
+        df.drop(columns=['y']).values,  # X
+        df['y'].values,  # y
+        df.drop(columns=['y']).columns.tolist())  # keys
 
 
 def fit_process_voting():
     """
     Con Voting che accumula i modelli e restituisce il migliore
     """
-    X, y, keys = split_dataset()
+    # X, y, keys = split_dataset()
 
     X_train, X_test, y_train, y_test = train_test_split(X, y, random_state=42, test_size=0.2)
 
@@ -303,18 +280,20 @@ def fit_process_voting():
     scv = SVC(gamma='scale', random_state=42, probability=True)
     decision = DecisionTreeClassifier()
 
-    # st = StandardScaler()
-    # X_train = st.fit_transform(X_train)
-    # X_test = st.transform(X_test)
-
     estimators = [('rf', random_forest), ('lg', logistic), ('svc', scv), ('decision', decision)]
-    des = f't={t}/event={event}/stat={list_stats}'
 
-    fit_ensemble_hard = FitEnsembleClassifier(X=X_train, y=y_train, cross_save='cross_save')
-    fit_ensemble_hard.fit_voting(estimators=estimators, voting_hs='hard', threshold=0.0, des=des)
+    fit_ensemble_hard = FitEnsembleClassifier(X=X_train, y=y_train, cross_save='cross_save', with_smote=with_smote,
+                                              with_scaler=with_scaler)
+    fit_ensemble_hard.fit_voting(estimators=estimators,
+                                 voting_hs='hard',
+                                 threshold=threshold, des=des)
 
-    fit_ensemble_soft = FitEnsembleClassifier(X=X_train, y=y_train, cross_save='cross_save')
-    fit_ensemble_soft.fit_voting(estimators=estimators, voting_hs='soft', threshold=0.0, des=des)
+    fit_ensemble_soft = FitEnsembleClassifier(X=X_train, y=y_train, cross_save='cross_save', with_smote=with_smote,
+                                              with_scaler=with_scaler)
+    fit_ensemble_soft.fit_voting(estimators=estimators,
+                                 voting_hs='soft',
+                                 threshold=threshold,
+                                 des=des)
 
 
 def fit_process_bagging_pasting():
@@ -334,19 +313,21 @@ def fit_process_bagging_pasting():
     | Bagging | `True`    | Estrae **con ripetizione** i campioni (bootstrap sampling). È la forma classica usata nei Random Forest.  |
     | Pasting | `False`   | Estrae **senza ripetizione** i campioni (cioè ogni riga può apparire al massimo una volta in ogni clone). |
     """
-    X, y, keys = split_dataset()
+    # X, y, keys = split_dataset()
     X_train, X_test, y_train, y_test = train_test_split(X, y, random_state=42, test_size=0.2, stratify=y)
 
     # estimator = DecisionTreeClassifier(max_leaf_nodes=16, random_state=42)
     estimator = DecisionTreeClassifier(criterion='entropy', max_depth=5, max_features='sqrt', min_samples_split=5)
 
-    fit_bagging = FitEnsembleClassifier(X_train, y_train, cross_save='cross_save')
+    fit_bagging = FitEnsembleClassifier(X_train, y_train, cross_save='cross_save', with_smote=with_smote,
+                                        with_scaler=with_scaler)
     fit_bagging.fit_bagging_pasting(threshold=threshold, estimator=estimator, bagging=True,
-                                    des=f't={t}/event={event}/bagging=True/stat={list_stats}')
+                                    des=f'{des}/stat={list_stats}/bagging=True')
 
-    fit_bagging = FitEnsembleClassifier(X_train, y_train, cross_save='cross_save')
+    fit_bagging = FitEnsembleClassifier(X_train, y_train, cross_save='cross_save', with_smote=with_smote,
+                                        with_scaler=with_scaler)
     fit_bagging.fit_bagging_pasting(threshold=threshold, estimator=estimator, bagging=False,
-                                    des=f't={t}/event={event}/bagging=False/stat={list_stats}')
+                                    des=f'{des}/stat={list_stats}/bagging=False')
 
 
 def fit_random_():
@@ -363,14 +344,15 @@ def fit_random_():
     | `min_samples_split` | Campioni minimi per dividere un nodo    |
 
     """
-    X, y, keys = split_dataset()
+    # X, y, keys = split_dataset()
 
-    random_oob = FitEnsembleClassifier(X, y, cross_save='cross_save')
-    random_oob.fit_random_(oob=True, des=f't={t}/event={event}/oob=True/stat={list_stats}')
+    random_oob = FitEnsembleClassifier(X, y, cross_save='cross_save', with_smote=False, with_scaler=with_scaler)
+    random_oob.fit_random_(oob=True, des=f'{des}/stat={list_stats}/oob=True')
 
     X_train, X_test, y_train, y_test = train_test_split(X, y, random_state=42, test_size=0.2)
-    random = FitEnsembleClassifier(X_train, y_train, cross_save='cross_save')
-    random.fit_random_(oob=False, des=f't={t}/event={event}/oob=False/stat={list_stats}')
+    random = FitEnsembleClassifier(X_train, y_train, cross_save='cross_save', with_smote=with_smote,
+                                   with_scaler=with_scaler)
+    random.fit_random_(oob=False, des=f'{des}/stat={list_stats}/oob=False')
 
 
 def fit_adaboost():
@@ -381,10 +363,8 @@ def fit_adaboost():
      - Algorithm con SAMME.R (che è il default) userà le probabilità il che lo rende più robusto a SAMME che usa solo 1 o 0
      Quindi in base a estimator e al n_estimator, lui man mano si riaddestrerà sulla base degli errori precedenti
     """
-    X, y, keys = split_dataset()
-    # Oversampling con SMOTE
-    # smote = SMOTE(random_state=42)
-    # X, y = smote.fit_resample(X, y)
+    # X, y, keys = split_dataset()
+
     # estimator = DecisionTreeClassifier(max_depth=1, max_leaf_nodes=16, random_state=42)
     # estimator = DecisionTreeClassifier(criterion='entropy', max_depth=5,
     #                                    # max_features='sqrt', 1.5
@@ -393,13 +373,14 @@ def fit_adaboost():
     estimator = DecisionTreeClassifier(criterion='log_loss', max_depth=5, max_features='log2',
                                        min_samples_leaf=2, min_samples_split=5)  # 2.5
 
-    ada_samme = FitEnsembleClassifier(X=X, y=y, cross_save='cross_save')
+    ada_samme = FitEnsembleClassifier(X=X, y=y, cross_save='cross_save', with_smote=with_smote, with_scaler=with_scaler)
     ada_samme.fit_adaboost(estimator=estimator, alg_def=False, threshold=threshold,
-                           des=f't={t}/event={event}/samme/stat={list_stats}')
+                           des=f'{des}/samme/stat={list_stats}')
 
-    ada_samme_r = FitEnsembleClassifier(X=X, y=y, cross_save='cross_save')
+    ada_samme_r = FitEnsembleClassifier(X=X, y=y, cross_save='cross_save', with_smote=with_smote,
+                                        with_scaler=with_scaler)
     ada_samme_r.fit_adaboost(estimator=estimator, threshold=threshold,
-                             des=f't={t}/event={event}/samme_r/stat={list_stats}')
+                             des=f'{des}/samme_r/stat={list_stats}')
 
 
 def fit_gradient_boosting():
@@ -410,9 +391,9 @@ def fit_gradient_boosting():
     Quindi se il mio n_estimators ha 200, significa che userà 200 cloni dove ognuno dei quali riadatterà/correggerà
     il precedente.
     """
-    X, y, keys = split_dataset()
-    gb_fit = FitEnsembleClassifier(X=X, y=y, cross_save='cross_save')
-    gb_fit.fit_gradient_boosting(des=f't={t}/event={event}/stat={list_stats}')
+    # X, y, keys = split_dataset()
+    gb_fit = FitEnsembleClassifier(X=X, y=y, cross_save='cross_save', with_smote=with_smote, with_scaler=with_scaler)
+    gb_fit.fit_gradient_boosting(des=des)
 
 
 def fit_xgb():
@@ -441,9 +422,9 @@ def fit_xgb():
     | `eval_metric`      | Funzione per valutare la performance            | 'logloss', 'error', 'auc' |
 
     """
-    X, y, keys = split_dataset()
-    gb_fit = FitEnsembleClassifier(X=X, y=y, cross_save='cross_save')
-    gb_fit.fit_xgb(des=f't={t}/event={event}/stat={list_stats}')
+    # X, y, keys = split_dataset()
+    gb_fit = FitEnsembleClassifier(X=X, y=y, cross_save='cross_save', with_smote=with_smote, with_scaler=with_scaler)
+    gb_fit.fit_xgb(des=des)
 
 
 def fit_stacking_classifier(passthrough=True, stack_method='predict_proba'):
@@ -491,7 +472,7 @@ def fit_stacking_classifier(passthrough=True, stack_method='predict_proba'):
     Richiede più tempo computazionale, soprattutto se cv è alto.
     È facile overfittare se hai pochi dati → regolarizza bene il final_estimator.
     """
-    X, y, keys = split_dataset()
+    # X, y, keys = split_dataset()
 
     # if '1.5' in event:
     # estimators = [
@@ -532,22 +513,21 @@ def fit_stacking_classifier(passthrough=True, stack_method='predict_proba'):
 
     final_estimator = LogisticRegression(C=0.5, max_iter=2000)  # senza class_weight col SMOTE
 
-    staking_fit = FitEnsembleClassifier(X=X, y=y, cross_save='cross_save')
+    staking_fit = FitEnsembleClassifier(X=X, y=y, cross_save='cross_save', with_smote=with_smote,
+                                        with_scaler=with_scaler)
     staking_fit.fit_stacking_classifier(stack_method=stack_method, estimators=estimators,
-                                        final_estimator=final_estimator, passthrough=passthrough, with_smote=with_smote,
-                                        des=f't={t}/event={event}/stack_method={stack_method}/stat={list_stats}, passthrough={passthrough}, smote={with_smote}')
+                                        final_estimator=final_estimator, passthrough=passthrough,
+                                        des=f'{des}/stack_method={stack_method}/passthrough={passthrough}')
 
 
 def search_best_model(estimator):
-    X, y, keys = split_dataset()
+    # X, y, keys = split_dataset()
     X_train, X_test, y_train, y_test = train_test_split(X, y, random_state=42, test_size=0.2)
-    if with_smote:
-        smote = SMOTE()
-        X_train, y_train = smote.fit_resample(X_train, y_train)
+    search = FitSearchBestModel(X=X_train, y=y_train, name=estimator,
+                                best_cross_save='best_cross_save',
+                                with_smote=with_smote, with_scaler=with_scaler,
+                                keys=keys)
 
-    search = FitSearchBestModel(X=X_train, y=y_train, name=estimator, best_cross_save='best_cross_save', keys=keys)
-
-    des = f't={t}/event={event}/stat={list_stats}'
     # search.fit_grid_search(des=des)
     # search.fit_random_search(des=des)
     search.fit_halving_search(des=des)
@@ -555,8 +535,8 @@ def search_best_model(estimator):
 
 
 # Params base
-events = ['under_over_1_5']  # , 'under_over_2_5', 'under_over_3_5'
-ts = ['mean']  # , 'std']
+events = ['under_over_1_5', 'under_over_2_5', 'under_over_3_5']
+ts = ['mean', 'std']
 is_grid = True
 with_smote = True
 with_scaler = True
@@ -564,20 +544,19 @@ estimators_grid = ['decision']
 list_stats = ['mean_statistics']
 threshold = 0
 
-# Test
-# X, y, keys = split_dataset()
-# print(X, y, keys)
 for event in events:
     for t in ts:
+        X, y, keys = split_dataset()
+        des = f't={t}/event={event}/stat={list_stats}/smote={with_smote}/scaler={with_scaler}'
         if is_grid:
             for est in estimators_grid:
                 search_best_model(estimator=est)
         else:
-            # fit_stacking_classifier(passthrough=False)
-            # fit_stacking_classifier()
+            fit_stacking_classifier(passthrough=False)
+            fit_stacking_classifier()
             fit_xgb()
-            # fit_gradient_boosting()
-            # fit_adaboost()
-            # fit_random_()
-            # fit_process_bagging_pasting()
+            fit_gradient_boosting()
+            fit_adaboost()
+            fit_random_()
+            fit_process_bagging_pasting()
             # fit_process_voting()
