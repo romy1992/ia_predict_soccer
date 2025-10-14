@@ -318,13 +318,13 @@ def fit_process_bagging_pasting():
                                        max_features='sqrt', min_samples_split=5)
 
     fit_bagging = FitUtilityEnsembleClassifier(X, y, cross_save='cross_save',
-                                               with_smote=with_smote,
+                                               with_smote=with_smote, save_pkl=save_pkl,
                                                with_scaler=False)  # Poco senso se l'estimator è un albero
     fit_bagging.fit_bagging_pasting(threshold=threshold, estimator=estimator, bagging=True,
                                     des=f'{des}/stat={list_stats}/bagging=True')
 
     fit_bagging = FitUtilityEnsembleClassifier(X, y, cross_save='cross_save',
-                                               with_smote=with_smote,
+                                               with_smote=with_smote, save_pkl=save_pkl,
                                                with_scaler=False)  # Poco senso se l'estimator è un albero
     fit_bagging.fit_bagging_pasting(threshold=threshold, estimator=estimator, bagging=False,
                                     des=f'{des}/stat={list_stats}/bagging=False')
@@ -386,20 +386,20 @@ def fit_adaboost():
         estimator = DecisionTreeClassifier(criterion='log_loss', max_depth=5, max_features='log2',
                                            min_samples_leaf=2, min_samples_split=5)  # TODO per 2.5
         ada_samme = FitUtilityEnsembleClassifier(X=X, y=y, cross_save='cross_save', with_smote=with_smote,
-                                                 with_scaler=False,
+                                                 with_scaler=False, save_pkl=save_pkl,
                                                  filename=f'best_{t}_{event}_ada_samme')  # Poco senso se l'estimator è un albero
         ada_samme.fit_adaboost(estimator=estimator, alg_def=False, threshold=threshold,
                                des=f'{des}/samme/stat={list_stats}')
 
-        ada_samme_r = FitUtilityEnsembleClassifier(X=X, y=y, cross_save='cross_save',
+        ada_samme_r = FitUtilityEnsembleClassifier(X=X, y=y, cross_save='cross_save', save_pkl=save_pkl,
                                                    with_smote=with_smote, filename=f'best_{t}_{event}_ada_samme_r',
                                                    with_scaler=False)  # Poco senso se l'estimator è un albero
         ada_samme_r.fit_adaboost(estimator=estimator, threshold=threshold,
                                  des=f'{des}/samme_r/stat={list_stats}')
     else:
-        ada = FitUtilityEnsembleClassifier(X=X, y=y, cross_save='cross_save', with_smote=with_smote,
+        ada = FitUtilityEnsembleClassifier(X=X, y=y, cross_save='cross_save', with_smote=with_smote, save_pkl=save_pkl,
                                            with_scaler=with_scaler, filename=f'best_{t}_{event}_ada')
-        ada.fit_adaboost(estimator=None, alg_def=False, threshold=threshold, des=f'{des}/stat={list_stats}',
+        ada.fit_adaboost(estimator=None, threshold=threshold, des=f'{des}/stat={list_stats}',
                          override_params=params)
 
 
@@ -412,6 +412,7 @@ def fit_gradient_boosting():
     il precedente.
     """
     gb_fit = FitUtilityEnsembleClassifier(X=X, y=y, cross_save='cross_save', with_smote=with_smote,
+                                          save_pkl=save_pkl,
                                           with_scaler=False, filename=f'best_{t}_{event}_gb')
     if event == 'under_over_1_5':
         params = {'subsample': 0.7, 'n_estimators': 400, 'max_depth': 5, 'learning_rate': 0.05}
@@ -457,7 +458,7 @@ def fit_xgb():
     else:  # under_over_3_5
         params = None
 
-    gb_fit = FitUtilityEnsembleClassifier(X=X, y=y, cross_save='cross_save', with_smote=with_smote,
+    gb_fit = FitUtilityEnsembleClassifier(X=X, y=y, cross_save='cross_save', with_smote=with_smote, save_pkl=save_pkl,
                                           with_scaler=with_scaler, filename=f'best_{t}_{event}_xgb')
     gb_fit.fit_xgb(des=des, override_params=params)
 
@@ -606,12 +607,12 @@ for event in events:
                 filename = f'best_{event}_{est}_{t}'
                 search_best_model(estimator=est)
         else:
-            fit_stacking_classifier(passthrough=False)
-            fit_stacking_classifier()
-            fit_xgb()
-            fit_gradient_boosting()
+            # fit_stacking_classifier(passthrough=False)
+            # fit_stacking_classifier()
+            # fit_xgb()
+            # fit_gradient_boosting()
             fit_adaboost()
-            fit_random_()
+            # fit_random_()
             # fit_process_bagging_pasting()
             # fit_process_voting()
 

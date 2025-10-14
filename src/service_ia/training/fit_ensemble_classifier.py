@@ -101,12 +101,12 @@ class FitUtilityEnsembleClassifier(FitUtility):
          - Algorithm con SAMME.R (che è il default) userà le probabilità il che lo rende più robusto a SAMME che usa solo 1 o 0
          Quindi in base a estimator e al n_estimator, lui man mano si riaddestrerà sulla base degli errori precedenti
         """
-        base_param = {'learning_rate': 0.5, 'n_estimators': 1000, 'random_state': 42}
+        algorithm = 'SAMME.R' if alg_def else 'SAMME'
+        base_param = {'learning_rate': 0.5, 'n_estimators': 1000, 'random_state': 42, 'algorithm': algorithm}
         override_params = kwargs.get('override_params', {})
         params = override_params if len(override_params) > 0 else base_param
 
-        algorithm = 'SAMME.R' if alg_def else 'SAMME'
-        model = AdaBoostClassifier(estimator=estimator, **params, algorithm=algorithm)
+        model = AdaBoostClassifier(estimator=estimator, **params)
 
         # Qui la pipeline con SMOTE e Scaler (solo se richiesto)
         estimator = self.build_estimator(estimator=model)
@@ -180,7 +180,7 @@ class FitUtilityEnsembleClassifier(FitUtility):
         check_cross_val = self.check_cross_save(estimator=estimator, **kwargs)
         return self.check_val(check_cross_val, estimator)
 
-    def fit_stacking_classifier(self,estimators, final_estimator, passthrough=True,
+    def fit_stacking_classifier(self, estimators, final_estimator, passthrough=True,
                                 stack_method='predict_proba', **kwargs):
         """
         Lo stacking classifier combina più algoritmi(level-0) dove le loro previsioni vengono poi passate al modello finale
@@ -228,7 +228,7 @@ class FitUtilityEnsembleClassifier(FitUtility):
         """
         # Costruisci (name, pipeline) con scaler→smote→est
         estimators_stak = [(name, self.build_estimator(estimator=est, name_estimator=name))
-                               for name, est in estimators]
+                           for name, est in estimators]
         stacking = StackingClassifier(
             estimators=estimators_stak,
             final_estimator=final_estimator,
