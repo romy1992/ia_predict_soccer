@@ -66,21 +66,21 @@ Modelli che richiedono scaling (scaling è fortemente consigliato o obbligatorio
 | **Perceptron / MLP / Reti Neurali**       | Convergenza durante l’ottimizzazione (gradient descent) migliora molto con dati standardizzati |
 | **PCA, LDA**                              | Si basano su varianza, correlazione ⇒ le scale influiscono fortemente                          |
 """
+import numpy as np
 import pandas as pd
-import xgboost as xgb
-from sklearn.calibration import CalibratedClassifierCV
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.linear_model import LogisticRegression, SGDClassifier
-from sklearn.model_selection import train_test_split
-from sklearn.neighbors import KNeighborsClassifier
-from sklearn.pipeline import make_pipeline
+from imblearn.over_sampling import SMOTE
+from imblearn.pipeline import Pipeline
+from lightgbm import LGBMClassifier
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier, AdaBoostClassifier
+from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC
 from sklearn.tree import DecisionTreeClassifier
+from xgboost import XGBClassifier
 
 from src.repository.match_repository import MatchRepository
-from src.service_ia.training.fit_classifier import FitEnsembleClassifier
-from src.service_ia.training.fit_search_best_model import FitSearchBestModel
+from src.service_ia.training.fit_ensemble_classifier import FitUtilityEnsembleClassifier
+from src.service_ia.training.fit_search_best_model import FitUtilitySearchBestModel
 from src.service_ia.utility.utils import convert_orm_match_to_dict, adapted_percentage
 
 
@@ -271,9 +271,7 @@ def fit_process_voting():
     """
     Con Voting che accumula i modelli e restituisce il migliore
     """
-    # X, y, keys = split_dataset()
-
-    X_train, X_test, y_train, y_test = train_test_split(X, y, random_state=42, test_size=0.2)
+    # X_train, X_test, y_train, y_test = train_test_split(X, y, random_state=42, test_size=0.2)
 
     random_forest = RandomForestClassifier(random_state=42, n_estimators=500, max_leaf_nodes=16, n_jobs=-1)
     logistic = LogisticRegression(random_state=42, solver='lbfgs')
@@ -282,14 +280,16 @@ def fit_process_voting():
 
     estimators = [('rf', random_forest), ('lg', logistic), ('svc', scv), ('decision', decision)]
 
-    fit_ensemble_hard = FitEnsembleClassifier(X=X_train, y=y_train, cross_save='cross_save', with_smote=with_smote,
-                                              with_scaler=with_scaler)
+    fit_ensemble_hard = FitUtilityEnsembleClassifier(X=X, y=y, cross_save='cross_save',
+                                                     with_smote=with_smote,
+                                                     with_scaler=with_scaler)
     fit_ensemble_hard.fit_voting(estimators=estimators,
                                  voting_hs='hard',
                                  threshold=threshold, des=des)
 
-    fit_ensemble_soft = FitEnsembleClassifier(X=X_train, y=y_train, cross_save='cross_save', with_smote=with_smote,
-                                              with_scaler=with_scaler)
+    fit_ensemble_soft = FitUtilityEnsembleClassifier(X=X, y=y, cross_save='cross_save',
+                                                     with_smote=with_smote,
+                                                     with_scaler=with_scaler)
     fit_ensemble_soft.fit_voting(estimators=estimators,
                                  voting_hs='soft',
                                  threshold=threshold,
@@ -313,19 +313,19 @@ def fit_process_bagging_pasting():
     | Bagging | `True`    | Estrae **con ripetizione** i campioni (bootstrap sampling). È la forma classica usata nei Random Forest.  |
     | Pasting | `False`   | Estrae **senza ripetizione** i campioni (cioè ogni riga può apparire al massimo una volta in ogni clone). |
     """
-    # X, y, keys = split_dataset()
-    X_train, X_test, y_train, y_test = train_test_split(X, y, random_state=42, test_size=0.2, stratify=y)
 
-    # estimator = DecisionTreeClassifier(max_leaf_nodes=16, random_state=42)
-    estimator = DecisionTreeClassifier(criterion='entropy', max_depth=5, max_features='sqrt', min_samples_split=5)
+    estimator = DecisionTreeClassifier(criterion='entropy', max_depth=5,
+                                       max_features='sqrt', min_samples_split=5)
 
-    fit_bagging = FitEnsembleClassifier(X_train, y_train, cross_save='cross_save', with_smote=with_smote,
-                                        with_scaler=with_scaler)
+    fit_bagging = FitUtilityEnsembleClassifier(X, y, cross_save='cross_save',
+                                               with_smote=with_smote,
+                                               with_scaler=False)  # Poco senso se l'estimator è un albero
     fit_bagging.fit_bagging_pasting(threshold=threshold, estimator=estimator, bagging=True,
                                     des=f'{des}/stat={list_stats}/bagging=True')
 
-    fit_bagging = FitEnsembleClassifier(X_train, y_train, cross_save='cross_save', with_smote=with_smote,
-                                        with_scaler=with_scaler)
+    fit_bagging = FitUtilityEnsembleClassifier(X, y, cross_save='cross_save',
+                                               with_smote=with_smote,
+                                               with_scaler=False)  # Poco senso se l'estimator è un albero
     fit_bagging.fit_bagging_pasting(threshold=threshold, estimator=estimator, bagging=False,
                                     des=f'{des}/stat={list_stats}/bagging=False')
 
@@ -343,16 +343,28 @@ def fit_random_():
     | `min_samples_leaf`  | Il numero minimo di campioni per foglia |
     | `min_samples_split` | Campioni minimi per dividere un nodo    |
 
+    NON HA SENSO APPLICARE LO SCALING CON RANDOM FOREST PERCHè LUI NON USA LA DISTANZA
+    QUINDI NON E' SENSIBILE ALLA SCALA DEI DATI
     """
-    # X, y, keys = split_dataset()
+    if event == 'under_over_1_5':
+        params = {'bootstrap': False, 'max_depth': None, 'max_features': 'log2', 'min_samples_leaf': 1,
+                  'min_samples_split': 5}
+    elif event == 'under_over_2_5':
+        params = {'bootstrap': True, 'max_depth': 10, 'max_features': 'log2', 'min_samples_leaf': 4,
+                  'min_samples_split': 2}
+    else:  # under_over_3_5
+        params = None
 
-    random_oob = FitEnsembleClassifier(X, y, cross_save='cross_save', with_smote=False, with_scaler=with_scaler)
-    random_oob.fit_random_(oob=True, des=f'{des}/stat={list_stats}/oob=True')
+    if params and 'bootstrap' not in params:
+        random_oob = FitUtilityEnsembleClassifier(X, y, cross_save='cross_save',
+                                                  save_pkl=save_pkl, filename=f'best_{t}_{event}_oob_random',
+                                                  with_smote=False, with_scaler=False)
+        random_oob.fit_random_(oob=True, des=f'{des}/stat={list_stats}/oob=True', override_params=params)
 
-    X_train, X_test, y_train, y_test = train_test_split(X, y, random_state=42, test_size=0.2)
-    random = FitEnsembleClassifier(X_train, y_train, cross_save='cross_save', with_smote=with_smote,
-                                   with_scaler=with_scaler)
-    random.fit_random_(oob=False, des=f'{des}/stat={list_stats}/oob=False')
+    random = FitUtilityEnsembleClassifier(X, y, cross_save='cross_save',
+                                          save_pkl=save_pkl, filename=f'best_{t}_{event}_random',
+                                          with_smote=with_smote, with_scaler=False)
+    random.fit_random_(oob=False, des=f'{des}/stat={list_stats}/oob=False', override_params=params)
 
 
 def fit_adaboost():
@@ -363,24 +375,32 @@ def fit_adaboost():
      - Algorithm con SAMME.R (che è il default) userà le probabilità il che lo rende più robusto a SAMME che usa solo 1 o 0
      Quindi in base a estimator e al n_estimator, lui man mano si riaddestrerà sulla base degli errori precedenti
     """
-    # X, y, keys = split_dataset()
+    if event == 'under_over_1_5':
+        params = None  # Scarsi modelli
+    elif event == 'under_over_2_5':
+        params = {'n_estimators': 800, 'learning_rate': 0.5, 'algorithm': 'SAMME'}
+    else:  # under_over_3_5
+        params = None
 
-    # estimator = DecisionTreeClassifier(max_depth=1, max_leaf_nodes=16, random_state=42)
-    # estimator = DecisionTreeClassifier(criterion='entropy', max_depth=5,
-    #                                    # max_features='sqrt', 1.5
-    #                                    max_features='log2',  # 3.5
-    #                                    min_samples_split=5)
-    estimator = DecisionTreeClassifier(criterion='log_loss', max_depth=5, max_features='log2',
-                                       min_samples_leaf=2, min_samples_split=5)  # 2.5
+    if params is None:
+        estimator = DecisionTreeClassifier(criterion='log_loss', max_depth=5, max_features='log2',
+                                           min_samples_leaf=2, min_samples_split=5)  # TODO per 2.5
+        ada_samme = FitUtilityEnsembleClassifier(X=X, y=y, cross_save='cross_save', with_smote=with_smote,
+                                                 with_scaler=False,
+                                                 filename=f'best_{t}_{event}_ada_samme')  # Poco senso se l'estimator è un albero
+        ada_samme.fit_adaboost(estimator=estimator, alg_def=False, threshold=threshold,
+                               des=f'{des}/samme/stat={list_stats}')
 
-    ada_samme = FitEnsembleClassifier(X=X, y=y, cross_save='cross_save', with_smote=with_smote, with_scaler=with_scaler)
-    ada_samme.fit_adaboost(estimator=estimator, alg_def=False, threshold=threshold,
-                           des=f'{des}/samme/stat={list_stats}')
-
-    ada_samme_r = FitEnsembleClassifier(X=X, y=y, cross_save='cross_save', with_smote=with_smote,
-                                        with_scaler=with_scaler)
-    ada_samme_r.fit_adaboost(estimator=estimator, threshold=threshold,
-                             des=f'{des}/samme_r/stat={list_stats}')
+        ada_samme_r = FitUtilityEnsembleClassifier(X=X, y=y, cross_save='cross_save',
+                                                   with_smote=with_smote, filename=f'best_{t}_{event}_ada_samme_r',
+                                                   with_scaler=False)  # Poco senso se l'estimator è un albero
+        ada_samme_r.fit_adaboost(estimator=estimator, threshold=threshold,
+                                 des=f'{des}/samme_r/stat={list_stats}')
+    else:
+        ada = FitUtilityEnsembleClassifier(X=X, y=y, cross_save='cross_save', with_smote=with_smote,
+                                           with_scaler=with_scaler, filename=f'best_{t}_{event}_ada')
+        ada.fit_adaboost(estimator=None, alg_def=False, threshold=threshold, des=f'{des}/stat={list_stats}',
+                         override_params=params)
 
 
 def fit_gradient_boosting():
@@ -391,9 +411,15 @@ def fit_gradient_boosting():
     Quindi se il mio n_estimators ha 200, significa che userà 200 cloni dove ognuno dei quali riadatterà/correggerà
     il precedente.
     """
-    # X, y, keys = split_dataset()
-    gb_fit = FitEnsembleClassifier(X=X, y=y, cross_save='cross_save', with_smote=with_smote, with_scaler=with_scaler)
-    gb_fit.fit_gradient_boosting(des=des)
+    gb_fit = FitUtilityEnsembleClassifier(X=X, y=y, cross_save='cross_save', with_smote=with_smote,
+                                          with_scaler=False, filename=f'best_{t}_{event}_gb')
+    if event == 'under_over_1_5':
+        params = {'subsample': 0.7, 'n_estimators': 400, 'max_depth': 5, 'learning_rate': 0.05}
+    elif event == 'under_over_2_5':
+        params = {'subsample': 1.0, 'n_estimators': 200, 'max_depth': 3, 'learning_rate': 0.05}
+    else:  # under_over_3_5
+        params = None
+    gb_fit.fit_gradient_boosting(des=des, override_params=params)
 
 
 def fit_xgb():
@@ -422,9 +448,18 @@ def fit_xgb():
     | `eval_metric`      | Funzione per valutare la performance            | 'logloss', 'error', 'auc' |
 
     """
-    # X, y, keys = split_dataset()
-    gb_fit = FitEnsembleClassifier(X=X, y=y, cross_save='cross_save', with_smote=with_smote, with_scaler=with_scaler)
-    gb_fit.fit_xgb(des=des)
+    if event == 'under_over_1_5':
+        params = {'subsample': 0.5, 'scale_pos_weight': 10, 'n_estimators': 200, 'max_depth': 3, 'learning_rate': 0.2,
+                  'colsample_bytree': 0.5}
+    elif event == 'under_over_2_5':
+        params = {'subsample': 0.7, 'scale_pos_weight': 1, 'n_estimators': 100, 'max_depth': 3, 'learning_rate': 0.2,
+                  'colsample_bytree': 1.0}
+    else:  # under_over_3_5
+        params = None
+
+    gb_fit = FitUtilityEnsembleClassifier(X=X, y=y, cross_save='cross_save', with_smote=with_smote,
+                                          with_scaler=with_scaler, filename=f'best_{t}_{event}_xgb')
+    gb_fit.fit_xgb(des=des, override_params=params)
 
 
 def fit_stacking_classifier(passthrough=True, stack_method='predict_proba'):
@@ -472,77 +507,95 @@ def fit_stacking_classifier(passthrough=True, stack_method='predict_proba'):
     Richiede più tempo computazionale, soprattutto se cv è alto.
     È facile overfittare se hai pochi dati → regolarizza bene il final_estimator.
     """
-    # X, y, keys = split_dataset()
+    if event == 'under_over_1_5':
+        estimators = [
+            ('rf', Pipeline(steps=[('smote', SMOTE(random_state=42)),
+                                   ('model', RandomForestClassifier(bootstrap=False, max_features='log2',
+                                                                    min_samples_split=5, n_estimators=400,
+                                                                    n_jobs=-1, random_state=42))])),
+            ('svc', Pipeline(steps=[('scaler', StandardScaler()), ('smote', SMOTE(random_state=42)),
+                                    ('model', SVC(C=np.float64(0.01), gamma=1.0, probability=True,
+                                                  random_state=42))])),
+            ('xgb', Pipeline(steps=[('smote', SMOTE(random_state=42)),
+                                    ('model', XGBClassifier(**
+                                                            {'subsample': 0.5, 'scale_pos_weight': 10,
+                                                             'n_estimators': 200,
+                                                             'max_depth': 3, 'learning_rate': 0.2,
+                                                             'colsample_bytree': 0.5}
+                                                            ))])),
+            ('lgbmc', Pipeline(steps=[('smote', SMOTE(random_state=42)),
+                                      ('model',
+                                       LGBMClassifier(n_estimators=50, n_jobs=-1, num_leaves=100,
+                                                      objective='binary', random_state=42,
+                                                      scale_pos_weight=10, subsample=0.7))])),
+            ('gbc', Pipeline(steps=[('smote', SMOTE(random_state=42)),
+                                    ('model',
+                                     GradientBoostingClassifier(learning_rate=0.05, max_depth=5,
+                                                                n_estimators=400, random_state=42,
+                                                                subsample=0.7))]))
 
-    # if '1.5' in event:
-    # estimators = [
-    #     ('dt', DecisionTreeClassifier(criterion='entropy', max_depth=5, max_features='sqrt', min_samples_split=5)),
-    #     ('svc', SVC(probability=True)),
-    #     ('rf', RandomForestClassifier(bootstrap=False, class_weight='balanced',
-    #                                   max_features='log2', n_estimators=4272, warm_start=True)),
-    #     ('knn', KNeighborsClassifier(metric='euclidean', n_neighbors=3, p=1, weights='distance')),
-    #     ('xgb', xgb.XGBClassifier(
-    #         **{'colsample_bytree': 1.0, 'learning_rate': 0.2, 'max_depth': 10, 'n_estimators': 200,
-    #            'scale_pos_weight': 2, 'subsample': 0.7}))
-    # ]
-    # final_estimator = LogisticRegression()
+        ]
+        final_estimator = LogisticRegression(C=0.75, class_weight='balanced', max_iter=500)
+    elif event == 'under_over_2_5':
+        estimators = [
+            ('rf', Pipeline(steps=[('smote', SMOTE(random_state=42)),
+                                   ('model', RandomForestClassifier(max_depth=10, max_features='log2',
+                                                                    min_samples_leaf=4, n_estimators=400,
+                                                                    n_jobs=-1, random_state=42))])),
+            ('svc', Pipeline(steps=[('scaler', StandardScaler()), ('smote', SMOTE(random_state=42)),
+                                    ('model', SVC(C=np.float64(0.21544346900318834), gamma=1.0,
+                                                  probability=True, random_state=42))])),
+            ('ada', Pipeline(steps=[('scaler', StandardScaler()), ('smote', SMOTE(random_state=42)),
+                                    ('model', AdaBoostClassifier(algorithm='SAMME', learning_rate=0.5,
+                                                                 n_estimators=800, random_state=42))])),
+            ('gbc',
+             Pipeline(steps=[('smote', SMOTE(random_state=42)), ('model', GradientBoostingClassifier(learning_rate=0.05,
+                                                                                                     n_estimators=200,
+                                                                                                     random_state=42))]))
+        ]
+        final_estimator = LogisticRegression(C=np.float64(0.1), max_iter=2000, n_jobs=-1, random_state=42)
+    else:
+        estimators = None
+        final_estimator = None
 
-    # --- estimators (come li hai già) ---
-    estimators = [
-        ('svc_cal', CalibratedClassifierCV(
-            estimator=SVC(kernel='rbf', probability=True, C=1.0, gamma='scale'),
-            method='sigmoid', cv=3)),
-        ('rf', RandomForestClassifier(
-            n_estimators=800, max_features='sqrt', bootstrap=True,
-            # con SMOTE non serve class_weight, puoi toglierlo:
-            # class_weight='balanced',
-            n_jobs=-1, random_state=42)),
-        ('knn', make_pipeline(StandardScaler(with_mean=False),
-                              KNeighborsClassifier(n_neighbors=21, weights='distance', metric='euclidean'))),
-        ('xgb', CalibratedClassifierCV(
-            estimator=xgb.XGBClassifier(
-                n_estimators=400, max_depth=7, learning_rate=0.07, subsample=0.8,
-                colsample_bytree=0.9, reg_lambda=1.0, reg_alpha=0.0,
-                # con SMOTE rimuovi scale_pos_weight:
-                # scale_pos_weight=2,
-                tree_method='hist', n_jobs=-1, random_state=42),
-            method='isotonic', cv=3)),
-        ('sgd_lin', make_pipeline(StandardScaler(with_mean=False),
-                                  SGDClassifier(loss='log_loss', alpha=1e-4, max_iter=2000, tol=1e-3, random_state=42)))
-    ]
+    f_name = f'best_{t}_{event}_stacking_{stack_method}_pass={passthrough}' if passthrough else f'best_{t}_{event}_stacking_{stack_method}'
+    staking_fit = FitUtilityEnsembleClassifier(X=X, y=y,
+                                               cross_save='cross_save',
+                                               # with_smote=with_smote, with_scaler=with_scaler,
+                                               save_pkl=save_pkl, filename=f_name)
 
-    final_estimator = LogisticRegression(C=0.5, max_iter=2000)  # senza class_weight col SMOTE
-
-    staking_fit = FitEnsembleClassifier(X=X, y=y, cross_save='cross_save', with_smote=with_smote,
-                                        with_scaler=with_scaler)
     staking_fit.fit_stacking_classifier(stack_method=stack_method, estimators=estimators,
                                         final_estimator=final_estimator, passthrough=passthrough,
                                         des=f'{des}/stack_method={stack_method}/passthrough={passthrough}')
 
 
 def search_best_model(estimator):
-    # X, y, keys = split_dataset()
-    X_train, X_test, y_train, y_test = train_test_split(X, y, random_state=42, test_size=0.2)
-    search = FitSearchBestModel(X=X_train, y=y_train, name=estimator,
-                                best_cross_save='best_cross_save',
-                                with_smote=with_smote, with_scaler=with_scaler,
-                                keys=keys)
+    search = FitUtilitySearchBestModel(X=X, y=y, name=estimator,
+                                       best_cross_save='best_cross_save',
+                                       with_smote=with_smote, with_scaler=with_scaler,
+                                       save_pkl=save_pkl, filename=filename,
+                                       keys=keys)
 
     # search.fit_grid_search(des=des)
     # search.fit_random_search(des=des)
-    search.fit_halving_search(des=des)
-    # search.fit_halving_random_search(des=des)
+    # search.fit_halving_search(des=des)
+    search.fit_halving_random_search(des=des)
 
 
 # Params base
-events = ['under_over_1_5', 'under_over_2_5', 'under_over_3_5']
-ts = ['mean', 'std']
-is_grid = True
+events = ['under_over_2_5']
+ts = ['mean']
+list_stats = ['mean_statistics']
+threshold = None
 with_smote = True
 with_scaler = True
-estimators_grid = ['decision']
-list_stats = ['mean_statistics']
-threshold = 0
+save_pkl = True
+
+is_grid = False
+estimators_grid = [
+    # 'random','svc','lg','decision','nei',
+    # 'lgbn', 'xgb', 'gb', 'ada'
+]
 
 for event in events:
     for t in ts:
@@ -550,6 +603,7 @@ for event in events:
         des = f't={t}/event={event}/stat={list_stats}/smote={with_smote}/scaler={with_scaler}'
         if is_grid:
             for est in estimators_grid:
+                filename = f'best_{event}_{est}_{t}'
                 search_best_model(estimator=est)
         else:
             fit_stacking_classifier(passthrough=False)
@@ -558,5 +612,9 @@ for event in events:
             fit_gradient_boosting()
             fit_adaboost()
             fit_random_()
-            fit_process_bagging_pasting()
+            # fit_process_bagging_pasting()
             # fit_process_voting()
+
+# save_load = SaveLoad(filename='best_mean_under_over_2_5.pkl')
+# estimator = save_load.load_model()
+# print(estimator)
