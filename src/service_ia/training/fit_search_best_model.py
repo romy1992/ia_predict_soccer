@@ -1,5 +1,6 @@
 import logging
 
+import numpy as np
 from imblearn.pipeline import Pipeline
 from lightgbm import LGBMClassifier
 from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier, AdaBoostClassifier
@@ -13,42 +14,53 @@ from sklearn.svm import SVC
 from sklearn.tree import DecisionTreeClassifier
 from xgboost import XGBClassifier
 
-from src.service_ia.training.utility_fit import UtilityFit
+from src.service_ia.training.fit_utility import FitUtility
 
 logging.basicConfig(level=logging.DEBUG)
 logging.info(enable)
 
 # Support Vector Machine (SVM)
+"""
+Sintassi base
+np.logspace(start, stop, num)
+start → esponente iniziale (base 10)
+stop → esponente finale
+num → quanti valori vuoi generare
+Esempio pratico
+np.logspace(-2, 2, 7)
+array([0.01, 0.046, 0.215, 1.0, 4.64, 21.54, 100.0])
+"""
 param_svc = {
     # 'classifier': [SVC(probability=True)],
-    'C': [0.01, 0.1, 1, 10, 100],
-    'kernel': ['linear', 'poly', 'rbf', 'sigmoid'],
-    'degree': [2, 3, 4],
-    'gamma': ['scale', 'auto', 0.001, 0.01, 0.1, 1],
-    'class_weight': [None, 'balanced'],
-    'shrinking': [True, False]
+    'C': np.logspace(-2, 2, 7),  # 0.01 … 100
+    # 'kernel': ['linear', 'poly', 'rbf', 'sigmoid'],
+    # 'degree': [2, 3, 4],
+    "gamma": ["scale", 0.01, 0.1, 1.0]
+    # 'class_weight': ['balanced'],
+    # 'shrinking': [True, False]
 }
 
 # Logistic Regression
 param_lg = {
     # 'classifier': [LogisticRegression()],
-    'C': [0.01, 0.1, 1, 10, 100],
-    'penalty': ['l2', 'l1', 'elasticnet', 'none'],
-    'solver': ['lbfgs', 'saga', 'liblinear'],
+    "C": np.logspace(-2, 2, 9),
+    # 'penalty': ['l2', 'l1', 'elasticnet', 'none'],
+    'penalty': ['l2'],
+    # 'solver': ['lbfgs', 'saga', 'liblinear'],
     # max_iter NON APPLICABILE QUANDO SI EFFETTUA HALVING PERCHE' CON IL PARAMETRO RESOURCE, GLI INCREMENTA AUTOMATICAMENTE
-    'max_iter': [100, 200, 500],
-    'class_weight': [None, 'balanced']
+    # 'max_iter': [100, 200, 500],
+    # 'class_weight': [None, 'balanced']
 }
 
 # Decision Tree
 param_decision = {
     # 'classifier': [DecisionTreeClassifier()],
-    'criterion': ['gini', 'entropy', 'log_loss'],
+    # 'criterion': ['gini', 'entropy', 'log_loss'],
     'max_depth': [None, 5, 10, 20],
-    'min_samples_split': [2, 5, 10],
-    'min_samples_leaf': [1, 2, 4],
-    'max_features': [None, 'sqrt', 'log2'],
-    'class_weight': [None, 'balanced']
+    'min_samples_split': [2, 10, 10],
+    'min_samples_leaf': [1, 2, 5],
+    # 'max_features': [None, 'sqrt', 'log2'],
+    # 'class_weight': [None, 'balanced']
 }
 
 # K-Nearest Neighbors
@@ -56,7 +68,7 @@ param_nei = {
     # 'classifier': [KNeighborsClassifier()],
     'n_neighbors': [3, 5, 7, 10],
     'weights': ['uniform', 'distance'],
-    'metric': ['minkowski', 'euclidean', 'manhattan'],
+    # 'metric': ['minkowski', 'euclidean', 'manhattan'],
     'p': [1, 2]
 }
 
@@ -64,13 +76,13 @@ param_nei = {
 param_random = {
     # 'classifier': [RandomForestClassifier()],
     # n_estimators NON APPLICABILE QUANDO SI EFFETTUA HALVING PERCHE' CON IL PARAMETRO RESOURCE, GLI INCREMENTA AUTOMATICAMENTE
-    'n_estimators': [50, 100, 200, 500],
+    # 'n_estimators': [50, 100, 200, 500],
     'max_depth': [None, 10, 20, 30],
     'min_samples_split': [2, 5, 10],
     'min_samples_leaf': [1, 2, 4],
     'bootstrap': [True, False],
-    'class_weight': [None, 'balanced'],
-    'max_features': [None, 'sqrt', 'log2']
+    # 'class_weight': [None, 'balanced'],
+    'max_features': ['sqrt', 'log2']
 }
 
 # Gradient Boosting (LightGBM) -> ensemble
@@ -81,7 +93,7 @@ param_lgbm = {
     'learning_rate': [0.01, 0.1, 0.2, 0.3],
     'max_depth': [-1, 5, 10],
     'num_leaves': [31, 50, 100],
-    'subsample': [0.5, 0.7, 1.0],
+    'subsample': [0.7, 1.0],
     'colsample_bytree': [0.5, 0.7, 1.0],
     'scale_pos_weight': [1, 2, 5, 10]  # Per bilanciare le classi
 }
@@ -100,31 +112,26 @@ param_xgb = {
 # GradientBoosting -> ensemble
 param_gb = {
     # 'classifier': [GradientBoostingClassifier()],
-    'n_estimators': [50, 100, 200, 500],
-    'learning_rate': [0.01, 0.1, 0.2, 0.3],
-    'max_depth': [3, 5, 10],
-    'min_samples_split': [2, 5, 10],
-    'min_samples_leaf': [1, 2, 4],
-    'subsample': [0.5, 0.7, 1.0],
-    'max_features': ['sqrt', 'log2', None],
-    'loss': ['log_loss', 'exponential']
+    "learning_rate": [0.03, 0.05, 0.1],
+    "n_estimators": [200, 400, 800],
+    "max_depth": [3, 5],
+    "subsample": [0.7, 1.0],
+    # 'min_samples_split': [2, 5, 10],
+    # 'min_samples_leaf': [1, 2, 4],
+    # 'max_features': ['sqrt', 'log2', None],
+    # 'loss': ['log_loss', 'exponential']
 }
 
 # AdaBoost -> ensemble
 params_ada = {
     # 'classifier': [AdaBoostClassifier()],
-    'n_estimators': [50, 100, 200, 500],
-    'learning_rate': [0.01, 0.1, 0.5, 1.0],
-    'algorithm': ['SAMME.R', 'SAMME'],
-    'random_state': [42],  # Per riproducibilità
-    # 'estimator': [
-    #     RandomForestClassifier(max_depth=3, class_weight='balanced', max_leaf_nodes=16),
-    #     DecisionTreeClassifier(max_depth=5, class_weight='balanced')
-    # ]
+    "n_estimators": [200, 400, 800],
+    "learning_rate": [0.05, 0.1, 0.5, 1.0],
+    "algorithm": ["SAMME.R", "SAMME"]
 }
 
 
-class FitSearchBestModel(UtilityFit):
+class FitUtilitySearchBestModel(FitUtility):
     """
     | Attributo         | Descrizione                                                                |
     | ----------------- | -------------------------------------------------------------------------- |
@@ -163,23 +170,31 @@ class FitSearchBestModel(UtilityFit):
     def return_est_par_classifier(self):
         match self.name:
             case 'random':
-                return RandomForestClassifier(), param_random
+                return RandomForestClassifier(n_estimators=400, max_depth=None, n_jobs=-1, random_state=42,
+                                              class_weight='balanced'), param_random
             case 'svc':
-                return SVC(), param_svc
+                return SVC(kernel="rbf", probability=True, class_weight='balanced',  # proba per metriche su soglia
+                           random_state=42), param_svc
             case 'lg':
-                return LogisticRegression(), param_lg
+                return LogisticRegression(
+                    solver="lbfgs", max_iter=2000, n_jobs=-1, class_weight='balanced', random_state=42
+                ), param_lg
             case 'decision':
-                return DecisionTreeClassifier(), param_decision
+                return DecisionTreeClassifier(
+                    random_state=42, class_weight='balanced'
+                ), param_decision
             case 'nei':
                 return KNeighborsClassifier(), param_nei
             case 'lgbn':
-                return LGBMClassifier(), param_lgbm
+                return LGBMClassifier(objective="binary", boosting_type="gbdt",
+                                      n_jobs=-1, random_state=42), param_lgbm
             case 'xgb':
-                return XGBClassifier(), param_xgb
+                return XGBClassifier(objective="binary:logistic", tree_method="hist",
+                                     n_jobs=-1, random_state=42, eval_metric="logloss"), param_xgb
             case 'gb':
-                return GradientBoostingClassifier(), param_gb
+                return GradientBoostingClassifier(random_state=42), param_gb
             case 'ada':
-                return AdaBoostClassifier(), params_ada
+                return AdaBoostClassifier(random_state=42), params_ada
             case _:
                 raise Exception
 
@@ -195,11 +210,9 @@ class FitSearchBestModel(UtilityFit):
         logging.info(f"<<< Start {gs} >>>")
         gs.fit(self.X, self.y)
         logging.info(f"<<< End {gs} >>>")
+
         check_best_cross = self.check_cross_save(estimator=gs, **kwargs)
-        if check_best_cross == 'fit':
-            return gs
-        elif self.best_cross_save == 'best_cross':
-            return check_best_cross
+        return self.check_grid_val(check_best_cross, gs)
 
     def fit_random_search(self, **kwargs):
         """
@@ -207,18 +220,16 @@ class FitSearchBestModel(UtilityFit):
         :return: RandomizedSearchCV
         """
         rs = RandomizedSearchCV(scoring=self.score, estimator=self.estimator, random_state=42,
-                                n_iter=1000,  # Regola questo valore in base al tempo disponibile
+                                n_iter=100,  # Regola questo valore in base al tempo disponibile
                                 param_distributions=self.params, verbose=2, n_jobs=-1,
                                 cv=self.cv, return_train_score=True)
 
         logging.info(f"<<< Start {rs} >>>")
         rs.fit(self.X, self.y)
         logging.info(f"<<< End {rs} >>>")
+
         check_best_cross = self.check_cross_save(estimator=rs, **kwargs)
-        if check_best_cross == 'fit':
-            return rs
-        elif self.best_cross_save == 'best_cross':
-            return check_best_cross
+        return self.check_grid_val(check_best_cross, rs)
 
     def fit_halving_search(self, factor=2, **kwargs):
         """
@@ -273,8 +284,8 @@ class FitSearchBestModel(UtilityFit):
             max_resources=self.max_resources,
             min_resources=self.min_resources,  # n_estimators iniziali # punto di partenza (alberi iniziali)
             cv=self.cv,  # validazione incrociata
-            scoring='accuracy',  # metrica da ottimizzare
-            random_state=42,  # riproducibilità
+            scoring=self.score,  # o 'accuracy'
+            # random_state=42,  # riproducibilità
             verbose=2, return_train_score=True,
             n_jobs=-1  # usa tutti i core
         )
@@ -282,11 +293,9 @@ class FitSearchBestModel(UtilityFit):
         logging.info(f"<<< Start {hs} >>>")
         hs.fit(self.X, self.y)
         logging.info(f"<<< End {hs} >>>")
+
         check_best_cross = self.check_cross_save(estimator=hs, **kwargs)
-        if check_best_cross == 'fit':
-            return hs
-        elif self.best_cross_save == 'best_cross':
-            return check_best_cross
+        return self.check_grid_val(check_best_cross, hs)
 
     def fit_halving_random_search(self, factor=2, **kwargs):
         """
@@ -346,8 +355,8 @@ class FitSearchBestModel(UtilityFit):
             max_resources=self.max_resources,
             min_resources=self.min_resources,  # n_estimators iniziali # punto di partenza (alberi iniziali)
             cv=self.cv,  # validazione incrociata
-            scoring='accuracy',  # metrica da ottimizzare
-            random_state=42,  # riproducibilità
+            scoring=self.score,  # o 'accuracy'
+            # random_state=42,  # riproducibilità
             verbose=2, return_train_score=True,
             n_jobs=-1  # usa tutti i core
         )
@@ -355,11 +364,9 @@ class FitSearchBestModel(UtilityFit):
         logging.info(f"<<< Start {hrs} >>>")
         hrs.fit(self.X, self.y)
         logging.info(f"<<< End {hrs} >>>")
+
         check_best_cross = self.check_cross_save(estimator=hrs, **kwargs)
-        if check_best_cross == 'fit':
-            return hrs
-        elif self.best_cross_save == 'best_cross':
-            return check_best_cross
+        return self.check_grid_val(check_best_cross, hrs)
 
     def check_resource_halving(self):
         """
@@ -382,3 +389,16 @@ class FitSearchBestModel(UtilityFit):
             return 'max_iter'
         else:
             return 'n_samples'  # fallback generico
+
+    def check_grid_val(self, check_best_cross, grid):
+        """
+        Controlla se restituire il modello di ricerca o quello salvato
+        :param grid: modello di ricerca (GridSearch, RandomizedSearch, HalvingGrid
+        :param check_best_cross: modello salvato
+        :return: modello di ricerca o quello salvato
+        """
+        if check_best_cross == 'fit':
+            return grid
+        elif self.best_cross_save == 'best_cross':
+            return check_best_cross
+        return None
