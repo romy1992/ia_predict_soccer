@@ -2,6 +2,7 @@ import logging
 
 import numpy as np
 import xgboost as xgb
+from sklearn.calibration import CalibratedClassifierCV
 from sklearn.ensemble import VotingClassifier, BaggingClassifier, RandomForestClassifier, AdaBoostClassifier, \
     GradientBoostingClassifier, StackingClassifier
 
@@ -36,8 +37,14 @@ class FitUtilityEnsembleClassifier(FitUtility):
           Con Voting che accumula i modelli e restituisce il migliore
         """
         model = VotingClassifier(estimators=estimators, voting=voting_hs, verbose=2, n_jobs=-1)
+
         # Qui la pipeline con SMOTE e Scaler (solo se richiesto)
         estimator = self.build_estimator(estimator=model)
+
+        logging.info(f'Start fit {estimator}')
+        estimator.fit(self.X, self.y)
+        logging.info(f'End fit {estimator}')
+
         check_cross_val = self.check_cross_save(estimator=estimator, **kwargs)
         return self.check_val(check_cross_val, estimator)
 
@@ -66,6 +73,11 @@ class FitUtilityEnsembleClassifier(FitUtility):
 
         # Qui la pipeline con SMOTE e Scaler (solo se richiesto)
         estimator_pipe = self.build_estimator(estimator=model)
+
+        logging.info(f'Start fit {estimator_pipe}')
+        estimator_pipe.fit(self.X, self.y)
+        logging.info(f'End fit {estimator_pipe}')
+
         check_cross_val = self.check_cross_save(estimator=estimator_pipe, **kwargs)
         return self.check_val(check_cross_val, estimator)
 
@@ -84,13 +96,20 @@ class FitUtilityEnsembleClassifier(FitUtility):
         """
         base_param = {'max_leaf_nodes': 16, 'n_estimators': 500, 'random_state': 42}
         override_params = kwargs.get('override_params', {})
-
         params = override_params if len(override_params) > 0 else base_param
-        model = RandomForestClassifier(**params, oob_score=oob, n_jobs=-1, verbose=1)
+        random = RandomForestClassifier(**params, oob_score=oob, n_jobs=-1, verbose=1)
+
+        # Aggiunge la calibrazione se richiesta salvando il modello calibrato con entrambi i metodi (sigmoid e isotonic)
+        # Passa dai vari check ma non passa dal check_val finale
+        self.add_calibrated(random, **kwargs)
 
         # Qui la pipeline con SMOTE e Scaler (solo se richiesto)
-        estimator = self.build_estimator(estimator=model)
+        estimator = self.build_estimator(estimator=random)
+        logging.info(f'Start fit {estimator}')
+        estimator.fit(self.X, self.y)
+        logging.info(f'End fit {estimator}')
         check_cross_val = self.check_cross_save(estimator=estimator, **kwargs)
+
         return self.check_val(check_cross_val, estimator)
 
     def fit_adaboost(self, estimator, alg_def=True, **kwargs):
@@ -110,6 +129,11 @@ class FitUtilityEnsembleClassifier(FitUtility):
 
         # Qui la pipeline con SMOTE e Scaler (solo se richiesto)
         estimator = self.build_estimator(estimator=model)
+
+        logging.info(f'Start fit {estimator}')
+        estimator.fit(self.X, self.y)
+        logging.info(f'End fit {estimator}')
+
         check_cross_val = self.check_cross_save(estimator=estimator, **kwargs)
         return self.check_val(check_cross_val, estimator)
 
@@ -128,6 +152,11 @@ class FitUtilityEnsembleClassifier(FitUtility):
 
         # Qui la pipeline con SMOTE e Scaler (solo se richiesto)
         estimator = self.build_estimator(estimator=model)
+
+        logging.info(f'Start fit {estimator}')
+        estimator.fit(self.X, self.y)
+        logging.info(f'End fit {estimator}')
+
         check_cross_val = self.check_cross_save(estimator=estimator, **kwargs)
         return self.check_val(check_cross_val, estimator)
 
@@ -177,6 +206,11 @@ class FitUtilityEnsembleClassifier(FitUtility):
 
         # Qui la pipeline con SMOTE e Scaler (solo se richiesto)
         estimator = self.build_estimator(estimator=model)
+
+        logging.info(f'Start fit {estimator}')
+        estimator.fit(self.X, self.y)
+        logging.info(f'End fit {estimator}')
+
         check_cross_val = self.check_cross_save(estimator=estimator, **kwargs)
         return self.check_val(check_cross_val, estimator)
 
@@ -238,8 +272,41 @@ class FitUtilityEnsembleClassifier(FitUtility):
             passthrough=passthrough,
             stack_method=stack_method
         )
+
+        logging.info(f'Start fit {stacking}')
+        stacking.fit(self.X, self.y)
+        logging.info(f'End fit {stacking}')
+
         check_cross_val = self.check_cross_save(estimator=stacking, **kwargs)
         return self.check_val(check_cross_val, stacking)
+
+    def add_calibrated(self, estimator, **kwargs):
+        """
+        Aggiunge la calibrazione al modello dato
+        La calibrazione delle probabilità è importante quando le probabilità stimate da un classificatore non riflettono
+        accuratamente le probabilità reali degli eventi. Ad esempio, un modello potrebbe prevedere che un evento abbia
+        una probabilità del 90% di verificarsi, ma in realtà, osservando i dati storici, quell'evento si verifica solo il
+        70% delle volte quando il modello fa quella previsione.
+        :param estimator: Estimator da calibrare
+        :param kwargs: calibrated=True per attivare la calibrazione
+        """
+        calibrated = kwargs.get('calibrated', False)
+        base_name = self.filename.replace('.pkl', '')
+        if calibrated:
+            for method in ['sigmoid', 'isotonic']:
+                model_cal = CalibratedClassifierCV(estimator, method=method)
+                # cv = 'prefit')  se il modello è già addestrato
+
+                # Qui la pipeline con SMOTE e Scaler (solo se richiesto)
+                estimator_calibrated = self.build_estimator(estimator=model_cal)
+                logging.info(f'Start fit {estimator_calibrated}')
+                estimator_calibrated.fit(self.X, self.y)
+                logging.info(f'End fit {estimator_calibrated}')
+                # Solo salvataggio del modello calibrato
+                self.filename = f'{base_name}_calibrated_{method}.pkl'
+                self.check_cross_save(estimator=estimator_calibrated, **kwargs)
+
+            self.filename = f'{base_name}.pkl'  # reset nome file
 
     def check_val(self, check_cross_val, estimator):
         """
@@ -249,9 +316,6 @@ class FitUtilityEnsembleClassifier(FitUtility):
         :return: model o cross_val
         """
         if check_cross_val == 'fit':
-            logging.info(f'Start fit {estimator}')
-            estimator.fit(self.X, self.y)
-            logging.info(f'End fit {estimator}')
             return estimator
         elif self.cross_save == 'cross':
             return check_cross_val

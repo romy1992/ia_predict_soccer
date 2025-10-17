@@ -2,6 +2,7 @@ import logging
 import os
 
 import joblib
+from sklearn.calibration import CalibratedClassifierCV
 
 logging.basicConfig(level=logging.DEBUG)
 

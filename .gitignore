@@ -15,3 +15,5 @@
 /src/service_ia/dataset/statistics/dataset_statistics_history.xlsx
 /src/service_ia/migrate/dataset_mean_history.xlsx
 /src/service_ia/training/__pycache__/
+/src/service_ia/training/version_1/fit/__pycache__/
+/src/service_ia/training/version_1/__pycache__/
