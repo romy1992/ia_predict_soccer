@@ -59,8 +59,9 @@ class FitUtility(SaveLoad):
         cv = kwargs.get('cv')
         match self.cross_save or self.best_cross_save:
             case 'cross':
+                result = self.cross(estimator=estimator, des=des, threshold=threshold, cv=cv)
                 self.save_model(estimator=estimator)
-                return self.cross(estimator=estimator, des=des, threshold=threshold, cv=cv)
+                return result
             case 'cross_save':
                 # result = self.cross(estimator=estimator, des=des, threshold=threshold, cv=cv)
                 result_2 = self.cross_2(estimator=estimator, des=des, threshold=threshold, cv=cv)
@@ -403,7 +404,17 @@ class FitUtility(SaveLoad):
             'f1_weighted',
             'balanced_accuracy'
         ]
-        cross_val = cross_validate(estimator, self.X, self.y, cv=cv, scoring=scoring)
+        cross_val = cross_validate(estimator, self.X, self.y, cv=cv,
+                                   scoring=scoring,
+                                   # return_estimator=True, n_jobs=-1
+                                   # return_estimator=True mi ritorna gli stimatori di ogni fold fittati
+                                   )
+        # fold_estimators = cross_val['estimator'] # lista di modelli fittati (uno per fold)
+        # Volendo puoi scegliere “il migliore” tra i fold in base a una metrica e poi ri-fittarlo su tutto il dataset:
+        # metric = 'f1'  # o quello che preferisci
+        # best_idx = int(np.nanargmax(cv_res[f'test_{metric}']))
+        # best_fold_est = fold_estimators[best_idx]
+        # final_estimator = clone(best_fold_est).fit(self.X, self.y)
 
         # 4) Gestione binary/multiclasse
         unique_classes = np.unique(self.y)

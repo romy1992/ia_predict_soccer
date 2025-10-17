@@ -33,7 +33,8 @@ logging.basicConfig(level=logging.DEBUG)
 61 (Francia) - 
 203 (Turchia)
 """
-LEAGUES = [135, 136, 137, 138, 942, 943, 140, 144, 78, 61, 39, 94, 203, 88, 492, 2, 3, 848]
+# LEAGUES = [135, 136, 137, 138, 942, 943, 140, 144, 78, 61, 39, 94, 203, 88, 492,]# 2, 3, 848
+LEAGUES = [94]
 SEASONS = [2025]
 repo_match = MatchRepository()
 
@@ -245,7 +246,7 @@ def download_import_matches(seasons=None, leagues=None, is_next=False, current_l
         format_data = '%Y-%m-%d'
         current_data = datetime.now()
         # Scegliere da che giorno indietro si vuole andare per recuperare le partite
-        from_date = (current_data - timedelta(days=1)).strftime(format_data)
+        from_date = (current_data - timedelta(days=50)).strftime(format_data)
         # Fino a ...
         to_date = (current_data - timedelta(days=0)).strftime(format_data)
 
@@ -414,7 +415,8 @@ def calculate_mean(with_season: int = None, force_mean: bool = False, teams: lis
 
     # Ricerca per id_fixture valorizzati
     filters = {
-        'id_fixture': "not None"
+        'id_fixture': "not None",
+        'current_league': 138
     }
     if with_season:
         filters.update({'season': with_season})
@@ -517,6 +519,29 @@ def calculate_mean(with_season: int = None, force_mean: bool = False, teams: lis
     repo_match.massive_update_bulk(list_obj)
 
 
-download_import_matches(is_next=False)
+def reload_fixture():
+    """
+    Ricarica tutte le fixture a db per sistemare eventuali errori
+    :return:
+    """
+    filters = {
+        'id_fixture': "not None",
+        'status': ['NS'],
+        'current_league': [2, 3, 848],
+        'season': [2025]
+    }
+    all_match = repo_match.search_filter(filters=filters)
+    for match in all_match:
+        id_fix = match.id_fixture
+        fixture = base_api_statistics(path='fixtures', params={'id': id_fix})
+        if len(fixture) > 0:
+            fixture = fixture[0]
+            dict_match = map_base_match(match=match, id_fix=id_fix, fixture=fixture,
+                                        league=match.current_league, season=match.season)
+            new_match = Match(**dict_match)
+            repo_match.save(new_match)
+
+# download_import_matches(is_next=False)
 # re_processor_error()
-# calculate_mean(force_mean=True, with_season=2025)
+# reload_fixture()
+calculate_mean(force_mean=True, with_season=2025)
