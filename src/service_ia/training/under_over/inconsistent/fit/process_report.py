@@ -22,7 +22,7 @@ from xgboost import XGBClassifier
 
 from src.service_ia.training.utility_training.fit_ensemble_classifier import FitUtilityEnsembleClassifier
 from src.service_ia.training.utility_training.fit_search_best_model import FitUtilitySearchBestModel
-from src.service_ia.training.version_1.fit.filter_service import FilterService
+from src.service_ia.training.under_over.inconsistent.fit.filter_service import FilterService
 
 
 def fit_process_voting():
