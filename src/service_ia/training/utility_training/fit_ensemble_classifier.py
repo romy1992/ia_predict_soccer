@@ -6,7 +6,7 @@ from sklearn.calibration import CalibratedClassifierCV
 from sklearn.ensemble import VotingClassifier, BaggingClassifier, RandomForestClassifier, AdaBoostClassifier, \
     GradientBoostingClassifier, StackingClassifier
 
-from src.service_ia.training.fit_utility import FitUtility
+from src.service_ia.training.utility_training.fit_utility import FitUtility
 
 logging.basicConfig(level=logging.DEBUG)
 
@@ -321,33 +321,3 @@ class FitUtilityEnsembleClassifier(FitUtility):
             return check_cross_val
         return None
 
-
-# TODO
-""" 
-| Algoritmo                  | early_stopping / n_iter_no_change | eval_set richiesto | Dove si imposta?     |
-|-----------------------------|-----------------------------------|--------------------|----------------------|
-| **XGBClassifier**           | early_stopping_rounds             | Sì                 | Nel `.fit()`         |
-| **LGBMClassifier**          | early_stopping_rounds             | Sì                 | Nel `.fit()`         |
-| **HistGradientBoostingClassifier** | early_stopping, n_iter_no_change | No           | Nel costruttore      |
-| **GradientBoostingClassifier**     | n_iter_no_change           | No                 | Nel costruttore      |
-| **RandomForestClassifier**  | No                                | No                 | —                    |
-| **LogisticRegression**      | No                                | No                 | —                    |
-| **SVC**                     | No                                | No                 | —                    |
-| **AdaBoostClassifier**      | No                                | No                 | —                    |
-
-**Note:**
-- Per XGBoost e LightGBM, `early_stopping_rounds` e `eval_set` vanno passati nel metodo `.fit()`.
-- Per i modelli scikit-learn con `n_iter_no_change` o `early_stopping`, si imposta nel costruttore.
-- I modelli classici (`RandomForest`, `SVC`, `LogisticRegression`, `AdaBoost`) non supportano l’early stopping.
-
-I modelli che supportano l’early stopping (come XGBoost, LightGBM, GradientBoosting) lo fanno perché l’addestramento avviene in modo iterativo, aggiungendo ogni volta un nuovo “estimator” (tipicamente un albero) o passando per più “epoche” (iterazioni).
-Boosting (XGB, LGBM, GradientBoosting): aggiungono un albero alla volta, correggendo gli errori dei precedenti.
-Early stopping: controlla dopo ogni iterazione/epoca se la metrica di validazione migliora. Se non migliora per un certo numero di iterazioni, l’addestramento si ferma prima.
-
-
-# Regole di scaler
-Modelli ad albero: DecisionTree, RandomForest, ExtraTrees, GradientBoosting, XGBoost, LightGBM, CatBoost
-Modelli rule-based: RuleFit, Explainable Boosting Machine
-Naive Bayes: MultinomialNB, CategoricalNB
-
-"""

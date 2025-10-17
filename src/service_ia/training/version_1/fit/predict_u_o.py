@@ -1,7 +1,7 @@
 import pandas as pd
 from sklearn.utils.validation import check_is_fitted
 
-from src.service_ia.training.save_load import SaveLoad
+from src.service_ia.training.utility_training.save_load import SaveLoad
 from src.service_ia.training.version_1.fit.filter_service import FilterService
 
 

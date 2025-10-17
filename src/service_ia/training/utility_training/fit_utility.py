@@ -15,7 +15,7 @@ from sklearn.model_selection import StratifiedKFold, cross_val_predict, cross_va
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.preprocessing import StandardScaler
 
-from src.service_ia.training.save_load import SaveLoad
+from src.service_ia.training.utility_training.save_load import SaveLoad
 
 logging.basicConfig(level=logging.DEBUG)
 

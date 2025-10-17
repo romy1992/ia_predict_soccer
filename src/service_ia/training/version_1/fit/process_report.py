@@ -8,68 +8,10 @@ GradientBoostingClassifier
 XGBoost
 StackingClassifier
 
-| Framework                    | Estimatore configurabile? | Tipo di stimatore di default          |
-| ---------------------------- | ------------------------- | ------------------------------------- |
-| `AdaBoostClassifier`         | ✅ `base_estimator`        | `DecisionTreeClassifier(max_depth=1)` |
-| `BaggingClassifier`          | ✅ `base_estimator`        | `DecisionTreeClassifier()`            |
-| `GradientBoostingClassifier` | ❌                         | `DecisionTreeRegressor(max_depth=3)`  |
-
-
-| Modello                    | Usa Bagging? | Usa Pasting? | Bootstrap configurabile?        |
-    | -------------------------- | ------------ | ------------ | ------------------------------- |
-    | BaggingClassifier      | ✅            | ✅            | ✅ (`bootstrap=True/False`)      |
-    | BaggingRegressor       | ✅            | ✅            | ✅                               |
-    | RandomForestClassifier | ✅ (fisso)    | ❌            | ✅ (`bootstrap=True` di default) |
-    | VotingClassifier       | ❌            | ❌            | ❌                               |
-    | GradientBoosting       | ❌            | ❌            | ❌                               |
-    | StackingClassifier     | ❌            | ❌            | ❌                               |
-
-
-Learning_rate : XGBoost, LightGBM e AdaBoost -> per tutti
-Il learning_rate controlla quanto ogni nuovo modello contribuisce alla previsione finale.
-È un moltiplicatore per l’output del nuovo albero.
-
-predizione_finale += learning_rate * nuovo_albero(x)
-
-    | Valore `learning_rate`   | Effetto                                                  |
-    | ------------------------ | -------------------------------------------------------- |
-    | **Alto** (`0.5 - 1.0`)   | 💥 Veloce apprendimento ma rischio **overfitting**       |
-    | **Basso** (`0.01 - 0.2`) | 🛡️ Apprendimento più lento ma **più preciso e robusto** |
-    | **Molto basso**          | 🐢 Richiede molti più alberi (`n_estimators` alto)       |
-
-Regola d’oro
-Basso learning_rate + Alto n_estimators = Generalizzazione migliore
-
-
-
-REGOLA SCALING :
-
-Attenzione: anche se non serve, lo scaling non danneggia questi modelli. È solo ridondante e fa perdere tempo.
-
-| Modello                                                                               | Motivo                                         |
-| ------------------------------------------------------------------------------------- | ---------------------------------------------- |
-| **Decision Tree**                                                                     | Lavora per split, non su distanza              |
-| **Random Forest**                                                                     | È un insieme di alberi, quindi stesso discorso |
-| **Gradient Boosting** (es. `HistGradientBoosting`, `XGBoost`, `LightGBM`, `CatBoost`) | Basato su alberi ⇒ no scaling necessario       |
-| **Naive Bayes** (in particolare `CategoricalNB`, `MultinomialNB`)                     | Lavora con frequenze e conteggi, non distanze  |
-| **Rule-based Models** (es. RuleFit, Explainable Boosting Machine)                     | Basati su logiche e split                      |
-
-
-
-Modelli che richiedono scaling (scaling è fortemente consigliato o obbligatorio) :
-| Modello                                   | Motivo                                                                                         |
-| ----------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| **SVM (LinearSVC, SVC)**                  | Basato su distanze e margini                                                                   |
-| **K-Nearest Neighbors (KNN)**             | Basato su distanza euclidea o simili                                                           |
-| **Logistic Regression**                   | Ottimizzazione numerica ⇒ convergenza più rapida e precisa con scaling                         |
-| **Linear Regression (OLS, Ridge, Lasso)** | Stessa cosa, scala influenza i coefficienti                                                    |
-| **Perceptron / MLP / Reti Neurali**       | Convergenza durante l’ottimizzazione (gradient descent) migliora molto con dati standardizzati |
-| **PCA, LDA**                              | Si basano su varianza, correlazione ⇒ le scale influiscono fortemente                          |
 """
 import numpy as np
 from imblearn.over_sampling import SMOTE
 from imblearn.pipeline import Pipeline
-from lightgbm import LGBMClassifier
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier, AdaBoostClassifier
 from sklearn.linear_model import LogisticRegression
@@ -78,8 +20,8 @@ from sklearn.svm import SVC
 from sklearn.tree import DecisionTreeClassifier
 from xgboost import XGBClassifier
 
-from src.service_ia.training.fit_ensemble_classifier import FitUtilityEnsembleClassifier
-from src.service_ia.training.fit_search_best_model import FitUtilitySearchBestModel
+from src.service_ia.training.utility_training.fit_ensemble_classifier import FitUtilityEnsembleClassifier
+from src.service_ia.training.utility_training.fit_search_best_model import FitUtilitySearchBestModel
 from src.service_ia.training.version_1.fit.filter_service import FilterService
 
 

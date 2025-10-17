@@ -14,7 +14,7 @@ from sklearn.svm import SVC
 from sklearn.tree import DecisionTreeClassifier
 from xgboost import XGBClassifier
 
-from src.service_ia.training.fit_utility import FitUtility
+from src.service_ia.training.utility_training.fit_utility import FitUtility
 
 logging.basicConfig(level=logging.DEBUG)
 logging.info(enable)
