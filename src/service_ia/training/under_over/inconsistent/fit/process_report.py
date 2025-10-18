@@ -29,21 +29,26 @@ def fit_process_voting():
     """
     Con Voting che accumula i modelli e restituisce il migliore
     """
-    random_forest = RandomForestClassifier(random_state=42, n_estimators=500, max_leaf_nodes=16, n_jobs=-1)
-    logistic = LogisticRegression(random_state=42, solver='lbfgs')
-    scv = SVC(gamma='scale', random_state=42, probability=True)
+    method='isotonic'  # 'sigmoid'  # 'isotonic'
+    random_forest = CalibratedClassifierCV(RandomForestClassifier(
+        **{'bootstrap': False, 'max_depth': None, 'max_features': 'log2', 'min_samples_leaf': 1,
+           'min_samples_split': 5}), method=method)
+    logistic = CalibratedClassifierCV(LogisticRegression(C=0.75, class_weight='balanced', max_iter=500),
+                                      method=method)
+    scv = CalibratedClassifierCV(SVC(C=np.float64(0.01), gamma=1.0, probability=True, random_state=42),
+                                 method=method)
     decision = DecisionTreeClassifier()
 
-    estimators = [('rf', random_forest), ('lg', logistic), ('svc', scv), ('decision', decision)]
+    estimators = [('rf', random_forest), ('lg', logistic), ('svc', scv)]
 
     fit_ensemble_hard = FitUtilityEnsembleClassifier(X=X, y=y, cross_save='cross_save',
                                                      with_smote=with_smote, with_scaler=with_scaler,
-                                                     filename=f'{t}_{e}_hard_voting')
-    fit_ensemble_hard.fit_voting(estimators=estimators, voting_hs='hard', threshold=threshold, des=des)
+                                                     filename=f'{t}_{e}_hard_voting_calibrated_{method}', save_pkl=save_pkl)
+    #fit_ensemble_hard.fit_voting(estimators=estimators, voting_hs='hard', threshold=threshold, des=des)
 
     fit_ensemble_soft = FitUtilityEnsembleClassifier(X=X, y=y, cross_save='cross_save',
                                                      with_smote=with_smote, with_scaler=with_scaler,
-                                                     filename=f'{t}_{e}_soft_voting')
+                                                     filename=f'{t}_{e}_soft_voting_calibrated_{method}', save_pkl=save_pkl)
     fit_ensemble_soft.fit_voting(estimators=estimators, voting_hs='soft', threshold=threshold, des=des)
 
 
@@ -73,13 +78,13 @@ def fit_process_bagging_pasting():
                                                filename=f'{t}_{e}_bagging_bagpast',
                                                with_scaler=False)  # Poco senso se l'estimator è un albero
     fit_bagging.fit_bagging_pasting(threshold=threshold, estimator=estimator, bagging=True,
-                                    des=f'{des}/stat={list_stats}/bagging=True')
+                                    des=f'{des}/stat={list_stats}/bagging=True', calibrated=True)
 
     fit_bagging = FitUtilityEnsembleClassifier(X, y, cross_save='cross_save',
                                                with_smote=with_smote, save_pkl=save_pkl, filename=f'{t}_{e}_bagpast',
                                                with_scaler=False)  # Poco senso se l'estimator è un albero
     fit_bagging.fit_bagging_pasting(threshold=threshold, estimator=estimator, bagging=False,
-                                    des=f'{des}/stat={list_stats}/bagging=False')
+                                    des=f'{des}/stat={list_stats}/bagging=False', calibrated=True)
 
 
 def fit_random_():
@@ -142,18 +147,18 @@ def fit_adaboost():
                                                  with_scaler=False, save_pkl=save_pkl,
                                                  filename=f'{t}_{e}_ada_samme')  # Poco senso se l'estimator è un albero
         ada_samme.fit_adaboost(estimator=estimator, alg_def=False, threshold=threshold,
-                               des=f'{des}/samme/stat={list_stats}')
+                               des=f'{des}/samme/stat={list_stats}', calibrated=True)
 
         ada_samme_r = FitUtilityEnsembleClassifier(X=X, y=y, cross_save='cross_save', save_pkl=save_pkl,
                                                    with_smote=with_smote, filename=f'{t}_{e}_ada_samme_r',
                                                    with_scaler=False)  # Poco senso se l'estimator è un albero
         ada_samme_r.fit_adaboost(estimator=estimator, threshold=threshold,
-                                 des=f'{des}/samme_r/stat={list_stats}')
+                                 des=f'{des}/samme_r/stat={list_stats}', calibrated=True)
     else:
         ada = FitUtilityEnsembleClassifier(X=X, y=y, cross_save='cross_save', with_smote=with_smote, save_pkl=save_pkl,
                                            with_scaler=with_scaler, filename=f'{t}_{e}_ada')
         ada.fit_adaboost(estimator=None, threshold=threshold, des=f'{des}/stat={list_stats}',
-                         override_params=params)
+                         override_params=params, calibrated=True)
 
 
 def fit_gradient_boosting():
@@ -173,7 +178,7 @@ def fit_gradient_boosting():
         params = {'subsample': 1.0, 'n_estimators': 200, 'max_depth': 3, 'learning_rate': 0.05}
     else:  # under_over_3_5
         params = None
-    gb_fit.fit_gradient_boosting(des=des, override_params=params)
+    gb_fit.fit_gradient_boosting(des=des, override_params=params, calibrated=True)
 
 
 def fit_xgb():
@@ -213,7 +218,7 @@ def fit_xgb():
 
     gb_fit = FitUtilityEnsembleClassifier(X=X, y=y, cross_save='cross_save', with_smote=with_smote, save_pkl=save_pkl,
                                           with_scaler=with_scaler, filename=f'{t}_{e}_xgb')
-    gb_fit.fit_xgb(des=des, override_params=params)
+    gb_fit.fit_xgb(des=des, override_params=params, calibrated=True)
 
 
 def fit_stacking_classifier(passthrough=True, stack_method='predict_proba'):
@@ -273,7 +278,7 @@ def fit_stacking_classifier(passthrough=True, stack_method='predict_proba'):
             ('svc',
              CalibratedClassifierCV(Pipeline(steps=[('scaler', StandardScaler()), ('smote', SMOTE(random_state=42)),
                                                     ('model',
-                                                     SVC(C=np.float64(0.01), gamma=1.0, #probability=True,
+                                                     SVC(C=np.float64(0.01), gamma=1.0,  # probability=True,
                                                          random_state=42),)]), method=method)),
             ('xgb', CalibratedClassifierCV(Pipeline(steps=[('smote', SMOTE(random_state=42)),
                                                            ('model', XGBClassifier(**
@@ -372,14 +377,14 @@ for e in events:
                 filename = f'best_grid_{t}_{e}_{est}'
                 search_best_model(estimator=est)
         else:
-            fit_stacking_classifier(passthrough=False)
+            # fit_stacking_classifier(passthrough=False)
             # fit_stacking_classifier()
             # fit_xgb()
             # fit_gradient_boosting()
             # fit_adaboost()
             # fit_random_()
             # fit_process_bagging_pasting()
-            # fit_process_voting()
+            fit_process_voting()
 
 # save_load = SaveLoad(filename='best_mean_under_over_2_5.pkl')
 # estimator = save_load.load_model()

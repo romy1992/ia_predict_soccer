@@ -38,6 +38,9 @@ class FitUtilityEnsembleClassifier(FitUtility):
         """
         model = VotingClassifier(estimators=estimators, voting=voting_hs, verbose=2, n_jobs=-1)
 
+        self.add_calibrated(model, **kwargs)
+
+
         # Qui la pipeline con SMOTE e Scaler (solo se richiesto)
         estimator = self.build_estimator(estimator=model)
 
@@ -70,6 +73,9 @@ class FitUtilityEnsembleClassifier(FitUtility):
 
         params = override_params if len(override_params) > 0 else base_param
         model = BaggingClassifier(estimator=estimator, bootstrap=bagging, **params, n_jobs=-1, verbose=1)
+
+        self.add_calibrated(model, **kwargs)
+
 
         # Qui la pipeline con SMOTE e Scaler (solo se richiesto)
         estimator_pipe = self.build_estimator(estimator=model)
@@ -127,6 +133,9 @@ class FitUtilityEnsembleClassifier(FitUtility):
 
         model = AdaBoostClassifier(estimator=estimator, **params)
 
+        self.add_calibrated(model, **kwargs)
+
+
         # Qui la pipeline con SMOTE e Scaler (solo se richiesto)
         estimator = self.build_estimator(estimator=model)
 
@@ -149,6 +158,8 @@ class FitUtilityEnsembleClassifier(FitUtility):
         override_params = kwargs.get('override_params', {})
         params = override_params if len(override_params) > 0 else base_param
         model = GradientBoostingClassifier(**params)
+
+        self.add_calibrated(model, **kwargs)
 
         # Qui la pipeline con SMOTE e Scaler (solo se richiesto)
         estimator = self.build_estimator(estimator=model)
@@ -203,6 +214,8 @@ class FitUtilityEnsembleClassifier(FitUtility):
             params.update({'scale_pos_weight': scale_pos_weight})  # bilancia il peso delle classi
 
         model = xgb.XGBClassifier(**params)
+
+        self.add_calibrated(model, **kwargs)
 
         # Qui la pipeline con SMOTE e Scaler (solo se richiesto)
         estimator = self.build_estimator(estimator=model)
