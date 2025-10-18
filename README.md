@@ -99,3 +99,16 @@ predizione_finale += learning_rate * nuovo_albero(x)
 
 Regola d’oro
 Basso learning_rate + Alto n_estimators = Generalizzazione migliore
+
+# @staticmethod
+@staticmethod è un decoratore in Python che indica che il metodo seguente è un metodo statico della classe. Un metodo statico:
+Non riceve automaticamente come primo argomento l'istanza (self) o la classe (cls).
+Può essere chiamato sia dalla classe che da un'istanza, ma non può accedere o modificare lo stato dell'istanza o della classe.
+Viene usato per funzioni che hanno una logica collegata alla classe, ma che non necessitano di accedere a dati specifici dell'istanza o della classe.
+
+class Esempio:
+    @staticmethod
+    def saluta():
+        print("Ciao!")
+
+Puoi chiamare Esempio.saluta() oppure Esempio().saluta().
