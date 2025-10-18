@@ -33,8 +33,7 @@ logging.basicConfig(level=logging.DEBUG)
 61 (Francia) - 
 203 (Turchia)
 """
-# LEAGUES = [135, 136, 137, 138, 942, 943, 140, 144, 78, 61, 39, 94, 203, 88, 492,]# 2, 3, 848
-LEAGUES = [94]
+LEAGUES = [135, 136, 137, 138, 942, 943, 140, 144, 78, 61, 39, 94, 203, 88, 492, 2, 3, 848]
 SEASONS = [2025]
 repo_match = MatchRepository()
 
@@ -48,7 +47,8 @@ with open(os.path.abspath(BET_FILE), 'r', encoding='utf-8') as file:
 # NS è partita non disputata
 # AET è per partita finita ai supplementari (QUINDI PER COPPE)
 # PEN è per partita finita ai rigori (QUINDI PER COPPE)
-status_list = "FT-AET-PEN"
+# ABD è per partita abbandonata
+status_list = "FT-AET-PEN-ABD"
 
 
 def map_base_match(match, id_fix, fixture, league, season):
@@ -246,7 +246,7 @@ def download_import_matches(seasons=None, leagues=None, is_next=False, current_l
         format_data = '%Y-%m-%d'
         current_data = datetime.now()
         # Scegliere da che giorno indietro si vuole andare per recuperare le partite
-        from_date = (current_data - timedelta(days=50)).strftime(format_data)
+        from_date = (current_data - timedelta(days=1)).strftime(format_data)
         # Fino a ...
         to_date = (current_data - timedelta(days=0)).strftime(format_data)
 
