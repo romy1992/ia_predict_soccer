@@ -1,0 +1,13 @@
+{
+  "type": "service_account",
+  "project_id": "predict-soccer-storage",
+  "private_key_id": "cea377aa5be03d7f17640874c3a11cc293301b33",
+  "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDEaRSt1xEpmbbk\nLXfkrIanKv+5eM/dxhvHlrvDTqLfprogZsMfjPlwKklWNy0OuJn0xjyZFYezucWa\nWwbDuwdjy/QQp3bqtLHwJB+PhIFUzrNhheG2V5p3IrGg2e1LTiJYyAgCDkY/v14N\n4J7fLkmYu6BYLqmDeygzPJtIcn3Z9RtSUipB4s+bfg6PREFnRP+dHyEdYutKxHOL\n/Q0itQLwwpFlPA7USulTCjrq+lH72tTcrYT51nsk2ICnDHjBGvqUQ3lqt+vOQKBz\nR2xM21xVNNUxSbFtzznGwmiZ/SrL1Vhf+SGLe/5DxEt2I7pQ9kQZ9BClBJvXlqdH\nlPQdykw3AgMBAAECggEAH1fvk2BnXj6oB5jT8buwj1vWzGfhsDANvdepphzV9B/8\nwu/zQoUyRzqQUoBiod9Gvl+mSv27FqzWQnA1T6X4o23oSIIZAZKNdNem67XHF9wW\nl0EQyJMJVOrF8vfkHOjepVFiqcVSY5jr7wYCBHa0CvoiOABWT+OnAioxU6nluJLT\ngwN4JhnK1O5xYshNFKxk5+N7RqAwK92zakA6PbwFCC5k01JrZ3qSi5k6tPN+pz53\nGvCi2DUpmlj6GgrQWYWaeSNm86H5lOuZ3ObAzd1xfo29UxxnifZoMCGqqDnRy2Eo\n9fdU5Lho5fCo72szqm8pf8qRxByBuWckQn2YVxQsLQKBgQD2YQDlsXlOL/vAwD73\nWFu9xSzol5cSX8fZViw2RKCMXOjX+6dtgqrtOHRefZFToSZZM20qvKvd46tYqbqT\n/u+MKBcUthIuNHh2NgYPe/ptv3neT58rw3N2HAAubAwlDPUjt9BbAeZLyChaJdAe\nfumU2Abg0LZvCELLgInVBItGfQKBgQDMFI22JrHD7sBuzJF9GElnViGnkCa2qPk3\ns26MoKi0sm/rVFP0XKcYT2ntp79vGuBjMrAPzlsSkE+Stjn7RQ2UtkU8bT9uS6gn\nSib4d3rjTP03XAMj1NQeEw/NYPQeTdnk9FOjsTHJ3/2i3F9U2BZnZGOxtz5g8xe/\n4cbSE0X3wwKBgBwB5vI1fI6w0bOVpxLDDprCAVrncJr8HGHOc/QvVPjfzvBOgTfn\ntLqGwmPDbnPNS+iz+eLz063DpcTMdpNAVcbe/9Cw6dwqxs7ZUVMNSuiS7a2h63w0\nGboBcNvWGINVt8A5swvFaYKP3FZzGfd9gdwTuqRv1W1FySINGJ4IiDSZAoGAGpSy\nwH7ZuINoXQYYDQsUxHjbeU+1OyVXEII2a+qhDqgPG7+oD7Phr7DoQyQOMxJ1F3aK\nqARgqFJTivBhLPEZi70R14UDNgJ0rGlkGgi14NUuRf+eCRS3bBNfg4iVQz0wnDmW\ni0OREJI0HvpFEG/0uxLASW1smoQPG9b0ZnhMLLECgYEAr43G8AAaCcQEfu4SgUpb\ne6TJGWRDPbqV2q7J1ZWBCh/uXHPMOjwlXhGkH+WoTHH8BOUOGy23lr6OWE9VYhwj\nul76GJLW9JzX3rL9Mf3Srxipi/rI6OCicFy7zHzWFzT0oEb98FgZgm+Cn+Z1tA+X\nn6iULHJ/gFejTpeM3o+K4Rk=\n-----END PRIVATE KEY-----\n",
+  "client_email": "ia-predict@predict-soccer-storage.iam.gserviceaccount.com",
+  "client_id": "106431238149587450464",
+  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+  "token_uri": "https://oauth2.googleapis.com/token",
+  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/ia-predict%40predict-soccer-storage.iam.gserviceaccount.com",
+  "universe_domain": "googleapis.com"
+}
