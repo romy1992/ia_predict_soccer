@@ -22,14 +22,14 @@ from xgboost import XGBClassifier
 
 from src.service_ia.training.utility_training.fit_ensemble_classifier import FitUtilityEnsembleClassifier
 from src.service_ia.training.utility_training.fit_search_best_model import FitUtilitySearchBestModel
-from src.service_ia.training.under_over.inconsistent.fit.filter_service import FilterService
+from src.service_ia.training.under_over.service.filter_uo_service import FilterUOService
 
 
 def fit_process_voting():
     """
     Con Voting che accumula i modelli e restituisce il migliore
     """
-    method='isotonic'  # 'sigmoid'  # 'isotonic'
+    method = 'isotonic'  # 'sigmoid'  # 'isotonic'
     random_forest = CalibratedClassifierCV(RandomForestClassifier(
         **{'bootstrap': False, 'max_depth': None, 'max_features': 'log2', 'min_samples_leaf': 1,
            'min_samples_split': 5}), method=method)
@@ -37,18 +37,19 @@ def fit_process_voting():
                                       method=method)
     scv = CalibratedClassifierCV(SVC(C=np.float64(0.01), gamma=1.0, probability=True, random_state=42),
                                  method=method)
-    decision = DecisionTreeClassifier()
 
     estimators = [('rf', random_forest), ('lg', logistic), ('svc', scv)]
 
     fit_ensemble_hard = FitUtilityEnsembleClassifier(X=X, y=y, cross_save='cross_save',
                                                      with_smote=with_smote, with_scaler=with_scaler,
-                                                     filename=f'{t}_{e}_hard_voting_calibrated_{method}', save_pkl=save_pkl)
-    #fit_ensemble_hard.fit_voting(estimators=estimators, voting_hs='hard', threshold=threshold, des=des)
+                                                     filename=f'{t}_{e}_hard_voting_calibrated_{method}',  # TODO cal.
+                                                     save_pkl=save_pkl)
+    fit_ensemble_hard.fit_voting(estimators=estimators, voting_hs='hard', threshold=threshold, des=des)
 
     fit_ensemble_soft = FitUtilityEnsembleClassifier(X=X, y=y, cross_save='cross_save',
                                                      with_smote=with_smote, with_scaler=with_scaler,
-                                                     filename=f'{t}_{e}_soft_voting_calibrated_{method}', save_pkl=save_pkl)
+                                                     filename=f'{t}_{e}_soft_voting_calibrated_{method}',  # TODO cal.
+                                                     save_pkl=save_pkl)
     fit_ensemble_soft.fit_voting(estimators=estimators, voting_hs='soft', threshold=threshold, des=des)
 
 
@@ -107,8 +108,8 @@ def fit_random_():
         params = {'bootstrap': False, 'max_depth': None, 'max_features': 'log2', 'min_samples_leaf': 1,
                   'min_samples_split': 5}
     elif e == 'under_over_2_5':
-        params = {'bootstrap': True, 'max_depth': 10, 'max_features': 'log2', 'min_samples_leaf': 4,
-                  'min_samples_split': 2}
+        params = {'bootstrap': True, 'max_depth': 10, 'max_features': 'sqrt',
+                  'min_samples_leaf': 2, 'n_estimators': 400, 'min_samples_split': 5}
     else:  # under_over_3_5
         params = None
 
@@ -120,7 +121,7 @@ def fit_random_():
                                calibrated=True)
 
     random = FitUtilityEnsembleClassifier(X, y, cross_save='cross_save',
-                                          save_pkl=save_pkl, filename=f'{t}_{e}_random',
+                                          save_pkl=save_pkl, filename=f'{t}_{e}_random_2',
                                           with_smote=with_smote, with_scaler=False)
     random.fit_random_(oob=False, des=f'{des}/stat={list_stats}/oob=False', override_params=params, calibrated=True)
 
@@ -342,8 +343,7 @@ def fit_stacking_classifier(passthrough=True, stack_method='predict_proba'):
 def search_best_model(estimator):
     search = FitUtilitySearchBestModel(X=X, y=y, name=estimator,
                                        best_cross_save='best_cross_save',
-                                       with_smote=with_smote, with_scaler=with_scaler,
-                                       save_pkl=save_pkl, filename=filename,
+                                       with_smote=with_smote, with_scaler=with_scaler, filename=filename,
                                        keys=keys)
 
     # search.fit_grid_search(des=des)
@@ -353,24 +353,24 @@ def search_best_model(estimator):
 
 
 # Params base
-events = ['under_over_1_5']
+events = ['under_over_2_5']
 ts = ['mean']
 list_stats = ['mean_statistics']
 threshold = None
-with_smote = True
+with_smote = False
 with_scaler = True
 save_pkl = True
 
-is_grid = False
+is_grid = True
 estimators_grid = [
-    # 'random','svc','lg','decision','nei',
-    # 'lgbn', 'xgb', 'gb', 'ada'
+    # 'random', 'svc', 'lg', 'decision', 'nei',
+    'lgbn', 'xgb', 'gb', 'ada'
 ]
 
 for e in events:
     for t in ts:
-        process_uo = FilterService(event=e, predict=False, list_stats=list_stats)
-        X, y, keys = process_uo.split_dataset(type_calculation=t)
+        process_uo = FilterUOService(event=e, predict=False, list_stats=list_stats)
+        X, y, keys = process_uo.split_dataset_single_event(type_calculation=t)
         des = f't={t}/event={e}/stat={list_stats}/smote={with_smote}/scaler={with_scaler}'
         if is_grid:
             for est in estimators_grid:
@@ -382,9 +382,9 @@ for e in events:
             # fit_xgb()
             # fit_gradient_boosting()
             # fit_adaboost()
-            # fit_random_()
+            fit_random_()
             # fit_process_bagging_pasting()
-            fit_process_voting()
+            # fit_process_voting()
 
 # save_load = SaveLoad(filename='best_mean_under_over_2_5.pkl')
 # estimator = save_load.load_model()

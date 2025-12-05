@@ -97,3 +97,22 @@ SELECT *
 FROM public.statistics s
 WHERE (s.generic_statistics->>'expected_goals') IS NOT NULL
   AND (s.generic_statistics->>'expected_goals')::numeric > 0;
+
+  -- Controllare dentro i Json
+SELECT *
+FROM public.match m
+WHERE (
+  (json_typeof(m.mean_statistics) = 'object'
+   AND (m.mean_statistics->>'mean_expected_goals')::numeric > 0)
+  OR
+  (json_typeof(m.mean_statistics) = 'array'
+   AND EXISTS (
+     SELECT 1
+     FROM json_array_elements(m.mean_statistics) AS elem
+     WHERE (elem->>'mean_expected_goals')::numeric > 0
+   ))
+)
+ORDER BY m.date_match ASC;
+
+
+

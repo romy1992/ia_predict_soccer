@@ -2,7 +2,7 @@ import pandas as pd
 from sklearn.utils.validation import check_is_fitted
 
 from src.service_ia.training.utility_training.save_load import SaveLoad
-from src.service_ia.training.under_over.inconsistent.fit.filter_service import FilterService
+from src.service_ia.training.under_over.service.filter_uo_service import FilterUOService
 
 
 class PredictUO:
@@ -25,8 +25,8 @@ filters = {
     'status': ['NS'],
     'mean_statistics': "not None",
     'season': [2025]}
-process_report_uo = FilterService(event='under_over_1_5', predict=True, filters=filters, list_stats=['mean_statistics'])
-id_fixtures, features = process_report_uo.split_dataset(type_calculation='mean')
+process_report_uo = FilterUOService(event='under_over_1_5', predict=True, filters=filters, list_stats=['mean_statistics'])
+id_fixtures, features = process_report_uo.split_dataset_single_event(type_calculation='mean')
 
 uo = PredictUO(model=model_load, X=features)
 match_teams_df = pd.DataFrame(process_report_uo.get_match_teams(), columns=['id_fixture', 'home_team', 'away_team'])

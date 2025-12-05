@@ -1,4 +1,5 @@
 import logging
+
 from sqlalchemy import or_
 
 from src.repository.base.repository_db import SessionLocal
@@ -110,14 +111,16 @@ class CrudRepository:
                 session.rollback()
                 raise
 
-    def search_filter(self, filters):
+    def search_filter(self, filters: dict):
         """
         Ricerca valori passati in filters che creerò delle condizioni da applicare:
-        - Per ricerche con 'not None' -> {'id': "not None"} (valore in stringa)
-        - Per ricerche con 'None' -> {'id': "None"} (valore in stringa)
-        - Per ricerche di uguaglianza -> {'name': "pippo"}
-        - Per ricerche con OR -> {"OR": [("id_team_home", 135), ("id_team_away", 135)]}
-        - Per ricerche con IN -> {'id':[123,145]} -> il valore può essere una lista o tuple
+        :param filters: dizionario con i filtri da applicare
+            - Per ricerche con 'not None' -> {'id': "not None"} (valore in stringa)
+            - Per ricerche con 'None' -> {'id': "None"} (valore in stringa)
+            - Per ricerche di uguaglianza -> {'name': "pippo"}
+            - Per ricerche con OR -> {"OR": [("id_team_home", 135), ("id_team_away", 135)]}
+            - Per ricerche con IN -> {'id':[123,145]} -> il valore può essere una lista o tuple
+            - Per ricerche con >, <, >=, <=, = -> {'score': '> 10'}
         :return: array di Matches
         """
 
@@ -143,6 +146,27 @@ class CrudRepository:
                         conditions.append(col is not None)
                     elif v == 'None':
                         conditions.append(col is None)
+                    # TODO: Rivedere questa parte per gestire gli operatori di confronto
+                    # elif isinstance(v, str) and '>=' in v:
+                    #     v = v.replace('>=', '').strip()
+                    #     num_val = float(v) if '.' in v else int(v)
+                    #     conditions.append(col >= num_val)
+                    # elif isinstance(v, str) and '<=' in v:
+                    #     v = v.replace('<=', '').strip()
+                    #     num_val = float(v) if '.' in v else int(v)
+                    #     conditions.append(col <= num_val)
+                    # elif isinstance(v, str) and '>' in v:
+                    #     v = v.replace('>', '').strip()
+                    #     num_val = float(v) if '.' in v else int(v)
+                    #     conditions.append(col > num_val)
+                    # elif isinstance(v, str) and '<' in v:
+                    #     v = v.replace('<', '').strip()
+                    #     num_val = float(v) if '.' in v else int(v)
+                    #     conditions.append(col < num_val)
+                    # elif isinstance(v, str) and '=' in v:
+                    #     v = v.replace('=', '').strip()
+                    #     num_val = float(v) if '.' in v else int(v)
+                    #     conditions.append(col == num_val)
                     else:
                         conditions.append(col == v)
 

@@ -430,9 +430,9 @@ class FitUtility(SaveLoad):
         report = classification_report(self.y, y_pred_labels, output_dict=True, zero_division=0)
 
         # 6) Curve PR/ROC solo se binario e abbiamo punteggi continui
-        precisions = recalls = pr_thresholds = None
-        fpr = tpr = roc_thresholds = None
-        ap = roc_auc = None
+        precisions, recalls, pr_thresholds = None, None, None
+        fpr, tpr, roc_thresholds = None, None, None
+        ap, roc_auc = None, None
 
         if is_binary and scores_continuous is not None:
             try:
@@ -527,9 +527,15 @@ class FitUtility(SaveLoad):
         best_params = search.best_params_
         best_scorer = search.best_score_
         scorer = search.scorer_
-        logging.info(search.cv_results_)  # Restituisce tutti i risultati
+        cv_results = search.cv_results_
+        logging.info(cv_results)  # Restituisce tutti i risultati
         logging.info(f'End cross_best_search {search}')
 
+        # Estrai le metriche principali per ogni split/fold
+        results_summary = {
+            key: cv_results[key][search.best_index_]
+            for key in cv_results if key.startswith('mean_test') or key.startswith('std_test')
+        }
         return {
             'data': datetime.date.today(),
             'path_save_model': self.filename,
@@ -539,6 +545,7 @@ class FitUtility(SaveLoad):
             'best_params': str(best_params),
             'best_scorer': str(best_scorer),
             'scorer': str(scorer),
+            'cv_results_summary': results_summary,
         }
 
     def build_estimator(self, estimator, name_estimator='model'):

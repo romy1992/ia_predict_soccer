@@ -37,10 +37,6 @@ class FitUtilityEnsembleClassifier(FitUtility):
           Con Voting che accumula i modelli e restituisce il migliore
         """
         model = VotingClassifier(estimators=estimators, voting=voting_hs, verbose=2, n_jobs=-1)
-
-        self.add_calibrated(model, **kwargs)
-
-
         # Qui la pipeline con SMOTE e Scaler (solo se richiesto)
         estimator = self.build_estimator(estimator=model)
 

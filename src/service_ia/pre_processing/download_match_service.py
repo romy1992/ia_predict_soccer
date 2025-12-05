@@ -416,7 +416,7 @@ def calculate_mean(with_season: int = None, force_mean: bool = False, teams: lis
     # Ricerca per id_fixture valorizzati
     filters = {
         'id_fixture': "not None",
-        'current_league': 138
+        # 'current_league': 138
     }
     if with_season:
         filters.update({'season': with_season})
@@ -525,23 +525,42 @@ def reload_fixture():
     :return:
     """
     filters = {
-        'id_fixture': "not None",
-        'status': ['NS'],
-        'current_league': [2, 3, 848],
-        'season': [2025]
+        'statistics': "not None",
+        # 'id_fixture': "not None",
+        # 'status': ['NS'],
+        # 'current_league': [2, 3, 848],
+        'season': [2020, 2021, 2022, 2023, 2024, 2025]
     }
     all_match = repo_match.search_filter(filters=filters)
-    for match in all_match:
-        id_fix = match.id_fixture
-        fixture = base_api_statistics(path='fixtures', params={'id': id_fix})
-        if len(fixture) > 0:
-            fixture = fixture[0]
-            dict_match = map_base_match(match=match, id_fix=id_fix, fixture=fixture,
-                                        league=match.current_league, season=match.season)
-            new_match = Match(**dict_match)
-            repo_match.save(new_match)
+    for index, match in enumerate(all_match):
+        logging.info(f'<<< Started Match {index}/{len(all_match)} id_fixture {match.id_fixture} >>>')
+        manual = False
+        for stat in match.statistics:
+            shots = stat.shots
+            if ((shots.get('Total Shots') is None or shots.get('Total Shots') == 0) and (
+                    shots.get('Shots on Goal') > 0 or shots.get('Shots off Goal') > 0)
+                    and shots.get('manual_calculate') is not True):
+                s_o_goal = shots.get('Shots on Goal') or 0
+                s_of_goal = shots.get('Shots off Goal') or 0
+                b_shots = shots.get('Blocked Shots') or 0
+                total_shots = s_o_goal + s_of_goal + b_shots
+                shots['Total Shots'] = total_shots
+                manual = True
+                shots['manual_calculate'] = manual
+        if manual:
+            repo_match.save(match)
+        logging.info(f'<<< Ended Match {index}/{len(all_match)} and save id_fixture {match.id_fixture} >>>')
+        # id_fix = match.id_fixture
+        # fixture = base_api_statistics(path='fixtures', params={'id': id_fix})
+        # if len(fixture) > 0:
+        #     fixture = fixture[0]
+        #     dict_match = map_base_match(match=match, id_fix=id_fix, fixture=fixture,
+        #                                 league=match.current_league, season=match.season)
+        #     new_match = Match(**dict_match)
+        #     repo_match.save(new_match)
 
-# download_import_matches(is_next=False)
+
+download_import_matches(is_next=False)
 # re_processor_error()
 # reload_fixture()
 calculate_mean(force_mean=True, with_season=2025)

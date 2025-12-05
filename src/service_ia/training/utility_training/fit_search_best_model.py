@@ -6,7 +6,7 @@ from lightgbm import LGBMClassifier
 from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier, AdaBoostClassifier
 from sklearn.experimental import enable_halving_search_cv as enable  # obbligatorio
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import make_scorer, f1_score
+from sklearn.metrics import make_scorer, f1_score, accuracy_score, precision_score, recall_score, roc_auc_score
 from sklearn.model_selection import (GridSearchCV, StratifiedKFold, RandomizedSearchCV,
                                      HalvingGridSearchCV, HalvingRandomSearchCV)
 from sklearn.neighbors import KNeighborsClassifier
@@ -157,6 +157,13 @@ class FitUtilitySearchBestModel(FitUtility):
         self.resource = self.check_resource_halving()
         self.cv = kwargs.get('cv') or StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
         self.score = kwargs.get('score') or make_scorer(f1_score, average='weighted', zero_division=1)
+        self.multi_scorers = {
+            'f1_score': make_scorer(f1_score, average='weighted'),
+            'accuracy_score': make_scorer(accuracy_score),
+            'precision_score': make_scorer(precision_score, average='weighted', zero_division=1),
+            'recall_score': make_scorer(recall_score, average='weighted', zero_division=1),
+            'roc_auc_score': make_scorer(roc_auc_score, needs_proba=True, multi_class='ovr')
+        }
         self.max_resources = kwargs.get('max_resources') or len(self.X)
         self.min_resources = kwargs.get('min_resources') or max(50, int(len(
             self.X) * 0.1))  # almeno 10% del dataset o 50 righe
@@ -381,8 +388,10 @@ class FitUtilitySearchBestModel(FitUtility):
         """
         if isinstance(self.estimator, (RandomForestClassifier, LGBMClassifier)):
             self.estimator.set_params(warm_start=True)  # obbligatorio per RandomForest
-            param_random.pop('n_estimators')
-            param_lgbm.pop('n_estimators')
+            if hasattr(param_random, 'n_estimators'):
+                param_random.pop('n_estimators')
+            if hasattr(param_lgbm, 'n_estimators'):
+                param_lgbm.pop('n_estimators')
             return 'n_estimators'
         elif isinstance(self.estimator, (LogisticRegression,)):
             param_lg.pop('max_iter')
