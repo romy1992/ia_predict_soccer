@@ -2,7 +2,7 @@
 /alembic/versions/__pycache__/
 
 /tests/service/__pycache__/
-
+/.idea
 /src/service_ia/model/__pycache__/
 /src/repository/base/__pycache__/
 /src/repository/__pycache__/
