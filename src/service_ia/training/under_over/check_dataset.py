@@ -63,7 +63,7 @@ class CheckDataset:
             "J_train": j_train,
             "J_cv": j_cv,
             'train': (X_train, y_pred_train),
-            'cv': (X_cv, y_pred_cv), 
+            'cv': (X_cv, y_pred_cv),
         }
 
 
