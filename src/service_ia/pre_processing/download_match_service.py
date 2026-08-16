@@ -34,7 +34,7 @@ logging.basicConfig(level=logging.DEBUG)
 203 (Turchia)
 """
 LEAGUES = [135, 136, 137, 138, 942, 943, 140, 144, 78, 61, 39, 94, 203, 88, 492, 2, 3, 848]
-SEASONS = [2025]
+SEASONS = [2026]
 repo_match = MatchRepository()
 
 BASE_DIR = os.path.dirname(__file__)
@@ -242,17 +242,17 @@ def download_import_matches(seasons=None, leagues=None, is_next=False, current_l
         +2: DopoDomani
         :return:
         """
-        # Formato richiesto è esempio:"2025-02-12"
+        # Formato richiesto è esempio:"2026-02-12"
         format_data = '%Y-%m-%d'
         current_data = datetime.now()
         # Scegliere da che giorno indietro si vuole andare per recuperare le partite
-        from_date = (current_data - timedelta(days=1)).strftime(format_data)
+        from_date = (current_data - timedelta(days=7)).strftime(format_data)
         # Fino a ...
         to_date = (current_data - timedelta(days=0)).strftime(format_data)
 
         # Scegliere i giorni indietro che si vuole andare per recuperare le partite (ESEGUIRA' solo un giorno)
         date = (current_data - timedelta(days=0)).strftime(format_data)
-        date_manual = '2025-08-16'
+        date_manual = '2026-08-16'
         return from_date, to_date, date, date_manual
 
     from_date, to_date, date, date_manual = calculate_date()
@@ -363,7 +363,7 @@ def download_import_matches(seasons=None, leagues=None, is_next=False, current_l
                 calculate_mean(with_season=season)
 
     except Exception as e:
-        logging.error('Errore durante il download : ', str(e))
+        logging.error('Errore durante il download : %s', e)
     finally:
         try:
             # Salva tutto in maniera massiva SE NON ESISTE
@@ -563,4 +563,4 @@ def reload_fixture():
 download_import_matches(is_next=False)
 # re_processor_error()
 # reload_fixture()
-calculate_mean(force_mean=True, with_season=2025)
+#calculate_mean(force_mean=True, with_season=2025)
