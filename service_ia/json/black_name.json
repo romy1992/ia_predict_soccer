@@ -1,0 +1,38 @@
+[
+  {
+    "original": "reggina",
+    "replace": "reggina reggio"
+  },
+  {
+    "original": "reggiana",
+    "replace": "reggiana emilia"
+  },
+  {
+    "original": "chievo verona",
+    "replace": "chievo"
+  },
+  {
+    "original": "hellas verona fc",
+    "replace": "verona"
+  },
+  {
+    "original": "feralpisalo",
+    "replace": "lino turina"
+  },
+  {
+    "original": "pisa",
+    "replace": "pisa toscana"
+  },
+  {
+    "original": "athletic",
+    "replace": "athletic bilbao"
+  },
+  {
+    "original": "aves",
+    "replace": "vila das aves"
+  },
+  {
+    "original": "alaves",
+    "replace": "vitoria gasteiz"
+  }
+]
