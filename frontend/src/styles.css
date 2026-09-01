@@ -223,6 +223,16 @@ button {
   padding: 10px;
 }
 
+.live-clickable {
+  cursor: pointer;
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+
+.live-clickable:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 7px 14px rgba(40, 60, 100, 0.12);
+}
+
 .live-head {
   display: flex;
   justify-content: space-between;
@@ -299,6 +309,10 @@ td {
   border-bottom: 1px solid #e9eef8;
   vertical-align: top;
   font-size: 13px;
+}
+
+tr.row-selected {
+  background: #f2f6ff;
 }
 
 th {
@@ -417,6 +431,149 @@ th {
   font-size: 12px;
 }
 
+.detail-panel {
+  margin-top: 16px;
+}
+
+.detail-head-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+  color: #57698e;
+}
+
+.detail-head-meta span {
+  background: #f4f7ff;
+  border: 1px solid #dce6fb;
+  border-radius: 999px;
+  padding: 4px 9px;
+  font-size: 12px;
+}
+
+.detail-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.detail-block {
+  border: 1px solid #e2e9f8;
+  border-radius: 12px;
+  padding: 10px;
+  margin-bottom: 10px;
+}
+
+.detail-block h4 {
+  margin: 0 0 8px;
+}
+
+.decision-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px;
+}
+
+.decision-card {
+  border: 1px solid #e3ebfb;
+  border-radius: 10px;
+  padding: 8px;
+  background: #fbfdff;
+}
+
+.decision-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.decision-pick {
+  margin: 6px 0;
+  font-weight: 700;
+}
+
+.decision-metrics {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 12px;
+  color: #4a5f86;
+}
+
+.value-badge {
+  border-radius: 999px;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.value-play {
+  background: #daf6e1;
+  color: #0d6630;
+}
+
+.value-borderline {
+  background: #fff3d8;
+  color: #8d5d00;
+}
+
+.value-no-bet {
+  background: #ffe6e6;
+  color: #9b1414;
+}
+
+.timeline-list {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  max-height: 360px;
+  overflow: auto;
+}
+
+.timeline-item {
+  display: grid;
+  grid-template-columns: 72px 1fr;
+  gap: 8px;
+  border-bottom: 1px dashed #dce6fb;
+  padding-bottom: 6px;
+}
+
+.timeline-minute {
+  color: #0f4fb2;
+  font-weight: 700;
+}
+
+.timeline-item p {
+  margin: 2px 0;
+}
+
+.timeline-item small {
+  color: #5f749d;
+}
+
+.odds-market-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 8px;
+}
+
+.odds-market-card {
+  border: 1px solid #e2e9f8;
+  border-radius: 10px;
+  padding: 8px;
+}
+
+.odds-market-card h5 {
+  margin: 0 0 8px;
+  font-size: 14px;
+}
+
+.muted {
+  color: #657aa0;
+  font-size: 12px;
+}
+
 @media (max-width: 1180px) {
   .layout {
     grid-template-columns: 1fr;
@@ -431,6 +588,11 @@ th {
     grid-template-columns: 1fr;
     width: 100%;
   }
+
+  .detail-grid {
+    grid-template-columns: 1fr;
+  }
 }
+
 
 

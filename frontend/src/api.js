@@ -73,6 +73,15 @@ export function getDashboardDay({ targetDate, limit = 300, withPredictions = tru
   return request(`/dashboard/day?${params.toString()}`);
 }
 
+export function getDashboardMatchDetail(fixtureId, { withPredictions = true, markets } = {}) {
+  const params = new URLSearchParams();
+  params.set("with_predictions", String(withPredictions));
+  if (markets && markets.length > 0) {
+    params.set("markets", markets.join(","));
+  }
+  return request(`/dashboard/match/${fixtureId}?${params.toString()}`);
+}
+
 export function triggerImport(asyncRun = true) {
   return request("/jobs/import", {
     method: "POST",
@@ -110,5 +119,6 @@ export function getPredictions(limit = 50) {
 }
 
 export { API_BASE_URL };
+
 
 
