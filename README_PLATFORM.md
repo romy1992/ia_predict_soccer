@@ -107,10 +107,16 @@ Endpoint dashboard dedicati alla UI React:
 - `GET /dashboard/live?target_date=YYYY-MM-DD&limit=30`
 - `GET /dashboard/day?target_date=YYYY-MM-DD&phase=all|to_play|live|finished&search=term`
 
+Nota dati dashboard:
+- live e calendario giorno arrivano da API Sports (con cache di 60 secondi),
+- se la fixture esiste anche nel DB locale e ci sono modelli disponibili, vengono aggiunte le previsioni,
+- in assenza di feature/modelli, la partita e' comunque visibile ma senza prediction.
+
 ## Smoke test rapido API
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/smoke_api.ps1
 ```
+
 
 
 
