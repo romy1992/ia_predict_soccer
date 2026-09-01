@@ -102,10 +102,16 @@ Le predizioni vengono loggate in:
 Le metriche/versioni modello sono consultabili in:
 - `GET /metrics/{market}`
 
+Endpoint dashboard dedicati alla UI React:
+- `GET /dashboard/overview?target_date=YYYY-MM-DD`
+- `GET /dashboard/live?target_date=YYYY-MM-DD&limit=30`
+- `GET /dashboard/day?target_date=YYYY-MM-DD&phase=all|to_play|live|finished&search=term`
+
 ## Smoke test rapido API
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/smoke_api.ps1
 ```
+
 
 
 

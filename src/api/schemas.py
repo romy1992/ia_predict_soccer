@@ -53,3 +53,29 @@ class JobsHistoryResponse(BaseModel):
 class PredictionLogResponse(BaseModel):
     rows: list[dict[str, Any]]
 
+
+class DashboardDayResponse(BaseModel):
+    date: str
+    total: int
+    returned: int
+    model_markets: list[str]
+    rows: list[dict[str, Any]]
+
+
+class DashboardLiveResponse(BaseModel):
+    date: str
+    total: int
+    returned: int
+    model_markets: list[str]
+    rows: list[dict[str, Any]]
+
+
+class DashboardOverviewResponse(BaseModel):
+    date: str
+    generated_at: str
+    counts: dict[str, Any]
+    model_markets: list[str]
+    live_preview: list[dict[str, Any]]
+    day_highlights: list[dict[str, Any]]
+
+
