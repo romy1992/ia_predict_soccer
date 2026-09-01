@@ -8,7 +8,8 @@ from dotenv import load_dotenv
 logging.basicConfig(level=logging.DEBUG)
 
 # LOAD PROPERTIES
-load_dotenv(dotenv_path='../../../properties/config.env')
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+load_dotenv(dotenv_path=os.path.join(PROJECT_ROOT, "properties", "config.env"))
 API_SPORTS_KEY = os.environ.get('API_SPORTS_KEY')
 API_SPORTS_BASE = os.environ.get('API_SPORTS_BASE')
 API_ODDS_KEY = os.environ.get('API_ODDS_KEY')

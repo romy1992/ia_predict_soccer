@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Soccer ML Dashboard</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 16px; background: #f6f7fb; color: #1d2330; }
+    h1 { margin-bottom: 8px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 12px; }
+    .card { background: white; border-radius: 10px; padding: 14px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+    .row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
+    input, select, button { padding: 7px; border-radius: 6px; border: 1px solid #c6ccda; }
+    button { background: #3455db; color: white; cursor: pointer; border: none; }
+    button:hover { background: #2b46b4; }
+    pre { white-space: pre-wrap; font-size: 12px; background: #0f1524; color: #d9e3ff; padding: 8px; border-radius: 6px; max-height: 280px; overflow: auto; }
+    .small { font-size: 12px; color: #4c5670; }
+  </style>
+</head>
+<body>
+  <h1>Soccer ML Dashboard</h1>
+  <div class="small">Controllo mercati, job manuali, metriche e predizioni.</div>
+
+  <div class="grid" style="margin-top: 14px;">
+    <div class="card">
+      <h3>Configurazione API</h3>
+      <div class="row">
+        <label for="apiBase">Base URL</label>
+        <input id="apiBase" value="http://127.0.0.1:8000" style="width: 220px;" />
+        <button onclick="loadHealth()">Health</button>
+      </div>
+      <pre id="healthOut">In attesa...</pre>
+    </div>
+
+    <div class="card">
+      <h3>Job Manuali</h3>
+      <div class="row">
+        <button onclick="runImport()">Run Import</button>
+        <button onclick="runRetrain()">Run Retrain</button>
+      </div>
+      <div class="row">
+        <label><input type="checkbox" id="asyncRun" checked /> Async</label>
+      </div>
+      <pre id="jobsOut">In attesa...</pre>
+    </div>
+
+    <div class="card">
+      <h3>Predizione</h3>
+      <div class="row">
+        <label for="marketSel">Mercato</label>
+        <select id="marketSel"></select>
+      </div>
+      <div class="row">
+        <label for="fixtureId">Fixture ID</label>
+        <input id="fixtureId" type="number" value="1326590" />
+        <button onclick="runPredict()">Predict</button>
+      </div>
+      <pre id="predictOut">In attesa...</pre>
+    </div>
+
+    <div class="card">
+      <h3>Metriche mercato</h3>
+      <div class="row">
+        <label for="metricMarket">Mercato</label>
+        <select id="metricMarket"></select>
+        <button onclick="loadMetrics()">Load</button>
+      </div>
+      <pre id="metricsOut">In attesa...</pre>
+    </div>
+
+    <div class="card">
+      <h3>Storico Job</h3>
+      <div class="row">
+        <button onclick="loadJobHistory()">Aggiorna</button>
+      </div>
+      <pre id="jobHistoryOut">In attesa...</pre>
+    </div>
+
+    <div class="card">
+      <h3>Storico Predizioni</h3>
+      <div class="row">
+        <button onclick="loadPredictionLog()">Aggiorna</button>
+      </div>
+      <pre id="predLogOut">In attesa...</pre>
+    </div>
+  </div>
+
+  <script>
+    function baseUrl() {
+      return document.getElementById('apiBase').value.replace(/\/$/, '');
+    }
+
+    async function getJson(path, options) {
+      const res = await fetch(baseUrl() + path, options);
+      const txt = await res.text();
+      let data;
+      try { data = JSON.parse(txt); } catch { data = txt; }
+      if (!res.ok) {
+        throw new Error(typeof data === 'string' ? data : JSON.stringify(data));
+      }
+      return data;
+    }
+
+    function print(id, data) {
+      document.getElementById(id).textContent = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
+    }
+
+    async function loadHealth() {
+      try {
+        const data = await getJson('/health');
+        print('healthOut', data);
+      } catch (err) {
+        print('healthOut', String(err));
+      }
+    }
+
+    async function loadMarkets() {
+      try {
+        const data = await getJson('/markets');
+        const selA = document.getElementById('marketSel');
+        const selB = document.getElementById('metricMarket');
+        selA.innerHTML = '';
+        selB.innerHTML = '';
+        for (const market of data.markets || []) {
+          const a = document.createElement('option');
+          a.value = market;
+          a.textContent = market;
+          selA.appendChild(a);
+
+          const b = document.createElement('option');
+          b.value = market;
+          b.textContent = market;
+          selB.appendChild(b);
+        }
+      } catch (err) {
+        print('healthOut', 'Errore markets: ' + String(err));
+      }
+    }
+
+    async function runImport() {
+      try {
+        const data = await getJson('/jobs/import', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ async_run: document.getElementById('asyncRun').checked })
+        });
+        print('jobsOut', data);
+      } catch (err) {
+        print('jobsOut', String(err));
+      }
+    }
+
+    async function runRetrain() {
+      try {
+        const data = await getJson('/jobs/retrain', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ async_run: document.getElementById('asyncRun').checked })
+        });
+        print('jobsOut', data);
+      } catch (err) {
+        print('jobsOut', String(err));
+      }
+    }
+
+    async function runPredict() {
+      try {
+        const market = document.getElementById('marketSel').value;
+        const fixtureId = Number(document.getElementById('fixtureId').value);
+        const data = await getJson('/predict/' + market, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ fixture_id: fixtureId })
+        });
+        print('predictOut', data);
+      } catch (err) {
+        print('predictOut', String(err));
+      }
+    }
+
+    async function loadMetrics() {
+      try {
+        const market = document.getElementById('metricMarket').value;
+        const data = await getJson('/metrics/' + market + '?limit=20');
+        print('metricsOut', data);
+      } catch (err) {
+        print('metricsOut', String(err));
+      }
+    }
+
+    async function loadJobHistory() {
+      try {
+        const data = await getJson('/jobs/history?limit=50');
+        print('jobHistoryOut', data);
+      } catch (err) {
+        print('jobHistoryOut', String(err));
+      }
+    }
+
+    async function loadPredictionLog() {
+      try {
+        const data = await getJson('/predictions/log?limit=50');
+        print('predLogOut', data);
+      } catch (err) {
+        print('predLogOut', String(err));
+      }
+    }
+
+    loadHealth();
+    loadMarkets();
+    loadJobHistory();
+    loadPredictionLog();
+  </script>
+</body>
+</html>
+

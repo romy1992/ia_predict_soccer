@@ -143,9 +143,9 @@ class CrudRepository:
                     conditions.append(col.in_(v))
                 else:
                     if v == 'not None':
-                        conditions.append(col is not None)
+                        conditions.append(col.is_not(None))
                     elif v == 'None':
-                        conditions.append(col is None)
+                        conditions.append(col.is_(None))
                     # TODO: Rivedere questa parte per gestire gli operatori di confronto
                     # elif isinstance(v, str) and '>=' in v:
                     #     v = v.replace('>=', '').strip()

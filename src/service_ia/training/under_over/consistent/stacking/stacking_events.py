@@ -214,10 +214,11 @@ def search_best_models_stat(self):
 ############################# STACKING MEAN STAT ############################
 
 
-stacking_event = StackingEvents()
-# mean_odds, mean_stat = stacking_event.generate_datasets()
-# stacking_event.stacking_mean_stat()
-stacking_event.stacking_odds()
+if __name__ == "__main__":
+    stacking_event = StackingEvents()
+    # mean_odds, mean_stat = stacking_event.generate_datasets()
+    # stacking_event.stacking_mean_stat()
+    stacking_event.stacking_odds()
 
 # SMOTE meno aggressivo: non porta la minoranza al 50%, ma al 60–70% della maggioranza
 # _SMOTE_LIGHT = SMOTE(

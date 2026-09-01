@@ -1,5 +1,7 @@
 # Guida pratica: Parametri di bilanciamento classi con e senza SMOTE
 
+Per la guida operativa completa della nuova piattaforma (API, dashboard, scheduler, training multi-mercato) vedi `README_PLATFORM.md`.
+
 | Modello                                             | Parametri utili **SENZA SMOTE** (dataset sbilanciato) | Parametri da **NON usare CON SMOTE** (già bilanciato) | Note pratiche                                                                 |
 |-----------------------------------------------------|-------------------------------------------------------|-------------------------------------------------------|-------------------------------------------------------------------------------|
 | **LogisticRegression**                              | `class_weight='balanced'`                             | `class_weight`                                        | Con SMOTE già riequilibrato, meglio lasciare neutro.                          |
