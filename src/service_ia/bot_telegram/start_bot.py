@@ -1,13 +1,16 @@
 import os
 from datetime import datetime, timedelta
 
+import requests
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 from dotenv import load_dotenv
 import stripe
 
-load_dotenv(dotenv_path='../../../properties/config.env')
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."))
+load_dotenv(dotenv_path=os.path.join(PROJECT_ROOT, "properties", "config.env"))
 TOKEN = os.environ.get("TELEGRAM_TOKEN")
+API_BASE_LOCAL = os.environ.get("API_BASE_LOCAL", "http://127.0.0.1:8000")
 stripe.api_key = os.environ.get("STRIPE_SECRET_KEY")
 WEEKLY_LIMIT_EUR = 50
 user_payments = {
@@ -87,8 +90,38 @@ async def paga(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(e)
 
 
+async def predici(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        if len(context.args) == 0:
+            await update.message.reply_text("Uso: /predici <fixture_id> [market]")
+            return
+
+        fixture_id = int(context.args[0])
+        market = context.args[1] if len(context.args) > 1 else "under_over_2_5"
+
+        response = requests.post(
+            f"{API_BASE_LOCAL}/predict/{market}",
+            json={"fixture_id": fixture_id},
+            timeout=20,
+        )
+        if response.status_code >= 400:
+            await update.message.reply_text(f"Errore predizione: {response.text}")
+            return
+
+        payload = response.json()
+        await update.message.reply_text(
+            f"Predizione mercato {payload.get('market')}\n"
+            f"Fixture: {payload.get('fixture_id')}\n"
+            f"Esito: {payload.get('prediction')}\n"
+            f"Probabilita: {payload.get('probability')}"
+        )
+    except Exception as exc:
+        await update.message.reply_text(f"Errore /predici: {exc}")
+
+
 app = ApplicationBuilder().token(TOKEN).build()
 app.add_handler(CommandHandler("start", start))
 app.add_handler(CommandHandler("paga", paga))
+app.add_handler(CommandHandler("predici", predici))
 
 app.run_polling()

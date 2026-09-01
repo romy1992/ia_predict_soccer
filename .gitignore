@@ -1,3 +1,6 @@
+__pycache__/
+*.py[cod]
+
 /alembic/__pycache__/
 /alembic/versions/__pycache__/
 

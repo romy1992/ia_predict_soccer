@@ -175,8 +175,9 @@ def reload_statistics():
         print('Aggiornato')
 
 
-generate_statistics_dataset()
-# reload_statistics()
+if __name__ == "__main__":
+    generate_statistics_dataset()
+    # reload_statistics()
 
-# convert_csv_to_exel(name_history)
+    # convert_csv_to_exel(name_history)
 

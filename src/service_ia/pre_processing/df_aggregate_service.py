@@ -243,11 +243,12 @@ def refused_join_insert():
 #  L'ALTERNATIVA E CORRISPONDEZA PRINCIPALE..
 #  DA PROVARE SE I LORO ID SONO STATI DISABILITATI
 
-aggregate_ids_into_dataset(partial=True)
-# refused_join_insert()
+if __name__ == "__main__":
+    aggregate_ids_into_dataset(partial=True)
+    # refused_join_insert()
 
-# TODO questi convert sotto sono solo per comodità
-# convert_excel_to_csv('../dataset/statistics/dataset_statistics_history.xlsx')
-# convert_excel_to_csv('../dataset/odds/odds_dataset.xlsx')
-# convert_csv_to_exel(name_statistics_history)
-# convert_csv_to_exel(name_odds_history)
+    # TODO questi convert sotto sono solo per comodita
+    # convert_excel_to_csv('../dataset/statistics/dataset_statistics_history.xlsx')
+    # convert_excel_to_csv('../dataset/odds/odds_dataset.xlsx')
+    # convert_csv_to_exel(name_statistics_history)
+    # convert_csv_to_exel(name_odds_history)

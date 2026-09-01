@@ -14,6 +14,7 @@ from statistics import mean
 import pandas as pd
 
 from src.repository.match_repository import MatchRepository
+from src.service_ia.config.app_config import load_app_config
 from src.service_ia.mapper.statistic_mapper import get_attribute_statistics, form_last_5_tot
 from src.service_ia.model.match import Match, Statistics, Odds
 from src.service_ia.utility.request_api import base_api_statistics
@@ -33,8 +34,9 @@ logging.basicConfig(level=logging.DEBUG)
 61 (Francia) - 
 203 (Turchia)
 """
-LEAGUES = [135, 136, 137, 138, 942, 943, 140, 144, 78, 61, 39, 94, 203, 88, 492, 2, 3, 848]
-SEASONS = [2026]
+_APP_CONFIG = load_app_config()
+LEAGUES = _APP_CONFIG.leagues
+SEASONS = _APP_CONFIG.seasons
 repo_match = MatchRepository()
 
 BASE_DIR = os.path.dirname(__file__)
@@ -560,7 +562,8 @@ def reload_fixture():
         #     repo_match.save(new_match)
 
 
-download_import_matches(is_next=False)
-# re_processor_error()
-# reload_fixture()
-#calculate_mean(force_mean=True, with_season=2025)
+if __name__ == "__main__":
+    download_import_matches(is_next=False)
+    # re_processor_error()
+    # reload_fixture()
+    # calculate_mean(force_mean=True, with_season=2025)
