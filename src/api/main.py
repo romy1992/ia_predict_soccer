@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import date, datetime
 from typing import Any, Optional
 
 import joblib
@@ -9,7 +10,11 @@ import numpy as np
 from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
+from src.api.dashboard_service import DashboardService
 from src.api.schemas import (
+    DashboardDayResponse,
+    DashboardLiveResponse,
+    DashboardOverviewResponse,
     HealthResponse,
     JobImportRequest,
     JobResponse,
@@ -111,6 +116,62 @@ def markets() -> dict[str, list[str]]:
     # sorted for stable UI rendering
     values = sorted(FilterMarketService.SUPPORTED_MARKETS)
     return {"markets": values}
+
+
+def _parse_iso_date(value: Optional[str]) -> date:
+    if not value:
+        return date.today()
+    try:
+        return datetime.fromisoformat(value).date()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"Data non valida: {value}") from exc
+
+
+@app.get("/dashboard/overview", response_model=DashboardOverviewResponse)
+def dashboard_overview(target_date: Optional[str] = None) -> DashboardOverviewResponse:
+    service = DashboardService()
+    payload = service.get_overview(target_date=_parse_iso_date(target_date))
+    return DashboardOverviewResponse(**payload)
+
+
+@app.get("/dashboard/live", response_model=DashboardLiveResponse)
+def dashboard_live(
+    target_date: Optional[str] = None,
+    limit: int = 20,
+    with_predictions: bool = True,
+    markets: Optional[str] = None,
+) -> DashboardLiveResponse:
+    selected_markets = [item.strip() for item in markets.split(",")] if markets else None
+    service = DashboardService()
+    payload = service.get_live_matches(
+        target_date=_parse_iso_date(target_date),
+        limit=limit,
+        with_predictions=with_predictions,
+        markets=selected_markets,
+    )
+    return DashboardLiveResponse(**payload)
+
+
+@app.get("/dashboard/day", response_model=DashboardDayResponse)
+def dashboard_day(
+    target_date: Optional[str] = None,
+    limit: int = 300,
+    with_predictions: bool = True,
+    markets: Optional[str] = None,
+    phase: Optional[str] = None,
+    search: Optional[str] = None,
+) -> DashboardDayResponse:
+    selected_markets = [item.strip() for item in markets.split(",")] if markets else None
+    service = DashboardService()
+    payload = service.get_day_matches(
+        target_date=_parse_iso_date(target_date),
+        limit=limit,
+        with_predictions=with_predictions,
+        markets=selected_markets,
+        phase=phase,
+        search_text=search,
+    )
+    return DashboardDayResponse(**payload.__dict__)
 
 
 @app.post("/predict/{market}", response_model=PredictResponse)
@@ -221,5 +282,6 @@ def jobs_history(limit: int = 100, job_type: Optional[str] = None) -> JobsHistor
 def predictions_log(limit: int = 100, market: Optional[str] = None) -> PredictionLogResponse:
     rows = PredictionLogger().tail(limit=limit, market=market)
     return PredictionLogResponse(rows=rows)
+
 
 

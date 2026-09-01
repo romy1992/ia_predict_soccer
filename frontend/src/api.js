@@ -28,6 +28,51 @@ export function getMarkets() {
   return request("/markets");
 }
 
+export function getDashboardOverview(targetDate) {
+  const params = new URLSearchParams();
+  if (targetDate) {
+    params.set("target_date", targetDate);
+  }
+  const query = params.toString();
+  return request(`/dashboard/overview${query ? `?${query}` : ""}`);
+}
+
+export function getDashboardLive({ targetDate, limit = 20, withPredictions = true, markets } = {}) {
+  const params = new URLSearchParams();
+  if (targetDate) {
+    params.set("target_date", targetDate);
+  }
+  if (limit) {
+    params.set("limit", String(limit));
+  }
+  params.set("with_predictions", String(withPredictions));
+  if (markets && markets.length > 0) {
+    params.set("markets", markets.join(","));
+  }
+  return request(`/dashboard/live?${params.toString()}`);
+}
+
+export function getDashboardDay({ targetDate, limit = 300, withPredictions = true, markets, phase, search } = {}) {
+  const params = new URLSearchParams();
+  if (targetDate) {
+    params.set("target_date", targetDate);
+  }
+  if (limit) {
+    params.set("limit", String(limit));
+  }
+  params.set("with_predictions", String(withPredictions));
+  if (markets && markets.length > 0) {
+    params.set("markets", markets.join(","));
+  }
+  if (phase) {
+    params.set("phase", phase);
+  }
+  if (search) {
+    params.set("search", search);
+  }
+  return request(`/dashboard/day?${params.toString()}`);
+}
+
 export function triggerImport(asyncRun = true) {
   return request("/jobs/import", {
     method: "POST",
@@ -65,4 +110,5 @@ export function getPredictions(limit = 50) {
 }
 
 export { API_BASE_URL };
+
 

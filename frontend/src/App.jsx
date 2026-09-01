@@ -1,184 +1,617 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   API_BASE_URL,
+  getDashboardDay,
+  getDashboardLive,
+  getDashboardOverview,
   getHealth,
   getJobs,
   getMarkets,
-  getMetrics,
   getPredictions,
   predict,
   triggerImport,
   triggerRetrain,
 } from "./api";
 
-function pretty(value) {
-  if (typeof value === "string") {
-    return value;
+const MENU_ITEMS = [
+  { id: "dashboard", label: "Dashboard live" },
+  { id: "live", label: "Partite in diretta" },
+  { id: "today", label: "Partite del giorno" },
+  { id: "predictions", label: "Storico previsioni" },
+  { id: "ops", label: "Operazioni ML" },
+];
+
+function todayIso() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function formatPercent(value) {
+  const num = Number(value);
+  if (Number.isNaN(num)) {
+    return "--";
   }
-  return JSON.stringify(value, null, 2);
+  return `${(num * 100).toFixed(1)}%`;
+}
+
+function marketLabel(market) {
+  const map = {
+    h2h: "Vincitore partita",
+    goal_no_goal: "Goal / No Goal",
+    dc: "Doppia chance",
+    corners: "Corners",
+    cards: "Cards",
+    under_over_1_5: "Over/Under 1.5",
+    under_over_2_5: "Over/Under 2.5",
+    under_over_3_5: "Over/Under 3.5",
+    under_over_4_5: "Over/Under 4.5",
+  };
+  return map[market] || market;
+}
+
+function predictionLabel(market, prediction, row) {
+  if (market === "goal_no_goal") {
+    return prediction === 1 ? "Goal" : "No Goal";
+  }
+  if (market === "dc") {
+    return prediction === 1 ? "1X" : "X2";
+  }
+  if (market.startsWith("under_over_")) {
+    const threshold = market.replace("under_over_", "").replace("_", ".");
+    return prediction === 1 ? `Over ${threshold}` : `Under ${threshold}`;
+  }
+  if (market === "h2h") {
+    return prediction === 1 ? row.home : "Non casa";
+  }
+  if (market === "corners") {
+    return prediction === 1 ? "Over corners" : "Under corners";
+  }
+  if (market === "cards") {
+    return prediction === 1 ? "Over cards" : "Under cards";
+  }
+  return String(prediction);
+}
+
+function phaseLabel(phase) {
+  if (phase === "live") {
+    return "In diretta";
+  }
+  if (phase === "finished") {
+    return "Finita";
+  }
+  return "Da giocare";
+}
+
+function phaseClass(phase) {
+  if (phase === "live") {
+    return "badge-live";
+  }
+  if (phase === "finished") {
+    return "badge-finished";
+  }
+  return "badge-upcoming";
+}
+
+function confidenceClass(probability) {
+  if (probability >= 0.8) {
+    return "prediction-strong";
+  }
+  if (probability >= 0.65) {
+    return "prediction-medium";
+  }
+  return "prediction-low";
 }
 
 export default function App() {
-  const [markets, setMarkets] = useState([]);
-  const [market, setMarket] = useState("under_over_2_5");
-  const [fixtureId, setFixtureId] = useState("1326590");
+  const [activePage, setActivePage] = useState("dashboard");
+  const [selectedDate, setSelectedDate] = useState(todayIso());
+  const [searchInput, setSearchInput] = useState("");
+  const [searchFilter, setSearchFilter] = useState("");
+  const [phaseFilter, setPhaseFilter] = useState("all");
+
+  const [markets, setMarkets] = useState(["all"]);
+  const [selectedMarket, setSelectedMarket] = useState("all");
+
   const [asyncRun, setAsyncRun] = useState(true);
+  const [manualFixtureId, setManualFixtureId] = useState("");
+  const [manualMarket, setManualMarket] = useState("under_over_2_5");
 
-  const [health, setHealth] = useState("Caricamento...");
-  const [jobsOutput, setJobsOutput] = useState("In attesa");
-  const [predictOutput, setPredictOutput] = useState("In attesa");
-  const [metricsOutput, setMetricsOutput] = useState("In attesa");
-  const [jobsHistoryOutput, setJobsHistoryOutput] = useState("In attesa");
-  const [predHistoryOutput, setPredHistoryOutput] = useState("In attesa");
+  const [health, setHealth] = useState({ status: "loading" });
+  const [overview, setOverview] = useState(null);
+  const [liveData, setLiveData] = useState({ rows: [], returned: 0, total: 0 });
+  const [dayData, setDayData] = useState({ rows: [], returned: 0, total: 0, model_markets: [] });
+  const [jobsRows, setJobsRows] = useState([]);
+  const [predictionRows, setPredictionRows] = useState([]);
 
-  const currentMarket = useMemo(() => market || markets[0] || "under_over_2_5", [market, markets]);
+  const [predictOutput, setPredictOutput] = useState("");
+  const [opsMessage, setOpsMessage] = useState("");
+  const [error, setError] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+  const [lastRefresh, setLastRefresh] = useState("");
 
-  async function refreshBaseData() {
-    try {
-      const [healthData, marketsData, jobsData, predData] = await Promise.all([
-        getHealth(),
-        getMarkets(),
-        getJobs(50),
-        getPredictions(50),
-      ]);
-
-      setHealth(pretty({ apiBaseUrl: API_BASE_URL, ...healthData }));
-
-      const marketList = marketsData?.markets || [];
-      setMarkets(marketList);
-      if (!market && marketList.length > 0) {
-        setMarket(marketList[0]);
-      }
-
-      setJobsHistoryOutput(pretty(jobsData));
-      setPredHistoryOutput(pretty(predData));
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setHealth(`Errore: ${message}`);
+  const marketsQuery = useMemo(() => {
+    if (selectedMarket === "all") {
+      return undefined;
     }
-  }
+    return [selectedMarket];
+  }, [selectedMarket]);
+
+  const safeRows = dayData?.rows || [];
+
+  const loadMetaData = useCallback(async () => {
+    const [healthData, marketsData, jobsData, predData] = await Promise.all([
+      getHealth(),
+      getMarkets(),
+      getJobs(80),
+      getPredictions(80),
+    ]);
+
+    setHealth({ ...healthData, apiBaseUrl: API_BASE_URL });
+    const apiMarkets = marketsData?.markets || [];
+    const mergedMarkets = ["all", ...apiMarkets];
+    setMarkets(mergedMarkets);
+
+    setSelectedMarket((prev) => (mergedMarkets.includes(prev) ? prev : "all"));
+    setManualMarket((prev) => (apiMarkets.includes(prev) ? prev : apiMarkets[0] || "under_over_2_5"));
+
+    setJobsRows(jobsData?.rows || []);
+    setPredictionRows(predData?.rows || []);
+  }, []);
+
+  const loadDashboardData = useCallback(
+    async (silent = false) => {
+      if (!silent) {
+        setIsLoading(true);
+      }
+      setError("");
+
+      try {
+        const phase = phaseFilter === "all" ? undefined : phaseFilter;
+        const [overviewData, livePayload, dayPayload] = await Promise.all([
+          getDashboardOverview(selectedDate),
+          getDashboardLive({
+            targetDate: selectedDate,
+            limit: 30,
+            withPredictions: true,
+            markets: marketsQuery,
+          }),
+          getDashboardDay({
+            targetDate: selectedDate,
+            limit: 400,
+            withPredictions: true,
+            markets: marketsQuery,
+            phase,
+            search: searchFilter || undefined,
+          }),
+        ]);
+
+        setOverview(overviewData);
+        setLiveData(livePayload);
+        setDayData(dayPayload);
+        setLastRefresh(new Date().toLocaleString("it-IT"));
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        setError(message);
+      } finally {
+        if (!silent) {
+          setIsLoading(false);
+        }
+      }
+    },
+    [selectedDate, marketsQuery, phaseFilter, searchFilter]
+  );
+
+  const loadEverything = useCallback(async () => {
+    setIsLoading(true);
+    setError("");
+    try {
+      await loadMetaData();
+      await loadDashboardData(true);
+      setLastRefresh(new Date().toLocaleString("it-IT"));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setError(message);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [loadMetaData, loadDashboardData]);
+
+  useEffect(() => {
+    loadEverything();
+  }, [loadEverything]);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      loadDashboardData(true);
+    }, 60000);
+    return () => clearInterval(timer);
+  }, [loadDashboardData]);
+
+  useEffect(() => {
+    loadDashboardData();
+  }, [selectedDate, selectedMarket, phaseFilter, searchFilter, loadDashboardData]);
 
   async function handleImport() {
     try {
       const data = await triggerImport(asyncRun);
-      setJobsOutput(pretty(data));
-      const jobsData = await getJobs(50);
-      setJobsHistoryOutput(pretty(jobsData));
-    } catch (error) {
-      setJobsOutput(pretty(error instanceof Error ? error.message : error));
+      setOpsMessage(JSON.stringify(data, null, 2));
+      const jobsData = await getJobs(80);
+      setJobsRows(jobsData?.rows || []);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setOpsMessage(message);
     }
   }
 
   async function handleRetrain() {
     try {
       const data = await triggerRetrain(asyncRun);
-      setJobsOutput(pretty(data));
-      const jobsData = await getJobs(50);
-      setJobsHistoryOutput(pretty(jobsData));
-    } catch (error) {
-      setJobsOutput(pretty(error instanceof Error ? error.message : error));
+      setOpsMessage(JSON.stringify(data, null, 2));
+      const jobsData = await getJobs(80);
+      setJobsRows(jobsData?.rows || []);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setOpsMessage(message);
     }
   }
 
-  async function handlePredict() {
+  async function handleManualPredict() {
+    if (!manualFixtureId) {
+      setPredictOutput("Inserisci fixture id");
+      return;
+    }
+
     try {
-      const data = await predict(currentMarket, fixtureId);
-      setPredictOutput(pretty(data));
-      const predData = await getPredictions(50);
-      setPredHistoryOutput(pretty(predData));
-    } catch (error) {
-      setPredictOutput(pretty(error instanceof Error ? error.message : error));
+      const result = await predict(manualMarket, manualFixtureId);
+      setPredictOutput(JSON.stringify(result, null, 2));
+      const latestLog = await getPredictions(80);
+      setPredictionRows(latestLog?.rows || []);
+      await loadDashboardData(true);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setPredictOutput(message);
     }
   }
 
-  async function handleMetrics() {
-    try {
-      const data = await getMetrics(currentMarket, 20);
-      setMetricsOutput(pretty(data));
-    } catch (error) {
-      setMetricsOutput(pretty(error instanceof Error ? error.message : error));
+  function renderPredictionBadges(row) {
+    const predictions = row?.predictions || {};
+    const entries = Object.entries(predictions);
+    if (entries.length === 0) {
+      return <span className="empty-state">Nessuna previsione</span>;
     }
+
+    return (
+      <div className="prediction-badges">
+        {entries.map(([marketKey, payload]) => (
+          <span className={`prediction-chip ${confidenceClass(payload.probability)}`} key={`${row.fixture_id}-${marketKey}`}>
+            <strong>{marketLabel(marketKey)}</strong>
+            <em>{predictionLabel(marketKey, payload.prediction, row)}</em>
+            <small>{formatPercent(payload.probability)}</small>
+          </span>
+        ))}
+      </div>
+    );
   }
 
-  useEffect(() => {
-    refreshBaseData();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  function renderMatchRows(rows) {
+    if (!rows || rows.length === 0) {
+      return <div className="empty-panel">Nessuna partita trovata per i filtri correnti.</div>;
+    }
+
+    return (
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Ora</th>
+              <th>Torneo</th>
+              <th>Match</th>
+              <th>Score</th>
+              <th>Stato</th>
+              <th>Previsioni</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={`match-${row.fixture_id}`}>
+                <td>{row.time}</td>
+                <td>{row.league || "-"}</td>
+                <td>
+                  <div className="match-title">{row.home} vs {row.away}</div>
+                  <div className="match-sub">Fixture {row.fixture_id}</div>
+                </td>
+                <td>
+                  {row.score?.home ?? "-"} - {row.score?.away ?? "-"}
+                </td>
+                <td>
+                  <span className={`phase-badge ${phaseClass(row.phase)}`}>{phaseLabel(row.phase)}</span>
+                </td>
+                <td>{renderPredictionBadges(row)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+  }
 
   return (
-    <div className="page">
-      <header>
-        <h1>Soccer ML Dashboard</h1>
-        <p>Frontend React per monitoraggio training, predizioni e job.</p>
-      </header>
+    <div className="layout">
+      <aside className="sidebar">
+        <div className="brand">
+          <h2>soccer_oracle</h2>
+          <p>Live center + predizioni</p>
+        </div>
 
-      <main className="grid">
-        <section className="card">
-          <h2>API Health</h2>
-          <pre>{health}</pre>
-          <button onClick={refreshBaseData}>Aggiorna Stato</button>
-        </section>
+        <button className="btn-primary full" onClick={loadEverything}>Aggiorna tutto</button>
 
-        <section className="card">
-          <h2>Job Manuali</h2>
-          <label className="row">
-            <input
-              type="checkbox"
-              checked={asyncRun}
-              onChange={(e) => setAsyncRun(e.target.checked)}
-            />
-            <span>Async run</span>
-          </label>
-          <div className="row">
-            <button onClick={handleImport}>Run Import</button>
-            <button onClick={handleRetrain}>Run Retrain</button>
+        <div className="sidebar-meta">
+          <small>Ultimo update: {lastRefresh || "-"}</small>
+          <small>API: {health.status || "offline"}</small>
+        </div>
+
+        <nav className="menu">
+          {MENU_ITEMS.map((item) => (
+            <button
+              key={item.id}
+              className={activePage === item.id ? "menu-item active" : "menu-item"}
+              onClick={() => setActivePage(item.id)}
+            >
+              {item.label}
+            </button>
+          ))}
+        </nav>
+      </aside>
+
+      <main className="content">
+        <header className="topbar">
+          <div>
+            <h1>Dashboard partite e previsioni</h1>
+            <p>
+              Vista giornaliera stile tennis_oracle con menu, live match e previsioni multi-mercato.
+            </p>
           </div>
-          <pre>{jobsOutput}</pre>
-        </section>
 
-        <section className="card">
-          <h2>Predizione</h2>
-          <div className="row">
-            <label>Mercato</label>
-            <select value={currentMarket} onChange={(e) => setMarket(e.target.value)}>
-              {markets.map((item) => (
-                <option key={item} value={item}>
-                  {item}
-                </option>
+          <div className="filters">
+            <label>
+              Data
+              <input type="date" value={selectedDate} onChange={(e) => setSelectedDate(e.target.value)} />
+            </label>
+
+            <label>
+              Mercato
+              <select value={selectedMarket} onChange={(e) => setSelectedMarket(e.target.value)}>
+                {markets.map((item) => (
+                  <option key={item} value={item}>
+                    {item === "all" ? "Tutti i mercati" : marketLabel(item)}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label>
+              Cerca match
+              <input
+                value={searchInput}
+                onChange={(e) => setSearchInput(e.target.value)}
+                placeholder="Es: Inter, Premier, Real"
+              />
+            </label>
+
+            <button className="btn-secondary" onClick={() => setSearchFilter(searchInput.trim())}>Cerca</button>
+          </div>
+        </header>
+
+        {error && <div className="error-box">Errore: {error}</div>}
+        {isLoading && <div className="info-box">Caricamento dashboard...</div>}
+
+        {activePage === "dashboard" && (
+          <section className="stack">
+            <div className="stats-grid">
+              <article className="stat-card">
+                <span>Partite del giorno</span>
+                <strong>{overview?.counts?.total ?? 0}</strong>
+              </article>
+              <article className="stat-card">
+                <span>In diretta</span>
+                <strong>{overview?.counts?.live ?? 0}</strong>
+              </article>
+              <article className="stat-card">
+                <span>Da giocare</span>
+                <strong>{overview?.counts?.to_play ?? 0}</strong>
+              </article>
+              <article className="stat-card">
+                <span>Mercati con modello</span>
+                <strong>{overview?.model_markets?.length ?? 0}</strong>
+              </article>
+            </div>
+
+            <section className="panel">
+              <div className="panel-header">
+                <h3>Partite in diretta</h3>
+                <span className="pill">{liveData.returned}/{liveData.total}</span>
+              </div>
+              <div className="live-grid">
+                {(liveData.rows || []).slice(0, 8).map((row) => (
+                  <article className="live-card" key={`live-${row.fixture_id}`}>
+                    <div className="live-head">
+                      <span className={`phase-badge ${phaseClass(row.phase)}`}>{phaseLabel(row.phase)}</span>
+                      <small>{row.time}</small>
+                    </div>
+                    <h4>{row.home} vs {row.away}</h4>
+                    <p className="score-big">{row.score?.home ?? "-"} - {row.score?.away ?? "-"}</p>
+                    <small>{row.league || "-"}</small>
+                  </article>
+                ))}
+                {(liveData.rows || []).length === 0 && <div className="empty-panel">Nessuna partita live al momento.</div>}
+              </div>
+            </section>
+
+            <section className="panel">
+              <div className="panel-header">
+                <h3>Partite del giorno con previsioni</h3>
+                <span className="pill">{dayData.returned}/{dayData.total}</span>
+              </div>
+              {renderMatchRows(safeRows.slice(0, 12))}
+            </section>
+          </section>
+        )}
+
+        {activePage === "live" && (
+          <section className="panel">
+            <div className="panel-header">
+              <h3>Diretta completa</h3>
+              <span className="pill">{liveData.returned}/{liveData.total}</span>
+            </div>
+            {renderMatchRows(liveData.rows || [])}
+          </section>
+        )}
+
+        {activePage === "today" && (
+          <section className="panel">
+            <div className="panel-header">
+              <h3>Calendario del giorno</h3>
+              <span className="pill">{dayData.returned}/{dayData.total}</span>
+            </div>
+
+            <div className="tabs">
+              {["all", "to_play", "live", "finished"].map((item) => (
+                <button
+                  key={item}
+                  className={phaseFilter === item ? "tab active" : "tab"}
+                  onClick={() => setPhaseFilter(item)}
+                >
+                  {item === "all" ? "Tutte" : phaseLabel(item)}
+                </button>
               ))}
-            </select>
-          </div>
-          <div className="row">
-            <label>Fixture ID</label>
-            <input value={fixtureId} onChange={(e) => setFixtureId(e.target.value)} />
-            <button onClick={handlePredict}>Predict</button>
-          </div>
-          <pre>{predictOutput}</pre>
-        </section>
+            </div>
 
-        <section className="card">
-          <h2>Metriche Mercato</h2>
-          <button onClick={handleMetrics}>Load Metrics</button>
-          <pre>{metricsOutput}</pre>
-        </section>
+            {renderMatchRows(safeRows)}
+          </section>
+        )}
 
-        <section className="card">
-          <h2>Storico Job</h2>
-          <button onClick={async () => setJobsHistoryOutput(pretty(await getJobs(50)))}>
-            Aggiorna Storico
-          </button>
-          <pre>{jobsHistoryOutput}</pre>
-        </section>
+        {activePage === "predictions" && (
+          <section className="stack">
+            <section className="panel">
+              <div className="panel-header">
+                <h3>Crea previsione manuale</h3>
+              </div>
+              <div className="inline-form">
+                <label>
+                  Fixture id
+                  <input value={manualFixtureId} onChange={(e) => setManualFixtureId(e.target.value)} />
+                </label>
+                <label>
+                  Mercato
+                  <select value={manualMarket} onChange={(e) => setManualMarket(e.target.value)}>
+                    {markets.filter((item) => item !== "all").map((item) => (
+                      <option key={item} value={item}>{marketLabel(item)}</option>
+                    ))}
+                  </select>
+                </label>
+                <button className="btn-primary" onClick={handleManualPredict}>Calcola previsione</button>
+              </div>
+              {predictOutput && <pre className="code-block">{predictOutput}</pre>}
+            </section>
 
-        <section className="card">
-          <h2>Storico Predizioni</h2>
-          <button onClick={async () => setPredHistoryOutput(pretty(await getPredictions(50)))}>
-            Aggiorna Storico
-          </button>
-          <pre>{predHistoryOutput}</pre>
-        </section>
+            <section className="panel">
+              <div className="panel-header">
+                <h3>Storico previsioni</h3>
+                <button className="btn-secondary" onClick={async () => setPredictionRows((await getPredictions(80)).rows || [])}>
+                  Aggiorna storico
+                </button>
+              </div>
+
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Timestamp</th>
+                      <th>Fixture</th>
+                      <th>Mercato</th>
+                      <th>Prediction</th>
+                      <th>Probabilita</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {predictionRows.map((row, idx) => (
+                      <tr key={`prediction-${idx}`}>
+                        <td>{row.timestamp || "-"}</td>
+                        <td>{row.fixture_id}</td>
+                        <td>{marketLabel(row.market)}</td>
+                        <td>{String(row.prediction)}</td>
+                        <td>{formatPercent(row.probability)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          </section>
+        )}
+
+        {activePage === "ops" && (
+          <section className="stack">
+            <section className="panel">
+              <div className="panel-header">
+                <h3>Controlli operativi</h3>
+              </div>
+              <div className="inline-form">
+                <label className="check">
+                  <input
+                    type="checkbox"
+                    checked={asyncRun}
+                    onChange={(e) => setAsyncRun(e.target.checked)}
+                  />
+                  <span>Esegui async</span>
+                </label>
+                <button className="btn-primary" onClick={handleImport}>Import giornaliero</button>
+                <button className="btn-primary" onClick={handleRetrain}>Retrain mercati</button>
+              </div>
+              {opsMessage && <pre className="code-block">{opsMessage}</pre>}
+            </section>
+
+            <section className="panel">
+              <div className="panel-header">
+                <h3>Stato servizio</h3>
+              </div>
+              <pre className="code-block">{JSON.stringify(health, null, 2)}</pre>
+            </section>
+
+            <section className="panel">
+              <div className="panel-header">
+                <h3>Storico jobs</h3>
+                <button className="btn-secondary" onClick={async () => setJobsRows((await getJobs(80)).rows || [])}>
+                  Aggiorna jobs
+                </button>
+              </div>
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Timestamp</th>
+                      <th>Tipo job</th>
+                      <th>Stato</th>
+                      <th>Durata (s)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {jobsRows.map((row, idx) => (
+                      <tr key={`job-${idx}`}>
+                        <td>{row.timestamp || "-"}</td>
+                        <td>{row.job_type || "-"}</td>
+                        <td>{row.status || "-"}</td>
+                        <td>{Number(row.duration_seconds || 0).toFixed(2)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          </section>
+        )}
       </main>
     </div>
   );
 }
+
 
