@@ -51,8 +51,8 @@ def base_api_statistics(path='', params=None):
         # Check per utilizzo API
         remaining = int(response.headers.get("x-ratelimit-requests-remaining", 0))
         logging.info(f'Remaining {remaining}')
-        if remaining == 0:
-            raise Exception(f'Stop API : Remaining {remaining} today.')
+        # if remaining == 0:
+        #     raise Exception(f'Stop API : Remaining {remaining} today.')
 
         # Check per API utilizzate al minuto
         rate_limit = int(response.headers.get("x-ratelimit-limit", 0))

@@ -246,7 +246,7 @@ def download_import_matches(seasons=None, leagues=None, is_next=False, current_l
         format_data = '%Y-%m-%d'
         current_data = datetime.now()
         # Scegliere da che giorno indietro si vuole andare per recuperare le partite
-        from_date = (current_data - timedelta(days=7)).strftime(format_data)
+        from_date = (current_data - timedelta(days=3)).strftime(format_data)
         # Fino a ...
         to_date = (current_data - timedelta(days=0)).strftime(format_data)
 
