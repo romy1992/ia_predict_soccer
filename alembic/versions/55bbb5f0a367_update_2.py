@@ -27,38 +27,47 @@ def upgrade() -> None:
     op.alter_column('statistics', 'score_ht',
                existing_type=postgresql.JSON(astext_type=sa.Text()),
                type_=sa.Integer(),
+               postgresql_using="NULLIF(regexp_replace(score_ht::text, '[^0-9-]', '', 'g'), '')::integer",
                existing_nullable=True)
     op.alter_column('statistics', 'score_ft',
                existing_type=postgresql.JSON(astext_type=sa.Text()),
                type_=sa.Integer(),
+               postgresql_using="NULLIF(regexp_replace(score_ft::text, '[^0-9-]', '', 'g'), '')::integer",
                existing_nullable=True)
     op.alter_column('statistics', 'fouls',
                existing_type=postgresql.JSON(astext_type=sa.Text()),
                type_=sa.Integer(),
+               postgresql_using="NULLIF(regexp_replace(fouls::text, '[^0-9-]', '', 'g'), '')::integer",
                existing_nullable=True)
     op.alter_column('statistics', 'corners',
                existing_type=postgresql.JSON(astext_type=sa.Text()),
                type_=sa.Integer(),
+               postgresql_using="NULLIF(regexp_replace(corners::text, '[^0-9-]', '', 'g'), '')::integer",
                existing_nullable=True)
     op.alter_column('statistics', 'offside',
                existing_type=postgresql.JSON(astext_type=sa.Text()),
                type_=sa.Integer(),
+               postgresql_using="NULLIF(regexp_replace(offside::text, '[^0-9-]', '', 'g'), '')::integer",
                existing_nullable=True)
     op.alter_column('statistics', 'bass_possession',
                existing_type=postgresql.JSON(astext_type=sa.Text()),
                type_=sa.Integer(),
+               postgresql_using="NULLIF(regexp_replace(bass_possession::text, '[^0-9-]', '', 'g'), '')::integer",
                existing_nullable=True)
     op.alter_column('statistics', 'yellow_cards',
                existing_type=postgresql.JSON(astext_type=sa.Text()),
                type_=sa.Integer(),
+               postgresql_using="NULLIF(regexp_replace(yellow_cards::text, '[^0-9-]', '', 'g'), '')::integer",
                existing_nullable=True)
     op.alter_column('statistics', 'red_cards',
                existing_type=postgresql.JSON(astext_type=sa.Text()),
                type_=sa.Integer(),
+               postgresql_using="NULLIF(regexp_replace(red_cards::text, '[^0-9-]', '', 'g'), '')::integer",
                existing_nullable=True)
     op.alter_column('statistics', 'goal_keeper',
                existing_type=postgresql.JSON(astext_type=sa.Text()),
                type_=sa.Integer(),
+               postgresql_using="NULLIF(regexp_replace(goal_keeper::text, '[^0-9-]', '', 'g'), '')::integer",
                existing_nullable=True)
     # ### end Alembic commands ###
 
