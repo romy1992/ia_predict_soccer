@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 import os
+import re
 from typing import Any, Optional
 
 import joblib
@@ -32,7 +33,7 @@ class DashboardDayData:
 
 
 class DashboardService:
-    _api_cache: dict[str, tuple[datetime, list[dict[str, Any]]]] = {}
+    _api_cache: dict[str, tuple[datetime, Any]] = {}
     _api_cache_ttl_seconds = 60
 
     def __init__(self):
@@ -90,7 +91,7 @@ class DashboardService:
         return [m for m in normalized if m in allowed]
 
     @classmethod
-    def _cache_get(cls, key: str) -> Optional[list[dict[str, Any]]]:
+    def _cache_get(cls, key: str) -> Optional[Any]:
         item = cls._api_cache.get(key)
         if not item:
             return None
@@ -102,7 +103,7 @@ class DashboardService:
         return payload
 
     @classmethod
-    def _cache_set(cls, key: str, payload: list[dict[str, Any]]) -> None:
+    def _cache_set(cls, key: str, payload: Any) -> None:
         cls._api_cache[key] = (datetime.now(timezone.utc), payload)
 
     @staticmethod
@@ -176,6 +177,361 @@ class DashboardService:
         deduped = self._dedupe_api_fixtures(fixtures)
         self._cache_set(cache_key, deduped)
         return deduped
+
+    def _fetch_api_fixture_detail(self, fixture_id: int) -> Optional[dict[str, Any]]:
+        cache_key = f"fixture:{fixture_id}"
+        cached = self._cache_get(cache_key)
+        if cached is not None:
+            return cached
+
+        try:
+            payload = base_api_statistics(path="fixtures", params={"id": fixture_id})
+        except Exception:
+            payload = []
+
+        item = payload[0] if payload else None
+        self._cache_set(cache_key, item)
+        return item
+
+    def _fetch_api_events(self, fixture_id: int) -> list[dict[str, Any]]:
+        cache_key = f"events:{fixture_id}"
+        cached = self._cache_get(cache_key)
+        if cached is not None:
+            return cached
+
+        try:
+            payload = base_api_statistics(path="fixtures/events", params={"fixture": fixture_id})
+        except Exception:
+            payload = []
+
+        events = payload if isinstance(payload, list) else []
+        self._cache_set(cache_key, events)
+        return events
+
+    def _fetch_api_odds(self, fixture_id: int) -> Optional[dict[str, Any]]:
+        cache_key = f"odds:{fixture_id}"
+        cached = self._cache_get(cache_key)
+        if cached is not None:
+            return cached
+
+        try:
+            payload = base_api_statistics(path="odds", params={"fixture": fixture_id})
+        except Exception:
+            payload = []
+
+        item = payload[0] if payload else None
+        self._cache_set(cache_key, item)
+        return item
+
+    @staticmethod
+    def _to_float(value: Any) -> Optional[float]:
+        if value is None:
+            return None
+        if isinstance(value, (int, float)):
+            return float(value)
+        if isinstance(value, str):
+            raw = value.strip().replace(",", ".")
+            try:
+                return float(raw)
+            except Exception:
+                return None
+        return None
+
+    @staticmethod
+    def _normalize_text(value: str) -> str:
+        return re.sub(r"[^a-z0-9]+", "", (value or "").lower())
+
+    def _match_market_from_bet_value(self, bet_name: str, value: str) -> Optional[str]:
+        bet_norm = self._normalize_text(bet_name)
+
+        if bet_norm == "matchwinner":
+            return "h2h"
+        if bet_norm == "bothteamsscore":
+            return "goal_no_goal"
+        if bet_norm == "doublechance":
+            return "dc"
+        if bet_norm == "cornersoverunder":
+            return "corners"
+        if bet_norm == "cardsoverunder":
+            return "cards"
+        if bet_norm == "goalsoverunder":
+            point = self._extract_line_point(value)
+            if point is None:
+                return None
+            if abs(point - 1.5) < 0.0001:
+                return "under_over_1_5"
+            if abs(point - 2.5) < 0.0001:
+                return "under_over_2_5"
+            if abs(point - 3.5) < 0.0001:
+                return "under_over_3_5"
+            if abs(point - 4.5) < 0.0001:
+                return "under_over_4_5"
+        return None
+
+    @staticmethod
+    def _normalize_outcome_value(value: str) -> str:
+        val = (value or "").strip()
+        mapping = {
+            "home/draw": "Home/Draw",
+            "draw/away": "Draw/Away",
+            "home/away": "Home/Away",
+            "yes": "Yes",
+            "no": "No",
+        }
+        key = val.lower()
+        if key in mapping:
+            return mapping[key]
+        if val.lower() == "home":
+            return "Home"
+        if val.lower() == "away":
+            return "Away"
+        if val.lower() == "draw":
+            return "Draw"
+        return val
+
+    @staticmethod
+    def _extract_line_point(value: str) -> Optional[float]:
+        matches = re.findall(r"([0-9]+(?:\.[0-9]+)?)", value or "")
+        if not matches:
+            return None
+        try:
+            return float(matches[-1])
+        except Exception:
+            return None
+
+    def _aggregate_odds_from_api(self, odds_payload: Optional[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+        if not odds_payload:
+            return {}
+
+        aggregates: dict[str, dict[str, list[float]]] = {}
+        bookmakers = odds_payload.get("bookmakers") or []
+        for bookmaker in bookmakers:
+            bets = bookmaker.get("bets") or []
+            for bet in bets:
+                bet_name = bet.get("name") or ""
+                values = bet.get("values") or []
+                for item in values:
+                    raw_outcome = str(item.get("value") or "")
+                    market = self._match_market_from_bet_value(bet_name, raw_outcome)
+                    if not market:
+                        continue
+
+                    odd = self._to_float(item.get("odd"))
+                    if odd is None or odd <= 0:
+                        continue
+
+                    outcome = self._normalize_outcome_value(raw_outcome)
+                    market_dict = aggregates.setdefault(market, {})
+                    market_dict.setdefault(outcome, []).append(odd)
+
+        summary: dict[str, list[dict[str, Any]]] = {}
+        for market, outcomes in aggregates.items():
+            rows: list[dict[str, Any]] = []
+            for outcome, odds in outcomes.items():
+                if not odds:
+                    continue
+                rows.append(
+                    {
+                        "outcome": outcome,
+                        "avg_odd": float(np.mean(odds)),
+                        "min_odd": float(np.min(odds)),
+                        "max_odd": float(np.max(odds)),
+                        "bookmakers": len(odds),
+                    }
+                )
+            rows.sort(key=lambda x: x["outcome"])
+            summary[market] = rows
+
+        return summary
+
+    def _aggregate_odds_from_db(self, match: Optional[Match]) -> dict[str, list[dict[str, Any]]]:
+        if not match or not match.odds:
+            return {}
+
+        odds_obj = match.odds[0].to_dict()
+        summary: dict[str, list[dict[str, Any]]] = {}
+        for market in FilterMarketService.SUPPORTED_MARKETS:
+            market_values = odds_obj.get(market)
+            if not isinstance(market_values, dict):
+                continue
+
+            outcome_buckets: dict[str, list[float]] = {}
+            for key, raw_odd in market_values.items():
+                odd = self._to_float(raw_odd)
+                if odd is None or odd <= 0:
+                    continue
+                outcome, _, _book = key.rpartition("_")
+                outcome = outcome or key
+                outcome = self._normalize_outcome_value(outcome)
+                outcome_buckets.setdefault(outcome, []).append(odd)
+
+            rows: list[dict[str, Any]] = []
+            for outcome, odds in outcome_buckets.items():
+                rows.append(
+                    {
+                        "outcome": outcome,
+                        "avg_odd": float(np.mean(odds)),
+                        "min_odd": float(np.min(odds)),
+                        "max_odd": float(np.max(odds)),
+                        "bookmakers": len(odds),
+                    }
+                )
+
+            rows.sort(key=lambda x: x["outcome"])
+            if rows:
+                summary[market] = rows
+
+        return summary
+
+    @staticmethod
+    def _row_to_outcome_maps(rows: list[dict[str, Any]]) -> dict[str, float]:
+        return {
+            DashboardService._normalize_text(str(row.get("outcome") or "")): float(row.get("avg_odd") or 0)
+            for row in rows
+            if row.get("outcome") is not None
+        }
+
+    def _pick_and_odd_for_prediction(
+        self,
+        market: str,
+        prediction: int,
+        row_context: dict[str, Any],
+        odds_summary: dict[str, list[dict[str, Any]]],
+    ) -> tuple[str, Optional[float]]:
+        rows = odds_summary.get(market) or []
+        normalized = self._row_to_outcome_maps(rows)
+
+        if market.startswith("under_over_"):
+            threshold = market.replace("under_over_", "").replace("_", ".")
+            pick = f"Over {threshold}" if prediction == 1 else f"Under {threshold}"
+            odd = normalized.get(self._normalize_text(pick))
+            return pick, odd
+
+        if market == "goal_no_goal":
+            pick = "Yes" if prediction == 1 else "No"
+            odd = normalized.get(self._normalize_text(pick))
+            return ("Goal" if pick == "Yes" else "No Goal"), odd
+
+        if market == "dc":
+            pick = "Home/Draw" if prediction == 1 else "Draw/Away"
+            odd = normalized.get(self._normalize_text(pick))
+            return pick, odd
+
+        if market == "h2h":
+            if prediction == 1:
+                pick = row_context.get("home") or "Home"
+                odd = normalized.get(self._normalize_text("Home"))
+            else:
+                pick = row_context.get("away") or "Away"
+                odd = normalized.get(self._normalize_text("Away"))
+                if odd is None:
+                    draw_odd = normalized.get(self._normalize_text("Draw"))
+                    odd = draw_odd
+            return pick, odd
+
+        if market in {"corners", "cards"}:
+            target = 9.5 if market == "corners" else 4.5
+            wanted_prefix = "over" if prediction == 1 else "under"
+            candidates = []
+            for r in rows:
+                outcome = str(r.get("outcome") or "")
+                norm = self._normalize_text(outcome)
+                if not norm.startswith(wanted_prefix):
+                    continue
+                point = self._extract_line_point(outcome)
+                if point is None:
+                    continue
+                candidates.append((abs(point - target), outcome, float(r.get("avg_odd") or 0)))
+
+            if candidates:
+                candidates.sort(key=lambda x: x[0])
+                _, outcome, odd = candidates[0]
+                return outcome, odd
+
+            fallback = "Over" if prediction == 1 else "Under"
+            return fallback, None
+
+        return str(prediction), None
+
+    @staticmethod
+    def _value_decision(predicted_probability: float, odd: Optional[float]) -> tuple[str, Optional[float], str]:
+        if odd is None or odd <= 0:
+            return "NO BET", None, "Quota non disponibile"
+
+        edge = (predicted_probability * odd) - 1.0
+        if predicted_probability >= 0.62 and edge >= 0.03:
+            return "PLAY", edge, "Confidenza alta e edge positivo"
+        if predicted_probability >= 0.55 and edge >= 0.0:
+            return "BORDERLINE", edge, "Confidenza media o edge ridotto"
+        return "NO BET", edge, "Confidenza/edge insufficienti"
+
+    def _build_decision_cards(
+        self,
+        row_context: dict[str, Any],
+        predictions: dict[str, Any],
+        odds_summary: dict[str, list[dict[str, Any]]],
+    ) -> list[dict[str, Any]]:
+        cards: list[dict[str, Any]] = []
+        for market, payload in predictions.items():
+            prediction = int(payload.get("prediction", 0))
+            class1_probability = float(payload.get("probability", 0.5))
+            predicted_probability = class1_probability if prediction == 1 else (1.0 - class1_probability)
+
+            pick, odd = self._pick_and_odd_for_prediction(
+                market=market,
+                prediction=prediction,
+                row_context=row_context,
+                odds_summary=odds_summary,
+            )
+            value_label, edge, reason = self._value_decision(predicted_probability, odd)
+            cards.append(
+                {
+                    "market": market,
+                    "pick": pick,
+                    "prediction": prediction,
+                    "model_name": payload.get("model_name"),
+                    "run_id": payload.get("run_id"),
+                    "class_1_probability": class1_probability,
+                    "predicted_probability": predicted_probability,
+                    "odd": odd,
+                    "edge": edge,
+                    "value_label": value_label,
+                    "value_reason": reason,
+                }
+            )
+
+        cards.sort(key=lambda x: x.get("predicted_probability", 0), reverse=True)
+        return cards
+
+    @staticmethod
+    def _serialize_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        rows = []
+        for event in events:
+            time_data = event.get("time") or {}
+            elapsed = time_data.get("elapsed")
+            extra = time_data.get("extra")
+
+            minute = "-"
+            if elapsed is not None:
+                minute = f"{elapsed}'"
+                if extra is not None:
+                    minute = f"{elapsed}+{extra}'"
+
+            rows.append(
+                {
+                    "minute": minute,
+                    "elapsed": elapsed,
+                    "team": (event.get("team") or {}).get("name"),
+                    "type": event.get("type"),
+                    "detail": event.get("detail"),
+                    "player": (event.get("player") or {}).get("name"),
+                    "assist": (event.get("assist") or {}).get("name"),
+                    "comments": event.get("comments"),
+                }
+            )
+
+        rows.sort(key=lambda x: (x.get("elapsed") is None, x.get("elapsed") or 0))
+        return rows
 
     @staticmethod
     def _extract_scores(match: Match) -> dict[str, Optional[int]]:
@@ -365,6 +721,19 @@ class DashboardService:
             # Container avviato senza migrazioni: la dashboard resta disponibile mostrando stato vuoto.
             return []
 
+    def _fetch_db_match_by_fixture(self, fixture_id: int) -> Optional[Match]:
+        try:
+            with SessionLocal() as session:
+                row = (
+                    session.query(Match)
+                    .options(selectinload(Match.statistics), selectinload(Match.odds))
+                    .filter(Match.id_fixture == fixture_id)
+                    .first()
+                )
+            return row
+        except (ProgrammingError, OperationalError):
+            return None
+
     def get_day_matches(
         self,
         target_date: date,
@@ -509,6 +878,63 @@ class DashboardService:
             "live_preview": live_preview,
             "day_highlights": highlights,
         }
+
+    def get_match_detail(
+        self,
+        fixture_id: int,
+        with_predictions: bool = True,
+        markets: Optional[list[str]] = None,
+    ) -> dict[str, Any]:
+        model_markets = self._normalize_market_request(markets) or self.registry.list_markets()
+
+        api_fixture = self._fetch_api_fixture_detail(fixture_id)
+        db_match = self._fetch_db_match_by_fixture(fixture_id)
+
+        if api_fixture:
+            fixture_row = self._serialize_api_fixture(api_fixture, with_predictions=False, markets=[])
+        elif db_match:
+            fixture_row = self._serialize_match(db_match, with_predictions=False, markets=[])
+        else:
+            return {
+                "fixture": None,
+                "timeline": [],
+                "odds_summary": {},
+                "decision_cards": [],
+                "predictions": {},
+                "model_markets": model_markets,
+            }
+
+        predictions = self._predict_fixture(fixture_id=fixture_id, markets=model_markets) if with_predictions else {}
+        fixture_row["predictions"] = predictions
+
+        events = self._fetch_api_events(fixture_id)
+        timeline = self._serialize_events(events)
+
+        odds_payload = self._fetch_api_odds(fixture_id)
+        odds_summary = self._aggregate_odds_from_api(odds_payload)
+        if not odds_summary:
+            odds_summary = self._aggregate_odds_from_db(db_match)
+
+        decision_cards = self._build_decision_cards(
+            row_context=fixture_row,
+            predictions=predictions,
+            odds_summary=odds_summary,
+        )
+
+        return {
+            "fixture": fixture_row,
+            "timeline": timeline,
+            "odds_summary": odds_summary,
+            "decision_cards": decision_cards,
+            "predictions": predictions,
+            "model_markets": model_markets,
+            "odds_updated_at": (odds_payload or {}).get("update") if odds_payload else None,
+        }
+
+
+
+
+
 
 
 

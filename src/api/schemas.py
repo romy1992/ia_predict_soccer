@@ -79,3 +79,14 @@ class DashboardOverviewResponse(BaseModel):
     day_highlights: list[dict[str, Any]]
 
 
+class DashboardMatchDetailResponse(BaseModel):
+    fixture: Optional[dict[str, Any]] = None
+    timeline: list[dict[str, Any]]
+    odds_summary: dict[str, list[dict[str, Any]]]
+    decision_cards: list[dict[str, Any]]
+    predictions: dict[str, Any]
+    model_markets: list[str]
+    odds_updated_at: Optional[str] = None
+
+
+

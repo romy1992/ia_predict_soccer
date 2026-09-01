@@ -14,6 +14,7 @@ from src.api.dashboard_service import DashboardService
 from src.api.schemas import (
     DashboardDayResponse,
     DashboardLiveResponse,
+    DashboardMatchDetailResponse,
     DashboardOverviewResponse,
     HealthResponse,
     JobImportRequest,
@@ -174,6 +175,22 @@ def dashboard_day(
     return DashboardDayResponse(**payload.__dict__)
 
 
+@app.get("/dashboard/match/{fixture_id}", response_model=DashboardMatchDetailResponse)
+def dashboard_match_detail(
+    fixture_id: int,
+    with_predictions: bool = True,
+    markets: Optional[str] = None,
+) -> DashboardMatchDetailResponse:
+    selected_markets = [item.strip() for item in markets.split(",")] if markets else None
+    service = DashboardService()
+    payload = service.get_match_detail(
+        fixture_id=fixture_id,
+        with_predictions=with_predictions,
+        markets=selected_markets,
+    )
+    return DashboardMatchDetailResponse(**payload)
+
+
 @app.post("/predict/{market}", response_model=PredictResponse)
 def predict(market: str, payload: PredictRequest) -> PredictResponse:
     if market not in FilterMarketService.SUPPORTED_MARKETS:
@@ -282,6 +299,7 @@ def jobs_history(limit: int = 100, job_type: Optional[str] = None) -> JobsHistor
 def predictions_log(limit: int = 100, market: Optional[str] = None) -> PredictionLogResponse:
     rows = PredictionLogger().tail(limit=limit, market=market)
     return PredictionLogResponse(rows=rows)
+
 
 
 

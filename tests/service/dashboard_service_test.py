@@ -61,7 +61,81 @@ class TestDashboardService(unittest.TestCase):
         self.assertEqual(payload["returned"], 1)
         self.assertEqual(payload["rows"][0]["home"], "Napoli")
 
+    def test_get_match_detail_cards_and_timeline(self):
+        service = DashboardService()
+        service.registry.list_markets = lambda: ["under_over_2_5", "goal_no_goal"]
+
+        service._fetch_api_fixture_detail = lambda fixture_id: self._fixture(
+            fixture_id=fixture_id,
+            day="2026-09-01",
+            status="1H",
+            home="Inter",
+            away="Roma",
+        )
+        service._fetch_db_match_by_fixture = lambda fixture_id: None
+        service._fetch_api_events = lambda fixture_id: [
+            {
+                "time": {"elapsed": 22, "extra": None},
+                "team": {"name": "Inter"},
+                "type": "Goal",
+                "detail": "Normal Goal",
+                "player": {"name": "Lautaro"},
+                "assist": {"name": "Barella"},
+                "comments": None,
+            }
+        ]
+        service._fetch_api_odds = lambda fixture_id: {
+            "update": "2026-09-01T15:00:00+00:00",
+            "bookmakers": [
+                {
+                    "name": "BookA",
+                    "bets": [
+                        {
+                            "name": "Goals Over/Under",
+                            "values": [
+                                {"value": "Over 2.5", "odd": "1.90"},
+                                {"value": "Under 2.5", "odd": "1.80"},
+                            ],
+                        },
+                        {
+                            "name": "Both Teams Score",
+                            "values": [
+                                {"value": "Yes", "odd": "1.75"},
+                                {"value": "No", "odd": "2.00"},
+                            ],
+                        },
+                    ],
+                }
+            ],
+        }
+        service._predict_fixture = lambda fixture_id, markets: {
+            "under_over_2_5": {
+                "prediction": 1,
+                "probability": 0.72,
+                "model_name": "logistic",
+                "run_id": "uo-run",
+            },
+            "goal_no_goal": {
+                "prediction": 0,
+                "probability": 0.40,
+                "model_name": "rf",
+                "run_id": "gg-run",
+            },
+        }
+
+        payload = service.get_match_detail(fixture_id=1234, with_predictions=True)
+
+        self.assertIsNotNone(payload["fixture"])
+        self.assertEqual(payload["fixture"]["home"], "Inter")
+        self.assertEqual(len(payload["timeline"]), 1)
+        self.assertEqual(payload["timeline"][0]["team"], "Inter")
+        self.assertIn("under_over_2_5", payload["odds_summary"])
+        self.assertGreaterEqual(len(payload["decision_cards"]), 2)
+        labels = {c["value_label"] for c in payload["decision_cards"]}
+        self.assertTrue(labels.issubset({"PLAY", "BORDERLINE", "NO BET"}))
+
 
 if __name__ == "__main__":
     unittest.main()
+
 

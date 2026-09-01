@@ -106,6 +106,7 @@ Endpoint dashboard dedicati alla UI React:
 - `GET /dashboard/overview?target_date=YYYY-MM-DD`
 - `GET /dashboard/live?target_date=YYYY-MM-DD&limit=30`
 - `GET /dashboard/day?target_date=YYYY-MM-DD&phase=all|to_play|live|finished&search=term`
+- `GET /dashboard/match/{fixture_id}`
 
 Nota dati dashboard:
 - live e calendario giorno arrivano da API Sports (con cache di 60 secondi),
@@ -116,6 +117,7 @@ Nota dati dashboard:
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/smoke_api.ps1
 ```
+
 
 
 
