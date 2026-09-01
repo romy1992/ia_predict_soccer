@@ -41,6 +41,7 @@ URL servizi:
 - `http://localhost:3000` -> frontend React
 - `http://localhost:8000/docs` -> API FastAPI
 - `localhost:5433` -> Postgres container (porta host)
+- `scheduler` -> job giornaliero automatico alle 23:00
 
 Stop servizi:
 ```powershell
@@ -105,6 +106,7 @@ Le metriche/versioni modello sono consultabili in:
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/smoke_api.ps1
 ```
+
 
 
 

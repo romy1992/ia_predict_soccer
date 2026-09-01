@@ -49,6 +49,25 @@ services:
     ports:
       - "3000:80"
 
+  scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: soccer_scheduler
+    command: ["python", "-m", "src.jobs.scheduler"]
+    env_file:
+      - properties/config.env
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/match_db
+      API_ODDS_ACTUAL_BASE: https://api.the-odds-api.com/v4/sports
+      API_ODDS_HISTORIACAL_BASE: https://api.the-odds-api.com/v4/historical/sports
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./best_models:/app/best_models
+      - ./logs:/app/logs
+
 volumes:
   postgres_data:
 
