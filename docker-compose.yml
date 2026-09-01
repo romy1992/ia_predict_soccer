@@ -1,0 +1,54 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: soccer_db
+    environment:
+      POSTGRES_DB: match_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d match_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: soccer_api
+    env_file:
+      - properties/config.env
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/match_db
+      API_ODDS_ACTUAL_BASE: https://api.the-odds-api.com/v4/sports
+      API_ODDS_HISTORIACAL_BASE: https://api.the-odds-api.com/v4/historical/sports
+      CORS_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./best_models:/app/best_models
+      - ./logs:/app/logs
+
+  web:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: http://localhost:8000
+    container_name: soccer_web
+    depends_on:
+      - api
+    ports:
+      - "3000:80"
+
+volumes:
+  postgres_data:
+
