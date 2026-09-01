@@ -8,7 +8,6 @@ import joblib
 import numpy as np
 from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
 
 from src.api.schemas import (
     HealthResponse,
@@ -29,10 +28,24 @@ from src.service_ia.training.prediction_logger import PredictionLogger
 
 app = FastAPI(title="Soccer ML Platform API", version="0.1.0")
 
+
+def _cors_origins() -> list[str]:
+    raw = os.environ.get("CORS_ORIGINS")
+    if raw:
+        values = [item.strip() for item in raw.split(",") if item.strip()]
+        if values:
+            return values
+    return [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+    ]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=_cors_origins(),
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -40,10 +53,6 @@ app.add_middleware(
 
 def _project_root() -> str:
     return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-
-
-def _dashboard_path() -> str:
-    return os.path.join(_project_root(), "frontend", "dashboard.html")
 
 
 def _summary_path() -> str:
@@ -82,14 +91,14 @@ def _extract_probability(model: Any, X) -> tuple[int, float]:
     return pred, float(pred)
 
 
-@app.get("/", response_class=HTMLResponse)
-def dashboard() -> str:
-    path = _dashboard_path()
-    if not os.path.exists(path):
-        return "<h3>Dashboard non trovata</h3>"
-
-    with open(path, "r", encoding="utf-8") as f:
-        return f.read()
+@app.get("/")
+def index() -> dict[str, str]:
+    return {
+        "service": app.title,
+        "version": app.version,
+        "docs": "/docs",
+        "status": "ok",
+    }
 
 
 @app.get("/health", response_model=HealthResponse)
@@ -212,4 +221,5 @@ def jobs_history(limit: int = 100, job_type: Optional[str] = None) -> JobsHistor
 def predictions_log(limit: int = 100, market: Optional[str] = None) -> PredictionLogResponse:
     rows = PredictionLogger().tail(limit=limit, market=market)
     return PredictionLogResponse(rows=rows)
+
 

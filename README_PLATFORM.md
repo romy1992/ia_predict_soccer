@@ -4,7 +4,7 @@ Questa guida copre i nuovi moduli introdotti per:
 - training multi-mercato,
 - model registry,
 - API backend,
-- dashboard,
+- dashboard React,
 - scheduler giornaliero alle 23:00.
 
 ## Nuovi moduli principali
@@ -13,7 +13,9 @@ Questa guida copre i nuovi moduli introdotti per:
 - `src/service_ia/training/model_registry.py`
 - `src/jobs/scheduler.py`
 - `src/api/main.py`
-- `frontend/dashboard.html`
+- `frontend/src/App.jsx`
+- `docker-compose.yml`
+- `Dockerfile.api`
 
 ## Configurazione
 Nel file `properties/config.env` puoi aggiungere:
@@ -26,20 +28,43 @@ Nel file `properties/config.env` puoi aggiungere:
 
 Se non li imposti, vengono usati i default del codice.
 
-## Installazione dipendenze
+Per il frontend React puoi usare anche:
+- `VITE_API_BASE_URL=http://localhost:8000` in `frontend/.env`
+
+## Avvio con Docker (consigliato)
+```powershell
+docker compose up --build -d
+docker compose ps
+```
+
+URL servizi:
+- `http://localhost:3000` -> frontend React
+- `http://localhost:8000/docs` -> API FastAPI
+- `localhost:5433` -> Postgres container (porta host)
+
+Stop servizi:
+```powershell
+docker compose down
+```
+
+## Avvio locale senza Docker
+### Backend
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-```
-
-## Run API + dashboard
-```powershell
 uvicorn src.api.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
+### Frontend React
+```powershell
+Set-Location frontend
+npm install
+npm run dev
+```
+
 Apri nel browser:
-- `http://127.0.0.1:8000/` (dashboard)
+- `http://127.0.0.1:3000/` (dashboard React)
 - `http://127.0.0.1:8000/docs` (OpenAPI)
 
 ## Run training multi-mercato (manuale)
@@ -75,4 +100,11 @@ Le predizioni vengono loggate in:
 
 Le metriche/versioni modello sono consultabili in:
 - `GET /metrics/{market}`
+
+## Smoke test rapido API
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/smoke_api.ps1
+```
+
+
 
