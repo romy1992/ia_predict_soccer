@@ -59,6 +59,7 @@ Prima di ogni task viene applicata la premessa in `AI_MASTER_PROMPT.md`:
 - [x] MARKET-01
 - [x] MARKET-02
 - [x] MARKET-03
+- [x] MARKET-04
 
 ## Estensioni introdotte
 - settlement job idempotente con completezza finale (`/jobs/settlement`)
@@ -84,6 +85,8 @@ Prima di ogni task viene applicata la premessa in `AI_MASTER_PROMPT.md`:
 - Vero mercato 1X2 multiclass (HOME/DRAW/AWAY, nessun mapping draw->away): dataset dedicato, GridSearchCV logistic/random_forest con validazione temporale, metriche multiclasse dedicate (log_loss/brier generalizzato/ECE su confidence/AUC OvR) e calibrazione multiclasse via `CalibratedClassifierCV` (`src/ml/markets/market_1x2.py`, `src/ml/evaluation/multiclass_probability_metrics.py`, `src/ml/calibration/multiclass_calibration_service.py`)
 - Double Chance derivata da 1X2 coerente (nessun training proprio): P(1X)=P(HOME)+P(DRAW), P(12)=P(HOME)+P(AWAY), P(X2)=P(DRAW)+P(AWAY), fair odds e wrapper batch su `Market1x2Expert` (`src/ml/markets/market_double_chance.py`)
 - BTTS consolidato (score distribution EXP-02 vs direct expert 'goal_no_goal' EXP-05): benchmark comparativo (score_distribution/direct_expert/ensemble) con selezione via `champion_probability_score`, calibrazione OOF temporale (Platt/isotonic) del solo approccio vincente, P(Yes)+P(No)=1 garantito per costruzione (No=1-Yes); dataset builder end-to-end che riusa rating point-in-time (`TeamStrengthExpert`, EXP-01) + score distribution Poisson (`GoalDistributionExpert`, EXP-02) + feature/target 'goal_no_goal' (`FilterMarketService`, EXP-05); orchestratore `run_btts_benchmark(_from_db)` che registra il calibratore vincente come 'candidate' (mai 'production' automatica) (`src/ml/markets/btts/btts_market.py`)
+- U/O 1.5-4.5 multi-linea consolidato: confronto sullo STESSO walk-forward tra binary_independent (4 classificatori scorrelati), hierarchical (1 solo classificatore multiclasse sui bin di gol totali 0/1/2/3/4, confini esattamente sulle soglie, P(Over t) = cumulata dall'alto) e goal_distribution (Poisson EXP-02 da rating EXP-01); selezione per metriche probabilistiche+betting (`champion_probability_score`) aggregate sulle 4 soglie; monotonicità P(O1.5)>=P(O2.5)>=P(O3.5)>=P(O4.5) resa OBBLIGATORIA sull'output finale via proiezione isotonica (`enforce_monotonic_over_probabilities`), indipendentemente dall'approccio vincente; orchestratore `run_totals_benchmark(_from_db)` che registra il modello vincente come 'candidate' solo se introduce un nuovo estimator (hierarchical/binary_independent), nessun salvataggio per goal_distribution (deterministico) (`src/ml/markets/totals/totals_market.py`)
+
 
 ## Migrazioni applicate (locale + docker)
 - locale: `alembic stamp 55bbb5f0a367` + `alembic upgrade head`
@@ -94,6 +97,8 @@ Prima di ogni task viene applicata la premessa in `AI_MASTER_PROMPT.md`:
 - verifica rapida: tabella `match` letta con volume storico (>47k righe)
 
 Note: gli stati sopra sono riferiti all'implementazione tecnica nel branch corrente; la validazione finale dipende dall'esecuzione acceptance/test su ambiente dati reale.
+
+
 
 
 
