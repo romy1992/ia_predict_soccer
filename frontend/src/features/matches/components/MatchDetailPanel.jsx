@@ -1,0 +1,143 @@
+import { formatEdge, formatOdd, formatPercent, marketLabel, phaseClass, phaseLabel, valueClass } from "../../shared/formatters";
+
+export default function MatchDetailPanel({
+  selectedFixtureId,
+  matchDetail,
+  matchDetailLoading,
+  matchDetailError,
+  onClose,
+}) {
+  if (!selectedFixtureId && !matchDetail) {
+    return null;
+  }
+
+  if (matchDetailLoading) {
+    return <section className="panel detail-panel"><div className="empty-panel">Caricamento dettaglio partita...</div></section>;
+  }
+
+  if (matchDetailError) {
+    return <section className="panel detail-panel"><div className="error-box">{matchDetailError}</div></section>;
+  }
+
+  const fixture = matchDetail?.fixture;
+  if (!fixture) {
+    return <section className="panel detail-panel"><div className="empty-panel">Dettaglio non disponibile per il fixture selezionato.</div></section>;
+  }
+
+  const decisionCards = matchDetail?.decision_cards || [];
+  const timeline = matchDetail?.timeline || [];
+  const oddsSummary = matchDetail?.odds_summary || {};
+  const oddsMarkets = Object.keys(oddsSummary);
+
+  return (
+    <section className="panel detail-panel">
+      <div className="panel-header">
+        <h3>Dettaglio match: {fixture.home} vs {fixture.away}</h3>
+        <button className="btn-secondary" onClick={onClose}>Chiudi dettaglio</button>
+      </div>
+
+      <div className="detail-head-meta">
+        <span className={`phase-badge ${phaseClass(fixture.phase)}`}>{phaseLabel(fixture.phase)}</span>
+        <span>{fixture.date} {fixture.time}</span>
+        <span>{fixture.league || "-"}</span>
+        <span>Score: {fixture.score?.home ?? "-"} - {fixture.score?.away ?? "-"}</span>
+        <span>Fonte: {fixture.source || "-"}</span>
+      </div>
+
+      <div className="detail-grid">
+        <article className="detail-block">
+          <h4>Consiglio valore (PLAY / BORDERLINE / NO BET)</h4>
+          {decisionCards.length === 0 ? (
+            <div className="empty-panel">Nessun modello disponibile o feature non ancora presenti per questo fixture.</div>
+          ) : (
+            <div className="decision-grid">
+              {decisionCards.map((card) => (
+                <div className="decision-card" key={`${card.market}-${card.run_id || card.pick}`}>
+                  <div className="decision-head">
+                    <strong>{marketLabel(card.market)}</strong>
+                    <span className={`value-badge ${valueClass(card.value_label)}`}>{card.value_label}</span>
+                  </div>
+                  <p className="decision-pick">{card.pick}</p>
+                  <div className="decision-metrics">
+                    <span>Conf.: {formatPercent(card.predicted_probability)}</span>
+                    <span>Quota media: {formatOdd(card.odd)}</span>
+                    <span>Edge: {formatEdge(card.edge)}</span>
+                  </div>
+                  <small>{card.value_reason}</small>
+                </div>
+              ))}
+            </div>
+          )}
+        </article>
+
+        <article className="detail-block">
+          <h4>Timeline eventi</h4>
+          {timeline.length === 0 ? (
+            <div className="empty-panel">Nessun evento disponibile per questo match.</div>
+          ) : (
+            <div className="timeline-list">
+              {timeline.map((event, idx) => (
+                <div className="timeline-item" key={`${event.minute}-${idx}`}>
+                  <span className="timeline-minute">{event.minute}</span>
+                  <div>
+                    <strong>{event.team || "-"}</strong>
+                    <p>{event.type || "Evento"}{event.detail ? ` - ${event.detail}` : ""}</p>
+                    {(event.player || event.assist || event.comments) && (
+                      <small>
+                        {[event.player, event.assist ? `assist ${event.assist}` : null, event.comments].filter(Boolean).join(" | ")}
+                      </small>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </article>
+      </div>
+
+      <article className="detail-block">
+        <h4>Quote medie bookmaker</h4>
+        {oddsMarkets.length === 0 ? (
+          <div className="empty-panel">Nessuna quota disponibile al momento.</div>
+        ) : (
+          <div className="odds-market-grid">
+            {oddsMarkets.map((marketKey) => (
+              <div className="odds-market-card" key={`odds-${marketKey}`}>
+                <h5>{marketLabel(marketKey)}</h5>
+                <div className="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Outcome</th>
+                        <th>Avg</th>
+                        <th>Min</th>
+                        <th>Max</th>
+                        <th>Book</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(oddsSummary[marketKey] || []).map((odd, idx) => (
+                        <tr key={`${marketKey}-${idx}`}>
+                          <td>{odd.outcome}</td>
+                          <td>{formatOdd(odd.avg_odd)}</td>
+                          <td>{formatOdd(odd.min_odd)}</td>
+                          <td>{formatOdd(odd.max_odd)}</td>
+                          <td>{odd.bookmakers ?? "-"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {matchDetail?.odds_updated_at && (
+          <small className="muted">Aggiornamento quote API: {matchDetail.odds_updated_at}</small>
+        )}
+      </article>
+    </section>
+  );
+}
+

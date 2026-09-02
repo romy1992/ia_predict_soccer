@@ -82,19 +82,55 @@ export function getDashboardMatchDetail(fixtureId, { withPredictions = true, mar
   return request(`/dashboard/match/${fixtureId}?${params.toString()}`);
 }
 
-export function triggerImport(asyncRun = true) {
+function normalizeJobBody(asyncRunOrPayload, fallbackPayload = {}) {
+  if (typeof asyncRunOrPayload === "object" && asyncRunOrPayload !== null) {
+    return asyncRunOrPayload;
+  }
+  return { ...fallbackPayload, async_run: Boolean(asyncRunOrPayload) };
+}
+
+export function triggerImport(asyncRunOrPayload = true, payload = {}) {
+  const body = normalizeJobBody(asyncRunOrPayload, payload);
   return request("/jobs/import", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ async_run: asyncRun }),
+    body: JSON.stringify(body),
   });
 }
 
-export function triggerRetrain(asyncRun = true) {
+export function triggerTodayUpdate(asyncRunOrPayload = true, payload = {}) {
+  const body = normalizeJobBody(asyncRunOrPayload, payload);
+  return request("/jobs/today-update", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+export function triggerFutureSync(asyncRunOrPayload = true, payload = {}) {
+  const body = normalizeJobBody(asyncRunOrPayload, payload);
+  return request("/jobs/future-sync", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+export function triggerSettlement(asyncRunOrPayload = true, payload = {}) {
+  const body = normalizeJobBody(asyncRunOrPayload, payload);
+  return request("/jobs/settlement", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+export function triggerRetrain(asyncRunOrPayload = true, payload = {}) {
+  const body = normalizeJobBody(asyncRunOrPayload, payload);
   return request("/jobs/retrain", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ async_run: asyncRun }),
+    body: JSON.stringify(body),
   });
 }
 
@@ -110,8 +146,28 @@ export function getMetrics(market, limit = 20) {
   return request(`/metrics/${market}?limit=${limit}`);
 }
 
-export function getJobs(limit = 50) {
-  return request(`/jobs/history?limit=${limit}`);
+export function getJobs(limit = 50, { jobType, status } = {}) {
+  const params = new URLSearchParams();
+  params.set("limit", String(limit));
+  if (jobType) {
+    params.set("job_type", jobType);
+  }
+  if (status) {
+    params.set("status", status);
+  }
+  return request(`/jobs/history?${params.toString()}`);
+}
+
+export function getDataQuality({ topN = 20, seasons, leagues } = {}) {
+  const params = new URLSearchParams();
+  params.set("top_n", String(topN));
+  if (Array.isArray(seasons) && seasons.length > 0) {
+    params.set("seasons", seasons.join(","));
+  }
+  if (Array.isArray(leagues) && leagues.length > 0) {
+    params.set("leagues", leagues.join(","));
+  }
+  return request(`/data/quality?${params.toString()}`);
 }
 
 export function getPredictions(limit = 50) {
@@ -119,6 +175,8 @@ export function getPredictions(limit = 50) {
 }
 
 export { API_BASE_URL };
+
+
 
 
 
