@@ -5,6 +5,8 @@ import time
 import requests
 from dotenv import load_dotenv
 
+from src.service_ia.pre_processing.api_sports_provider import ApiSportsProvider
+
 logging.basicConfig(level=logging.DEBUG)
 
 # LOAD PROPERTIES
@@ -16,6 +18,11 @@ API_ODDS_KEY = os.environ.get('API_ODDS_KEY')
 API_ODDS_BASE = os.environ.get('API_ODDS_BASE')
 API_ODDS_ACTUAL_BASE = os.environ.get('API_ODDS_ACTUAL_BASE')
 API_ODDS_HISTORIACAL_BASE = os.environ.get('API_ODDS_HISTORIACAL_BASE')
+_API_SPORTS_PROVIDER = ApiSportsProvider()
+
+
+def get_api_sports_provider() -> ApiSportsProvider:
+    return _API_SPORTS_PROVIDER
 
 
 def base_api_odds(type_api=None, path='', params=None):
@@ -47,24 +54,4 @@ def base_api_odds(type_api=None, path='', params=None):
 
 
 def base_api_statistics(path='', params=None):
-    def check_response(response):
-
-        # Check per utilizzo API
-        remaining = int(response.headers.get("x-ratelimit-requests-remaining", 0))
-        logging.info(f'Remaining {remaining}')
-        # if remaining == 0:
-        #     raise Exception(f'Stop API : Remaining {remaining} today.')
-
-        # Check per API utilizzate al minuto
-        rate_limit = int(response.headers.get("x-ratelimit-limit", 0))
-        rate_limit_remaining = int(response.headers.get("x-ratelimit-remaining", 0))
-        logging.info(f'Limit minute {rate_limit_remaining}/{rate_limit}')
-        if rate_limit_remaining == 0:
-            logging.info(f'Sleep process : over {rate_limit}')
-            time.sleep(60)
-
-        return response.json().get(
-            'response') if response.status_code == 200 and response.json() and response.json().get('response') else []
-
-    return check_response(
-        requests.get(url=f'{API_SPORTS_BASE}/{path}', headers={'x-apisports-key': API_SPORTS_KEY}, params=params))
+    return get_api_sports_provider().request(path=path, params=params)

@@ -8,16 +8,21 @@ di pre-processing in modo da poter addestrare cin grosse quantità anche in futu
 import json
 import logging
 import os
-from datetime import datetime, timedelta
+import hashlib
+from datetime import datetime, timedelta, timezone
 from statistics import mean
+from typing import Optional
+from uuid import uuid4
 
 import pandas as pd
 
 from src.repository.match_repository import MatchRepository
+from src.repository.odds_snapshot_repository import OddsSnapshotRepository
 from src.service_ia.config.app_config import load_app_config
 from src.service_ia.mapper.statistic_mapper import get_attribute_statistics, form_last_5_tot
-from src.service_ia.model.match import Match, Statistics, Odds
-from src.service_ia.utility.request_api import base_api_statistics
+from src.service_ia.model.match import Match, Statistics, Odds, OddsSnapshot
+from src.service_ia.pre_processing.api_sports_provider import ApiSportsProvider
+from src.service_ia.utility.request_api import base_api_statistics, get_api_sports_provider
 
 logging.basicConfig(level=logging.DEBUG)
 
@@ -34,10 +39,8 @@ logging.basicConfig(level=logging.DEBUG)
 61 (Francia) - 
 203 (Turchia)
 """
-_APP_CONFIG = load_app_config()
-LEAGUES = _APP_CONFIG.leagues
-SEASONS = _APP_CONFIG.seasons
 repo_match = MatchRepository()
+repo_snapshot = OddsSnapshotRepository()
 
 BASE_DIR = os.path.dirname(__file__)
 BET_FILE = os.path.join(BASE_DIR, '..', 'json', 'bet.json')
@@ -61,7 +64,7 @@ def map_base_match(match, id_fix, fixture, league, season):
         return team[value]
 
     return {
-        'id_match_fk': match.id_match_fk if match else None,
+        'id_match_fk': match.id_match_fk if match else str(uuid4()),
         'id_fixture': id_fix,
         'name_home': get_val(teams_home, 'name'),
         'id_team_home': get_val(teams_home, 'id'),
@@ -156,7 +159,7 @@ def map_statistic(match, stat, team, id_fix, fixture):
     }
 
 
-def map_odds(match, id_fix):
+def map_odds(match, id_fix, fixture_bookmakers=None):
     """
     Mappa le quote dei bookmakers
     :return: nuovo dizionario di quote
@@ -185,7 +188,8 @@ def map_odds(match, id_fix):
                 return 'dc'
         return None
 
-    fixture_bookmakers = base_api_statistics(path='odds', params={'fixture': id_fix})
+    if fixture_bookmakers is None:
+        fixture_bookmakers = base_api_statistics(path='odds', params={'fixture': id_fix})
     if len(fixture_bookmakers) > 0:
         # Inizia a creare il dizionario prima di aggiungere le quote
         bookmakers_filters = [bookmaker for bookmaker in fixture_bookmakers[0]['bookmakers']]
@@ -224,103 +228,250 @@ def map_odds(match, id_fix):
     return match.odds[0].to_dict() if match and match.odds and len(match.odds) > 0 else None
 
 
-def download_import_matches(seasons=None, leagues=None, is_next=False, current_league=2025):
+def _parse_iso_datetime(value: str | None) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+
+
+def _split_statuses(statuses: str | None) -> list[str]:
+    if not statuses:
+        return []
+    tokens: list[str] = []
+    for chunk in statuses.replace(",", "-").split("-"):
+        value = chunk.strip().upper()
+        if value:
+            tokens.append(value)
+    return tokens
+
+
+def _extract_line_value(raw_value: str) -> Optional[str]:
+    import re
+
+    matches = re.findall(r"([0-9]+(?:\.[0-9]+)?)", raw_value or "")
+    if not matches:
+        return None
+    return matches[-1]
+
+
+def _switch_market_name(bet_name: str, alternate_bet: str) -> Optional[str]:
+    match bet_name:
+        case 'Match Winner':
+            return 'h2h'
+        case 'Goals Over/Under':
+            if alternate_bet in ('Over 1.5', 'Under 1.5'):
+                return 'under_over_1_5'
+            if alternate_bet in ('Over 2.5', 'Under 2.5'):
+                return 'under_over_2_5'
+            if alternate_bet in ('Over 3.5', 'Under 3.5'):
+                return 'under_over_3_5'
+            if alternate_bet in ('Over 4.5', 'Under 4.5'):
+                return 'under_over_4_5'
+        case 'Both Teams Score':
+            return 'goal_no_goal'
+        case 'Corners Over Under':
+            return 'corners'
+        case 'Cards Over/Under':
+            return 'cards'
+        case 'Double Chance':
+            return 'dc'
+    return None
+
+
+def _safe_float(raw_value) -> Optional[float]:
+    if raw_value is None:
+        return None
+    try:
+        return float(str(raw_value).replace(',', '.'))
+    except Exception:
+        return None
+
+
+def map_odds_snapshots(id_match: str, id_fixture: int, fixture_bookmakers: list[dict]) -> list[OddsSnapshot]:
+    if not fixture_bookmakers:
+        return []
+
+    source = 'api_sports'
+    captured_raw = fixture_bookmakers[0].get('update') if isinstance(fixture_bookmakers[0], dict) else None
+    captured_at = _parse_iso_datetime(captured_raw) or datetime.now(timezone.utc)
+
+    allowed_bet_ids = {int(item['id']) for item in BET_BOOKMAKERS if isinstance(item, dict) and item.get('id') is not None}
+    snapshots: list[OddsSnapshot] = []
+
+    payload = fixture_bookmakers[0] if isinstance(fixture_bookmakers[0], dict) else {}
+    bookmakers = payload.get('bookmakers') or []
+    for bookmaker in bookmakers:
+        bookmaker_name = bookmaker.get('name') or 'unknown'
+        bets = bookmaker.get('bets') or []
+        for bet in bets:
+            bet_id = bet.get('id')
+            try:
+                bet_id_value = int(bet_id)
+            except Exception:
+                continue
+            if bet_id_value not in allowed_bet_ids:
+                continue
+
+            bet_name = bet.get('name') or ''
+            for value in bet.get('values') or []:
+                outcome_raw = str(value.get('value') or '').strip()
+                market_name = _switch_market_name(bet_name, outcome_raw)
+                if not market_name:
+                    continue
+
+                odd_value = _safe_float(value.get('odd'))
+                if odd_value is None or odd_value <= 0:
+                    continue
+
+                line_value = _extract_line_value(outcome_raw) if market_name.startswith('under_over_') or market_name in {'corners', 'cards'} else None
+                signature = "|".join(
+                    [
+                        str(id_fixture),
+                        bookmaker_name,
+                        market_name,
+                        'full_time',
+                        line_value or '',
+                        outcome_raw,
+                        captured_at.isoformat(),
+                        source,
+                    ]
+                )
+                snapshot_id = hashlib.sha1(signature.encode('utf-8')).hexdigest()
+                snapshots.append(
+                    OddsSnapshot(
+                        id_snapshot=snapshot_id,
+                        id_match=id_match,
+                        fixture_id=int(id_fixture),
+                        bookmaker=bookmaker_name,
+                        market=market_name,
+                        period='full_time',
+                        line=line_value,
+                        outcome=outcome_raw,
+                        odd=float(odd_value),
+                        captured_at=captured_at,
+                        source=source,
+                    )
+                )
+
+    return snapshots
+
+
+def download_import_matches(
+    seasons=None,
+    leagues=None,
+    is_next=False,
+    current_league: Optional[int] = None,
+    from_date: Optional[str] = None,
+    to_date: Optional[str] = None,
+    fixture_date: Optional[str] = None,
+    statuses: Optional[str] = None,
+    days_ahead: Optional[int] = None,
+    provider: Optional[ApiSportsProvider] = None,
+):
     """
     Scarica tutte le partite storiche o successive con odds, statistiche e dettagli vari salvandoli a db
     :param seasons: se valorizzato, scarica solo partite di quella stagione altrimenti prende tutte quelle censite
     :param leagues: se valorizzato, scarica solo partite di quella lega altrimenti prende tutte quelle censite
-    :param is_next: False = recupera le partite con status in @status_list. True = recupera partite non disputate in status NS
-    :return: salva tutto a sb
+    :param is_next: modalità legacy per recupero partite future
+    :param current_league: stagione corrente opzionale (vincolo legacy)
+    :param from_date: filtro data inizio (YYYY-MM-DD)
+    :param to_date: filtro data fine (YYYY-MM-DD)
+    :param fixture_date: filtro singola data (YYYY-MM-DD)
+    :param statuses: stati fixture separati da '-' o ','
+    :param days_ahead: se valorizzato costruisce una finestra futura da oggi
+    :return: report import con inserted/updated/skipped/failed
     """
-    seasons = SEASONS if seasons is None else seasons
-    leagues = LEAGUES if leagues is None else leagues
+    cfg = load_app_config()
+    seasons = cfg.seasons if seasons is None else seasons
+    leagues = cfg.leagues if leagues is None else leagues
+    provider = provider or get_api_sports_provider()
 
-    def calculate_date():
-        """
-        0: Oggi
-        -1: Ieri
-        -2: Altro ieri
-        +1: Domani
-        +2: DopoDomani
-        :return:
-        """
-        # Formato richiesto è esempio:"2026-02-12"
-        format_data = '%Y-%m-%d'
-        current_data = datetime.now()
-        # Scegliere da che giorno indietro si vuole andare per recuperare le partite
-        from_date = (current_data - timedelta(days=3)).strftime(format_data)
-        # Fino a ...
-        to_date = (current_data - timedelta(days=0)).strftime(format_data)
+    now_utc = datetime.now(timezone.utc)
+    if days_ahead is not None and days_ahead > 0:
+        from_date = now_utc.date().isoformat()
+        to_date = (now_utc.date() + timedelta(days=days_ahead)).isoformat()
+        statuses = statuses or "NS"
 
-        # Scegliere i giorni indietro che si vuole andare per recuperare le partite (ESEGUIRA' solo un giorno)
-        date = (current_data - timedelta(days=0)).strftime(format_data)
-        date_manual = '2026-08-16'
-        return from_date, to_date, date, date_manual
+    if not fixture_date and not from_date and not to_date:
+        from_date = (now_utc - timedelta(days=3)).date().isoformat()
+        to_date = now_utc.date().isoformat()
 
-    from_date, to_date, date, date_manual = calculate_date()
+    normalized_statuses = _split_statuses(statuses or ("NS" if is_next else status_list))
+    report = {
+        "inserted": 0,
+        "updated": 0,
+        "skipped": 0,
+        "failed": 0,
+        "fixtures_seen": 0,
+        "snapshots_upserted": 0,
+        "params": {
+            "seasons": seasons,
+            "leagues": leagues,
+            "from_date": from_date,
+            "to_date": to_date,
+            "fixture_date": fixture_date,
+            "statuses": normalized_statuses,
+            "is_next": is_next,
+            "days_ahead": days_ahead,
+        },
+        "errors": [],
+    }
 
     list_matches = []
     list_dict_matches = []
-    try:
-        for season in seasons:
-            logging.info(f'<<< Start season {season} >>>')
+    snapshot_buffer: list[OddsSnapshot] = []
 
-            for league in leagues:
-                logging.info(f'<<< Start season {season} for league {league} >>>')
+    for season in seasons:
+        logging.info('<<< Start season %s >>>', season)
 
-                if is_next:
-                    def switch_next_fix():
-                        """
-                        :return: restituisce il numero delle partite del prossimo round che varia in base ai campionati
-                        """
-                        match league:
-                            case 135 | 136 | 140 | 39:
-                                return 10
-                            case 78 | 61 | 94 | 203 | 492:
-                                return 9
-                            case _:
-                                return 18
+        if is_next and current_league and season != current_league:
+            continue
 
-                    fixtures = base_api_statistics(
-                        path='fixtures',
-                        params={
-                            'status': 'NS', 'league': league,
-                            'next': switch_next_fix(),
-                            'season': season
-                        }) if season == current_league else []
-                else:
-                    fixtures = base_api_statistics(
-                        path='fixtures',
-                        params={
-                            'from': from_date, 'to': to_date,
-                            'status': status_list, 'league': league,
-                            # 'date': date_manual,
-                            'season': season
-                        })
+        for league in leagues:
+            logging.info('<<< Start season %s for league %s >>>', season, league)
+            params = {
+                'league': league,
+                'season': season,
+            }
+            if fixture_date:
+                params['date'] = fixture_date
+            else:
+                if from_date:
+                    params['from'] = from_date
+                if to_date:
+                    params['to'] = to_date
+            if normalized_statuses:
+                params['status'] = '-'.join(normalized_statuses)
 
-                for fixture in fixtures:
-                    id_fix = fixture['fixture']['id']
+            fixtures = provider.get_fixtures(**params)
+            report['fixtures_seen'] += len(fixtures)
 
+            for fixture in fixtures:
+                try:
+                    id_fix = int(fixture['fixture']['id'])
+                except Exception:
+                    report['skipped'] += 1
+                    continue
+
+                try:
                     # Cerco in db se esiste già match
                     match = repo_match.filter_by(dict_search={'id_fixture': id_fix}).first()
 
                     # Mappa la base del match
-                    dict_match = map_base_match(match=match, id_fix=id_fix, fixture=fixture, league=league,
-                                                season=season)
+                    dict_match = map_base_match(match=match, id_fix=id_fix, fixture=fixture, league=league, season=season)
 
-                    def get_statistics():
-                        # Recupero le statistiche dal nodo fixture principale
-                        stat = fixture.get('statistics') or []
-                        # E se non ci sono chiama l'alternativa
-                        if len(stat) == 0 and not is_next:
-                            stat = base_api_statistics(path='fixtures/statistics', params={'fixture': id_fix})
-                        return stat
+                    # Recupero statistiche dalla fixture o endpoint dedicato.
+                    statistics = fixture.get('statistics') or []
+                    status_short = str((fixture.get('fixture') or {}).get('status', {}).get('short') or '').upper()
+                    if len(statistics) == 0 and status_short != 'NS':
+                        statistics = provider.get_fixture_statistics(id_fix)
 
-                    # Mappa una serie di statistiche
-                    statistics = get_statistics()
                     stats_objs = []
                     if len(statistics) > 0:
-                        logging.info(f'Statistics match {id_fix} : {statistics}')
                         stats_objs = [
                             Statistics(
                                 **map_statistic(
@@ -328,56 +479,64 @@ def download_import_matches(seasons=None, leagues=None, is_next=False, current_l
                                     statistic,
                                     'home' if statistic['team']['id'] == fixture['teams']['home']['id'] else 'away',
                                     id_fix,
-                                    fixture
+                                    fixture,
                                 )
                             )
                             for statistic in statistics
                         ]
 
-                    # Mappa le quote
-                    odds_map = map_odds(match, id_fix)
-                    odds_objs = None
-                    if odds_map:
-                        odds_objs = [Odds(**odds_map)]
+                    fixture_bookmakers = provider.get_fixture_odds(id_fix)
+                    odds_map = map_odds(match, id_fix, fixture_bookmakers=fixture_bookmakers)
+                    odds_objs = [Odds(**odds_map)] if odds_map else None
 
-                    # AGGIUNGO A LIVELLO DI ORM LE CLASSI
+                    snapshots = map_odds_snapshots(
+                        id_match=dict_match['id_match_fk'],
+                        id_fixture=id_fix,
+                        fixture_bookmakers=fixture_bookmakers,
+                    )
+                    snapshot_buffer.extend(snapshots)
+
                     dict_match['statistics'] = stats_objs
                     if odds_objs:
                         dict_match['odds'] = odds_objs
 
-                    # LE GESTISCO COME DIZIONARI
                     dict_match_json = dict(dict_match)
                     dict_match_json['statistics'] = [s.to_dict() for s in stats_objs]
                     if odds_objs:
                         dict_match_json['odds'] = [o.to_dict() for o in odds_objs]
 
                     if match is None:
-                        # LE AGGIUNGO PER PERSISTERE DOPO
-                        match = Match(**dict_match)
-                        list_matches.append(match)
+                        obj = Match(**dict_match)
+                        list_matches.append(obj)
                         list_dict_matches.append(dict_match_json)
+                        report['inserted'] += 1
                     else:
-                        new_match = Match(**dict_match)
-                        # Aggiorno man mano se esiste già quel match
-                        repo_match.save(new_match)
+                        repo_match.save(Match(**dict_match))
+                        report['updated'] += 1
+                except Exception as fixture_error:
+                    report['failed'] += 1
+                    report['errors'].append({'fixture_id': id_fix, 'error': str(fixture_error)})
+                    continue
 
-            if is_next:  # Creo le medie per i prossimi eventi
-                calculate_mean(with_season=season)
+    try:
+        repo_match.save_all(list_matches)
+    except Exception:
+        logging.error('Errore nel salvataggio massivo a db. File temporaneo salvato')
+        if len(list_dict_matches) > 0:
+            with open("error_save_dict.json", "w", encoding="utf-8") as f:
+                json.dump(list_dict_matches, f, ensure_ascii=False, indent=4)
 
-    except Exception as e:
-        logging.error('Errore durante il download : %s', e)
-    finally:
-        try:
-            # Salva tutto in maniera massiva SE NON ESISTE
-            repo_match.save_all(list_matches)
-        except Exception as err:
-            logging.error('Errore nel salvataggio a db. File temporaneo salvato')
-            # Salvataggio in un file JSON
-            if len(list_dict_matches) > 0:
-                with open("error_save_dict.json", "w", encoding="utf-8") as f:
-                    json.dump(list_dict_matches, f, ensure_ascii=False, indent=4)
+    try:
+        repo_snapshot.save_many(snapshot_buffer)
+        report['snapshots_upserted'] = len(snapshot_buffer)
+    except Exception as snapshot_error:
+        logging.error('Errore salvataggio odds_snapshot: %s', snapshot_error)
+        report['errors'].append({'fixture_id': None, 'error': f'odds_snapshot: {snapshot_error}'})
 
-    # TODO insert va bene nel primo inserimento ma questo sarà in continuo aggiornamento -> Testare con dati reali
+    if report['errors']:
+        report['errors'] = report['errors'][:100]
+
+    return report
 
 
 def re_processor_error():

@@ -1,6 +1,7 @@
 import uuid
+from datetime import datetime, timezone
 
-from sqlalchemy import Column, Integer, String, ForeignKey, JSON
+from sqlalchemy import Column, Integer, String, ForeignKey, JSON, Float, DateTime, Boolean
 from sqlalchemy.orm import declarative_base, relationship
 
 Base = declarative_base()
@@ -28,12 +29,22 @@ class Match(Base):
     referee = Column(String)  # Arbitro
     round = Column(String)  # Giornata
     season = Column(Integer)  # Stagione
+    is_settled = Column(Boolean, nullable=True)
+    settlement_status = Column(String, nullable=True)
+    settled_at = Column(String, nullable=True)
+    settlement_details = Column(JSON, nullable=True)
     statistics = relationship("Statistics",
                               back_populates="match",  # back_populates crea la relazione # 👈 One-to-Many
                               cascade="all, delete-orphan", lazy="selectin")
     odds = relationship("Odds",
                         back_populates="match",  # back_populates crea la relazione # 👈 One-to-Many
                         cascade="all, delete-orphan", lazy="selectin")
+    odds_snapshots = relationship(
+        "OddsSnapshot",
+        back_populates="match",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
 
     # Medie stagionali alla giornata corrente (cioè PRIMA CHE INIZIASSE LA PARTITA CORRENTE)
     mean_statistics = Column(JSON, nullable=True)
@@ -92,3 +103,28 @@ class Odds(Base):
 
     def to_dict(self):
         return {column.name: getattr(self, column.name) for column in self.__table__.columns}
+
+
+class OddsSnapshot(Base):
+    __tablename__ = 'odds_snapshot'
+    id_snapshot = Column(String(40), primary_key=True)
+    id_match = Column(String(36), ForeignKey("match.id_match_fk"), nullable=True)
+    fixture_id = Column(Integer, nullable=False)
+    bookmaker = Column(String, nullable=False)
+    market = Column(String, nullable=False)
+    period = Column(String, nullable=False, default='full_time')
+    line = Column(String, nullable=True)
+    outcome = Column(String, nullable=False)
+    odd = Column(Float, nullable=False)
+    captured_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+    source = Column(String, nullable=False, default='api_sports')
+
+    match = relationship("Match", back_populates="odds_snapshots")
+
+    def to_dict(self):
+        payload = {column.name: getattr(self, column.name) for column in self.__table__.columns}
+        if payload.get("captured_at") is not None:
+            payload["captured_at"] = payload["captured_at"].isoformat()
+        return payload
+
+
