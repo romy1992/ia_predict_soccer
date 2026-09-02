@@ -9,6 +9,19 @@ class HealthResponse(BaseModel):
     status: str
 
 
+class DatabaseHealthResponse(BaseModel):
+    status: str
+    database_url: str
+    schema: str
+    driver: Optional[str] = None
+    host: Optional[str] = None
+    port: Optional[int] = None
+    database: Optional[str] = None
+    username: Optional[str] = None
+    counts: dict[str, Optional[int]]
+    error: Optional[str] = None
+
+
 class PredictRequest(BaseModel):
     fixture_id: int = Field(..., description="Fixture id from match table")
 
@@ -25,6 +38,33 @@ class PredictResponse(BaseModel):
 class JobImportRequest(BaseModel):
     seasons: Optional[list[int]] = None
     leagues: Optional[list[int]] = None
+    from_date: Optional[str] = None
+    to_date: Optional[str] = None
+    fixture_date: Optional[str] = None
+    statuses: Optional[str] = None
+    days_ahead: Optional[int] = None
+    async_run: bool = True
+
+
+class JobTodayUpdateRequest(BaseModel):
+    target_date: Optional[str] = None
+    seasons: Optional[list[int]] = None
+    leagues: Optional[list[int]] = None
+    async_run: bool = True
+
+
+class JobFutureSyncRequest(BaseModel):
+    days_ahead: int = 7
+    seasons: Optional[list[int]] = None
+    leagues: Optional[list[int]] = None
+    async_run: bool = True
+
+
+class JobSettlementRequest(BaseModel):
+    from_date: Optional[str] = None
+    to_date: Optional[str] = None
+    seasons: Optional[list[int]] = None
+    leagues: Optional[list[int]] = None
     async_run: bool = True
 
 
@@ -38,11 +78,13 @@ class JobRetrainRequest(BaseModel):
 class JobResponse(BaseModel):
     queued: bool
     message: str
+    details: Optional[dict[str, Any]] = None
 
 
 class MetricsResponse(BaseModel):
     market: str
     latest: Optional[dict[str, Any]] = None
+    production: Optional[dict[str, Any]] = None
     history: list[dict[str, Any]] = []
 
 
@@ -83,10 +125,25 @@ class DashboardMatchDetailResponse(BaseModel):
     fixture: Optional[dict[str, Any]] = None
     timeline: list[dict[str, Any]]
     odds_summary: dict[str, list[dict[str, Any]]]
+    bookmaker_baseline: dict[str, Any] = {}
     decision_cards: list[dict[str, Any]]
     predictions: dict[str, Any]
     model_markets: list[str]
     odds_updated_at: Optional[str] = None
+
+
+class DataQualityResponse(BaseModel):
+    generated_at: str
+    source: dict[str, Any]
+    coverage: dict[str, Any]
+    anomalies: dict[str, Any]
+    distribution: dict[str, Any]
+    temporal_checks: dict[str, Any]
+    settlement: dict[str, Any]
+
+
+
+
 
 
 

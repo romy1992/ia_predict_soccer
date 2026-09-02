@@ -17,6 +17,10 @@ Questa guida copre i nuovi moduli introdotti per:
 - `docker-compose.yml`
 - `Dockerfile.api`
 
+## Struttura runtime canonica
+- runtime ufficiale backend/test/job: `src/`
+- cartella legacy esperimenti: `service_ia/` (vedi `service_ia/README_LEGACY.md`)
+
 ## Configurazione
 Nel file `properties/config.env` puoi aggiungere:
 
@@ -25,8 +29,18 @@ Nel file `properties/config.env` puoi aggiungere:
 - `APP_SEASONS=2025,2026`
 - `SCHEDULER_HOUR=23`
 - `SCHEDULER_MINUTE=0`
+- `DATABASE_SCHEMA=public`
 
 Se non li imposti, vengono usati i default del codice.
+
+### Policy DATABASE_URL (dev/test/prod)
+- `dev locale`: imposta `DATABASE_URL` verso l'istanza locale scelta (es. `localhost:5432`)
+- `docker compose`: `api` e `scheduler` puntano entrambi a `postgresql://postgres:postgres@db:5432/match_db`
+- `test`: usa un DB isolato tramite override env (`DATABASE_URL`) prima di lanciare i test
+- verifica target attivo con `GET /health/database` (host/db/schema + conteggi tabelle)
+
+Nel setup corrente locale la sorgente runtime e impostata su:
+- `DATABASE_URL=postgresql://postgres:postgres@localhost:5432/match_db`
 
 Per il frontend React puoi usare anche:
 - `VITE_API_BASE_URL=http://localhost:8000` in `frontend/.env`
@@ -91,6 +105,9 @@ Il job giornaliero esegue:
 
 ## Trigger manuale da API
 - `POST /jobs/import`
+- `POST /jobs/today-update`
+- `POST /jobs/future-sync`
+- `POST /jobs/settlement`
 - `POST /jobs/retrain`
 
 Entrambi supportano `async_run=true/false`.
@@ -101,6 +118,18 @@ Le predizioni vengono loggate in:
 
 Le metriche/versioni modello sono consultabili in:
 - `GET /metrics/{market}`
+
+Endpoint utili Data Platform:
+- `GET /health/database`
+- `GET /odds/snapshots/{fixture_id}`
+- `GET /settlement/overview`
+- `GET /data/quality`
+- `GET /jobs/history?limit=100&job_type=import&status=success`
+- `GET /dashboard/match/{fixture_id}` include anche `bookmaker_baseline` (implied/fair probabilities)
+
+Parametri utili:
+- `POST /jobs/import` accetta `from_date`, `to_date`, `fixture_date`, `statuses`, `seasons`, `leagues`, `async_run`
+- `GET /data/quality` accetta `top_n`, `seasons` (csv), `leagues` (csv)
 
 Endpoint dashboard dedicati alla UI React:
 - `GET /dashboard/overview?target_date=YYYY-MM-DD`
@@ -117,6 +146,11 @@ Nota dati dashboard:
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/smoke_api.ps1
 ```
+
+
+
+
+
 
 
 

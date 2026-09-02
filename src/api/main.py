@@ -12,22 +12,37 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from src.api.dashboard_service import DashboardService
 from src.api.schemas import (
+    DataQualityResponse,
+    DatabaseHealthResponse,
     DashboardDayResponse,
     DashboardLiveResponse,
     DashboardMatchDetailResponse,
     DashboardOverviewResponse,
     HealthResponse,
+    JobFutureSyncRequest,
     JobImportRequest,
     JobResponse,
     JobRetrainRequest,
+    JobSettlementRequest,
+    JobTodayUpdateRequest,
     JobsHistoryResponse,
     MetricsResponse,
     PredictRequest,
     PredictResponse,
     PredictionLogResponse,
 )
+from src.data.quality_report_service import DataQualityService
+from src.repository.base.database_audit import get_database_audit
+from src.repository.odds_snapshot_repository import OddsSnapshotRepository
 from src.jobs.job_history import JobHistory
-from src.jobs.scheduler import run_manual_import, run_manual_retrain
+from src.jobs.scheduler import (
+    run_manual_future_sync,
+    run_manual_import,
+    run_manual_retrain,
+    run_manual_settlement,
+    run_manual_today_update,
+)
+from src.service_ia.pre_processing.settlement_service import SettlementService
 from src.service_ia.training.market_service.filter_market_service import FilterMarketService
 from src.service_ia.training.model_registry import ModelRegistry
 from src.service_ia.training.prediction_logger import PredictionLogger
@@ -112,6 +127,12 @@ def health() -> HealthResponse:
     return HealthResponse(status="ok")
 
 
+@app.get("/health/database", response_model=DatabaseHealthResponse)
+def health_database() -> DatabaseHealthResponse:
+    payload = get_database_audit()
+    return DatabaseHealthResponse(**payload)
+
+
 @app.get("/markets")
 def markets() -> dict[str, list[str]]:
     # sorted for stable UI rendering
@@ -126,6 +147,23 @@ def _parse_iso_date(value: Optional[str]) -> date:
         return datetime.fromisoformat(value).date()
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=f"Data non valida: {value}") from exc
+
+
+def _parse_int_csv(value: Optional[str], field_name: str) -> Optional[list[int]]:
+    if not value:
+        return None
+
+    items = [item.strip() for item in value.split(",") if item.strip()]
+    if not items:
+        return None
+
+    parsed: list[int] = []
+    for item in items:
+        try:
+            parsed.append(int(item))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=f"Valore non valido per {field_name}: {item}") from exc
+    return parsed
 
 
 @app.get("/dashboard/overview", response_model=DashboardOverviewResponse)
@@ -197,11 +235,11 @@ def predict(market: str, payload: PredictRequest) -> PredictResponse:
         raise HTTPException(status_code=400, detail=f"Mercato non supportato: {market}")
 
     registry = ModelRegistry()
-    latest = registry.get_latest(market=market)
-    if not latest:
+    active = registry.get_production(market=market) or registry.get_latest(market=market)
+    if not active:
         raise HTTPException(status_code=404, detail=f"Nessun modello disponibile per mercato {market}")
 
-    model_path = latest.get("model_path")
+    model_path = active.get("model_path")
     if not model_path or not os.path.exists(model_path):
         raise HTTPException(status_code=404, detail=f"File modello non trovato: {model_path}")
 
@@ -212,9 +250,9 @@ def predict(market: str, payload: PredictRequest) -> PredictResponse:
     if frame is None or frame.empty:
         raise HTTPException(status_code=404, detail=f"Fixture non trovata o feature insufficienti: {payload.fixture_id}")
 
-    X = frame.drop(columns=["market", "id_fixture", "season"], errors="ignore")
+    X = frame.drop(columns=["market", "id_fixture", "season", "league", "prediction_at"], errors="ignore")
 
-    selected_features = latest.get("feature_names") or []
+    selected_features = active.get("feature_names") or []
     if selected_features:
         for feature in selected_features:
             if feature not in X.columns:
@@ -229,8 +267,8 @@ def predict(market: str, payload: PredictRequest) -> PredictResponse:
         market=market,
         prediction=pred,
         probability=prob,
-        model_run_id=latest.get("run_id"),
-        extra={"model_name": latest.get("model_name")},
+        model_run_id=active.get("run_id"),
+        extra={"model_name": active.get("model_name")},
     )
 
     return PredictResponse(
@@ -238,38 +276,166 @@ def predict(market: str, payload: PredictRequest) -> PredictResponse:
         fixture_id=payload.fixture_id,
         prediction=pred,
         probability=prob,
-        model_run_id=latest.get("run_id"),
-        model_name=latest.get("model_name"),
+        model_run_id=active.get("run_id"),
+        model_name=active.get("model_name"),
     )
 
 
 @app.post("/jobs/import", response_model=JobResponse)
 def trigger_import(payload: JobImportRequest, background_tasks: BackgroundTasks) -> JobResponse:
+    params = {
+        "seasons": payload.seasons,
+        "leagues": payload.leagues,
+        "from_date": payload.from_date,
+        "to_date": payload.to_date,
+        "fixture_date": payload.fixture_date,
+        "statuses": payload.statuses,
+        "days_ahead": payload.days_ahead,
+    }
     if payload.async_run:
-        background_tasks.add_task(run_manual_import, payload.seasons, payload.leagues)
-        return JobResponse(queued=True, message="Import job queued")
+        row = JobHistory().queue_job(job_type="import", params=params)
+        background_tasks.add_task(
+            run_manual_import,
+            seasons=payload.seasons,
+            leagues=payload.leagues,
+            from_date=payload.from_date,
+            to_date=payload.to_date,
+            fixture_date=payload.fixture_date,
+            statuses=payload.statuses,
+            days_ahead=payload.days_ahead,
+            is_next=False,
+            job_id=row["job_id"],
+            job_type="import",
+        )
+        return JobResponse(queued=True, message="Import job queued", details={"job_id": row["job_id"]})
 
-    run_manual_import(seasons=payload.seasons, leagues=payload.leagues)
-    return JobResponse(queued=False, message="Import job completed")
+    report = run_manual_import(
+        seasons=payload.seasons,
+        leagues=payload.leagues,
+        from_date=payload.from_date,
+        to_date=payload.to_date,
+        fixture_date=payload.fixture_date,
+        statuses=payload.statuses,
+        days_ahead=payload.days_ahead,
+        is_next=False,
+    )
+    return JobResponse(queued=False, message="Import job completed", details=report)
+
+
+@app.post("/jobs/today-update", response_model=JobResponse)
+def trigger_today_update(payload: JobTodayUpdateRequest, background_tasks: BackgroundTasks) -> JobResponse:
+    params = {
+        "target_date": payload.target_date,
+        "seasons": payload.seasons,
+        "leagues": payload.leagues,
+    }
+    if payload.async_run:
+        row = JobHistory().queue_job(job_type="today_update", params=params)
+        background_tasks.add_task(
+            run_manual_today_update,
+            target_date=payload.target_date,
+            seasons=payload.seasons,
+            leagues=payload.leagues,
+            job_id=row["job_id"],
+        )
+        return JobResponse(queued=True, message="Today update job queued", details={"job_id": row["job_id"]})
+
+    report = run_manual_today_update(
+        target_date=payload.target_date,
+        seasons=payload.seasons,
+        leagues=payload.leagues,
+    )
+    return JobResponse(queued=False, message="Today update job completed", details=report)
+
+
+@app.post("/jobs/future-sync", response_model=JobResponse)
+def trigger_future_sync(payload: JobFutureSyncRequest, background_tasks: BackgroundTasks) -> JobResponse:
+    if payload.days_ahead < 1:
+        raise HTTPException(status_code=400, detail="days_ahead deve essere >= 1")
+
+    params = {
+        "days_ahead": payload.days_ahead,
+        "seasons": payload.seasons,
+        "leagues": payload.leagues,
+    }
+    if payload.async_run:
+        row = JobHistory().queue_job(job_type="future_sync", params=params)
+        background_tasks.add_task(
+            run_manual_future_sync,
+            days_ahead=payload.days_ahead,
+            seasons=payload.seasons,
+            leagues=payload.leagues,
+            job_id=row["job_id"],
+        )
+        return JobResponse(queued=True, message="Future sync job queued", details={"job_id": row["job_id"]})
+
+    report = run_manual_future_sync(
+        days_ahead=payload.days_ahead,
+        seasons=payload.seasons,
+        leagues=payload.leagues,
+    )
+    return JobResponse(queued=False, message="Future sync job completed", details=report)
+
+
+@app.post("/jobs/settlement", response_model=JobResponse)
+def trigger_settlement(payload: JobSettlementRequest, background_tasks: BackgroundTasks) -> JobResponse:
+    params = {
+        "from_date": payload.from_date,
+        "to_date": payload.to_date,
+        "seasons": payload.seasons,
+        "leagues": payload.leagues,
+    }
+    if payload.async_run:
+        row = JobHistory().queue_job(job_type="settlement", params=params)
+        background_tasks.add_task(
+            run_manual_settlement,
+            from_date=payload.from_date,
+            to_date=payload.to_date,
+            seasons=payload.seasons,
+            leagues=payload.leagues,
+            job_id=row["job_id"],
+        )
+        return JobResponse(queued=True, message="Settlement job queued", details={"job_id": row["job_id"]})
+
+    report = run_manual_settlement(
+        from_date=payload.from_date,
+        to_date=payload.to_date,
+        seasons=payload.seasons,
+        leagues=payload.leagues,
+    )
+    return JobResponse(queued=False, message="Settlement job completed", details=report)
+
+
+@app.get("/settlement/overview")
+def settlement_overview(limit: int = 200, settlement_status: Optional[str] = None) -> dict[str, Any]:
+    service = SettlementService()
+    return service.settlement_overview(limit=limit, settlement_status=settlement_status)
 
 
 @app.post("/jobs/retrain", response_model=JobResponse)
 def trigger_retrain(payload: JobRetrainRequest, background_tasks: BackgroundTasks) -> JobResponse:
+    params = {
+        "markets": payload.markets,
+        "seasons": payload.seasons,
+        "selection_method": payload.selection_method,
+    }
     if payload.async_run:
+        row = JobHistory().queue_job(job_type="retrain", params=params)
         background_tasks.add_task(
             run_manual_retrain,
-            payload.markets,
-            payload.seasons,
-            payload.selection_method,
+            markets=payload.markets,
+            seasons=payload.seasons,
+            selection_method=payload.selection_method,
+            job_id=row["job_id"],
         )
-        return JobResponse(queued=True, message="Retrain job queued")
+        return JobResponse(queued=True, message="Retrain job queued", details={"job_id": row["job_id"]})
 
-    run_manual_retrain(
+    report = run_manual_retrain(
         markets=payload.markets,
         seasons=payload.seasons,
         selection_method=payload.selection_method,
     )
-    return JobResponse(queued=False, message="Retrain job completed")
+    return JobResponse(queued=False, message="Retrain job completed", details=report)
 
 
 @app.get("/metrics/{market}", response_model=MetricsResponse)
@@ -279,9 +445,10 @@ def metrics(market: str, limit: int = 30) -> MetricsResponse:
 
     registry = ModelRegistry()
     latest = registry.get_latest(market=market)
+    production = registry.get_production(market=market)
     history = registry.tail(limit=limit, market=market)
 
-    return MetricsResponse(market=market, latest=latest, history=history)
+    return MetricsResponse(market=market, latest=latest, production=production, history=history)
 
 
 @app.get("/metrics/summary")
@@ -289,9 +456,30 @@ def metrics_summary() -> dict[str, Any]:
     return {"summary": _load_summary()}
 
 
+@app.get("/data/quality", response_model=DataQualityResponse)
+def data_quality(top_n: int = 20, seasons: Optional[str] = None, leagues: Optional[str] = None) -> DataQualityResponse:
+    service = DataQualityService()
+    payload = service.build_report(
+        top_n=top_n,
+        seasons=_parse_int_csv(seasons, "seasons"),
+        leagues=_parse_int_csv(leagues, "leagues"),
+    )
+    return DataQualityResponse(**payload)
+
+
+@app.get("/odds/snapshots/{fixture_id}")
+def odds_snapshots(fixture_id: int) -> dict[str, Any]:
+    rows = OddsSnapshotRepository().opening_latest_closing(fixture_id=fixture_id)
+    return {
+        "fixture_id": fixture_id,
+        "rows": rows,
+        "total": len(rows),
+    }
+
+
 @app.get("/jobs/history", response_model=JobsHistoryResponse)
-def jobs_history(limit: int = 100, job_type: Optional[str] = None) -> JobsHistoryResponse:
-    rows = JobHistory().tail(limit=limit, job_type=job_type)
+def jobs_history(limit: int = 100, job_type: Optional[str] = None, status: Optional[str] = None) -> JobsHistoryResponse:
+    rows = JobHistory().tail(limit=limit, job_type=job_type, status=status)
     return JobsHistoryResponse(rows=rows)
 
 
@@ -299,6 +487,21 @@ def jobs_history(limit: int = 100, job_type: Optional[str] = None) -> JobsHistor
 def predictions_log(limit: int = 100, market: Optional[str] = None) -> PredictionLogResponse:
     rows = PredictionLogger().tail(limit=limit, market=market)
     return PredictionLogResponse(rows=rows)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
