@@ -13,6 +13,7 @@ Questo package contiene componenti production-oriented introdotti in Soccer Orac
 - `experts/`: Team Strength, Goal Distribution, Statistics, Market/Odds, Direct Market (EXP-01..05).
 - `markets/market_1x2.py`: vero mercato 1X2 multiclass (HOME/DRAW/AWAY), nessun mapping draw->away (MARKET-01).
 - `markets/market_double_chance.py`: Double Chance derivata da 1X2 coerente (nessun training proprio, solo derivazione aritmetica) (MARKET-02).
+- `markets/btts/btts_market.py`: BTTS consolidato, benchmark score_distribution (EXP-02) vs direct_expert 'goal_no_goal' (EXP-05) vs ensemble, selezione via `champion_probability_score` e calibrazione OOF temporale del solo vincitore (MARKET-03).
 
 ## Esecuzione rapida
 ```powershell
@@ -22,6 +23,7 @@ python -m src.ml.datasets.build_dataset_runner --market under_over_2_5 --seasons
 Output:
 - summary JSON su stdout
 - opzionale snapshot CSV+metadata in `best_models/datasets/`
+
 
 
 

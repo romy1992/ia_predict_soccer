@@ -58,6 +58,7 @@ Prima di ogni task viene applicata la premessa in `AI_MASTER_PROMPT.md`:
 - [x] EXP-05
 - [x] MARKET-01
 - [x] MARKET-02
+- [x] MARKET-03
 
 ## Estensioni introdotte
 - settlement job idempotente con completezza finale (`/jobs/settlement`)
@@ -82,6 +83,7 @@ Prima di ogni task viene applicata la premessa in `AI_MASTER_PROMPT.md`:
 - **Fase ORACLE EXPERTS completata (EXP-01..05)**
 - Vero mercato 1X2 multiclass (HOME/DRAW/AWAY, nessun mapping draw->away): dataset dedicato, GridSearchCV logistic/random_forest con validazione temporale, metriche multiclasse dedicate (log_loss/brier generalizzato/ECE su confidence/AUC OvR) e calibrazione multiclasse via `CalibratedClassifierCV` (`src/ml/markets/market_1x2.py`, `src/ml/evaluation/multiclass_probability_metrics.py`, `src/ml/calibration/multiclass_calibration_service.py`)
 - Double Chance derivata da 1X2 coerente (nessun training proprio): P(1X)=P(HOME)+P(DRAW), P(12)=P(HOME)+P(AWAY), P(X2)=P(DRAW)+P(AWAY), fair odds e wrapper batch su `Market1x2Expert` (`src/ml/markets/market_double_chance.py`)
+- BTTS consolidato (score distribution EXP-02 vs direct expert 'goal_no_goal' EXP-05): benchmark comparativo (score_distribution/direct_expert/ensemble) con selezione via `champion_probability_score`, calibrazione OOF temporale (Platt/isotonic) del solo approccio vincente, P(Yes)+P(No)=1 garantito per costruzione (No=1-Yes); dataset builder end-to-end che riusa rating point-in-time (`TeamStrengthExpert`, EXP-01) + score distribution Poisson (`GoalDistributionExpert`, EXP-02) + feature/target 'goal_no_goal' (`FilterMarketService`, EXP-05); orchestratore `run_btts_benchmark(_from_db)` che registra il calibratore vincente come 'candidate' (mai 'production' automatica) (`src/ml/markets/btts/btts_market.py`)
 
 ## Migrazioni applicate (locale + docker)
 - locale: `alembic stamp 55bbb5f0a367` + `alembic upgrade head`
@@ -92,6 +94,8 @@ Prima di ogni task viene applicata la premessa in `AI_MASTER_PROMPT.md`:
 - verifica rapida: tabella `match` letta con volume storico (>47k righe)
 
 Note: gli stati sopra sono riferiti all'implementazione tecnica nel branch corrente; la validazione finale dipende dall'esecuzione acceptance/test su ambiente dati reale.
+
+
 
 
 
