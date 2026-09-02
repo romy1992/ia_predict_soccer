@@ -6,16 +6,25 @@ import os
 from dataclasses import dataclass
 from typing import Any, Optional
 
-import numpy as np
+import joblib
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier, StackingClassifier, VotingClassifier
+from sklearn.feature_selection import RFE, SelectKBest
 from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import f1_score, make_scorer
-from sklearn.model_selection import GridSearchCV, StratifiedKFold, cross_val_score
+from sklearn.model_selection import GridSearchCV, cross_val_score
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
+from src.ml.evaluation.probability_metrics import (
+    champion_probability_score,
+    compute_probability_metrics,
+    grouped_probability_report,
+    temporal_oof_probabilities,
+)
+from src.ml.calibration.calibration_service import CalibrationService
+from src.ml.validation.temporal_split import expanding_window_splits
 from src.service_ia.pre_processing.feature_selection import FeatureSelectionService
 from src.service_ia.training.market_service.filter_market_service import FilterMarketService
 from src.service_ia.training.utility_training.save_load import SaveLoad
@@ -34,13 +43,35 @@ class MarketTrainResult:
     details: dict[str, Any]
 
 
-def _build_cv(y: pd.Series) -> Optional[StratifiedKFold]:
-    class_counts = y.value_counts()
-    if class_counts.empty or class_counts.min() < 2:
+def _build_temporal_cv(df: pd.DataFrame) -> Optional[list[tuple[list[int], list[int]]]]:
+    if df.empty or "prediction_at" not in df.columns:
         return None
 
-    splits = int(max(2, min(5, class_counts.min())))
-    return StratifiedKFold(n_splits=splits, shuffle=True, random_state=42)
+    min_train = max(30, int(len(df) * 0.45))
+    min_valid = max(10, int(len(df) * 0.1))
+    splits = expanding_window_splits(
+        frame=df,
+        time_col="prediction_at",
+        n_splits=5,
+        min_train_size=min_train,
+        min_valid_size=min_valid,
+    )
+    if not splits:
+        return None
+    return splits
+
+
+def _filter_valid_splits(y: pd.Series, splits: list[tuple[list[int], list[int]]]) -> list[tuple[list[int], list[int]]]:
+    valid_splits: list[tuple[list[int], list[int]]] = []
+    for train_idx, valid_idx in splits:
+        if len(train_idx) == 0 or len(valid_idx) == 0:
+            continue
+        if y.iloc[train_idx].nunique() < 2:
+            continue
+        if y.iloc[valid_idx].nunique() < 2:
+            continue
+        valid_splits.append((train_idx, valid_idx))
+    return valid_splits
 
 
 def _safe_float(v: Any) -> float:
@@ -60,12 +91,101 @@ def _to_serializable_dict(values: dict[str, Any]) -> dict[str, Any]:
     return serializable
 
 
-def _model_space() -> dict[str, tuple[Pipeline, dict[str, list[Any]]]]:
+def _extract_selected_features(estimator: Any, feature_names: list[str]) -> list[str]:
+    if not feature_names:
+        return []
+
+    selector = None
+    if hasattr(estimator, "named_steps"):
+        selector = estimator.named_steps.get("selector")
+
+    if selector is None or not hasattr(selector, "get_support"):
+        return feature_names
+
+    try:
+        support = selector.get_support()
+    except Exception:
+        return feature_names
+
+    if len(support) != len(feature_names):
+        return feature_names
+    return [name for name, keep in zip(feature_names, support) if bool(keep)]
+
+
+def _evaluate_estimator(
+    estimator: Any,
+    X: pd.DataFrame,
+    y: pd.Series,
+    cv_splits: list[tuple[list[int], list[int]]],
+    market: str,
+    season_series: pd.Series,
+    league_series: pd.Series,
+) -> tuple[dict[str, Any], float]:
+    oof_frame = temporal_oof_probabilities(
+        estimator=estimator,
+        X=X,
+        y=y,
+        cv_splits=cv_splits,
+    )
+    if oof_frame.empty:
+        raise ValueError("Nessun fold valido per calcolo metriche probabilistiche")
+
+    p1 = oof_frame["probability"].astype(float).to_numpy()
+    y_eval = oof_frame["y_true"].astype(int).to_numpy()
+    probability_metrics = compute_probability_metrics(y_true=y_eval, probabilities=p1, n_bins=10)
+
+    report_frame = pd.DataFrame(
+        {
+            "market": [market] * len(oof_frame),
+            "season": season_series.iloc[oof_frame["index"].to_numpy()].to_numpy(),
+            "league": league_series.iloc[oof_frame["index"].to_numpy()].to_numpy(),
+            "y": y_eval,
+            "probability": p1,
+        }
+    )
+    grouped_report = grouped_probability_report(
+        frame=report_frame,
+        probability_col="probability",
+        target_col="y",
+        group_cols=["market", "season", "league"],
+        n_bins=10,
+    )
+
+    score = champion_probability_score(
+        metrics=probability_metrics,
+        f1_weighted=float(f1_score(y_eval, (p1 >= 0.5).astype(int), average="weighted", zero_division=0)),
+    )
+    return {"probability_metrics": probability_metrics, "grouped_metrics": grouped_report}, float(score)
+
+
+def _model_space(selection_method: str, feature_count: int) -> dict[str, tuple[Pipeline, dict[str, list[Any]]]]:
+    selector_logistic = FeatureSelectionService.build_selector(selection_method, feature_count)
+    selector_rf = FeatureSelectionService.build_selector(selection_method, feature_count)
+
+    selector_grid_logistic: dict[str, list[Any]] = {}
+    selector_grid_rf: dict[str, list[Any]] = {}
+
+    if isinstance(selector_logistic, SelectKBest):
+        selector_grid_logistic = {
+            "selector__k": sorted(set([max(1, min(feature_count, value)) for value in [10, 20, 30]]))
+        }
+        selector_grid_rf = {
+            "selector__k": sorted(set([max(1, min(feature_count, value)) for value in [10, 20, 30]]))
+        }
+    elif isinstance(selector_logistic, RFE):
+        selector_grid_logistic = {
+            "selector__n_features_to_select": sorted(set([max(1, min(feature_count, value)) for value in [8, 12, 20]]))
+        }
+        selector_grid_rf = {
+            "selector__n_features_to_select": sorted(set([max(1, min(feature_count, value)) for value in [8, 12, 20]]))
+        }
+
     return {
         "logistic": (
             Pipeline(
                 steps=[
                     ("imputer", SimpleImputer(strategy="median")),
+                    ("selector", selector_logistic),
                     ("scaler", StandardScaler()),
                     (
                         "model",
@@ -78,6 +198,7 @@ def _model_space() -> dict[str, tuple[Pipeline, dict[str, list[Any]]]]:
                 ]
             ),
             {
+                **selector_grid_logistic,
                 "model__C": [0.05, 0.1, 0.5, 1.0, 2.0],
                 "model__solver": ["lbfgs", "liblinear"],
             },
@@ -86,6 +207,7 @@ def _model_space() -> dict[str, tuple[Pipeline, dict[str, list[Any]]]]:
             Pipeline(
                 steps=[
                     ("imputer", SimpleImputer(strategy="median")),
+                    ("selector", selector_rf),
                     (
                         "model",
                         RandomForestClassifier(
@@ -98,6 +220,7 @@ def _model_space() -> dict[str, tuple[Pipeline, dict[str, list[Any]]]]:
                 ]
             ),
             {
+                **selector_grid_rf,
                 "model__max_depth": [None, 8, 16, 24],
                 "model__min_samples_split": [2, 5, 10],
                 "model__min_samples_leaf": [1, 2, 4],
@@ -126,53 +249,89 @@ def train_market(
             details={},
         )
 
-    y = df["y"].astype(int)
-    X = df.drop(columns=["y", "market"], errors="ignore")
-    X = X.drop(columns=["id_fixture", "season"], errors="ignore")
+    if "prediction_at" in df.columns:
+        df["prediction_at"] = pd.to_datetime(df["prediction_at"], utc=True, errors="coerce")
+        df = df.dropna(subset=["prediction_at"]).sort_values(by=["prediction_at", "id_fixture"]).reset_index(drop=True)
+    else:
+        df = df.sort_values(by=["season", "id_fixture"]).reset_index(drop=True)
 
-    cv = _build_cv(y)
-    if cv is None:
+    y = df["y"].astype(int)
+    season_series = df["season"] if "season" in df.columns else pd.Series([None] * len(df))
+    league_series = df["league"] if "league" in df.columns else pd.Series([None] * len(df))
+    X = df.drop(columns=["y", "market"], errors="ignore")
+    X = X.drop(columns=["id_fixture", "season", "league", "prediction_at"], errors="ignore")
+    feature_names = X.columns.tolist()
+
+    if X.empty:
         return MarketTrainResult(
             market=market,
             rows=len(df),
-            status="skipped_single_class_or_few_rows",
+            status="skipped_no_feature_columns",
             champion=None,
             best_cv_f1=None,
             selected_features=[],
-            details={"classes": y.value_counts().to_dict()},
+            details={"reason": "all feature columns removed"},
         )
 
-    # 1) Feature selection
-    if selection_method == "rfe":
-        selected = FeatureSelectionService.select_rfe(X=X, y=y, n_features_to_select=min(20, X.shape[1]))
-    else:
-        selected = FeatureSelectionService.select_k_best(X=X, y=y, k=min(30, X.shape[1]))
+    raw_splits = _build_temporal_cv(df)
+    if raw_splits is None:
+        return MarketTrainResult(
+            market=market,
+            rows=len(df),
+            status="skipped_insufficient_rows_for_temporal_cv",
+            champion=None,
+            best_cv_f1=None,
+            selected_features=[],
+            details={"classes": y.value_counts().to_dict(), "reason": "no temporal splits"},
+        )
 
-    X_selected = selected.X_selected
-    feature_names = selected.selected_features
+    cv_splits = _filter_valid_splits(y=y, splits=raw_splits)
+    if len(cv_splits) < 2:
+        return MarketTrainResult(
+            market=market,
+            rows=len(df),
+            status="skipped_invalid_temporal_folds",
+            champion=None,
+            best_cv_f1=None,
+            selected_features=[],
+            details={"classes": y.value_counts().to_dict(), "reason": "temporal folds with single-class train/valid"},
+        )
 
     scorer = make_scorer(f1_score, average="weighted", zero_division=0)
     model_results: dict[str, dict[str, Any]] = {}
     fitted_estimators: dict[str, Any] = {}
 
-    for model_name, (pipeline, grid) in _model_space().items():
+    for model_name, (pipeline, grid) in _model_space(selection_method=selection_method, feature_count=X.shape[1]).items():
         search = GridSearchCV(
             estimator=pipeline,
             param_grid=grid,
             scoring=scorer,
-            cv=cv,
+            cv=cv_splits,
             n_jobs=-1,
             verbose=0,
         )
-        search.fit(X_selected, y)
-        fitted_estimators[model_name] = search.best_estimator_
+        search.fit(X, y)
+        best_estimator = search.best_estimator_
+        fitted_estimators[model_name] = best_estimator
+
+        prob_report, ranking_score = _evaluate_estimator(
+            estimator=best_estimator,
+            X=X,
+            y=y,
+            cv_splits=cv_splits,
+            market=market,
+            season_series=season_series,
+            league_series=league_series,
+        )
         model_results[model_name] = {
             "best_cv_f1": _safe_float(search.best_score_),
+            "selection_score": ranking_score,
             "best_params": _to_serializable_dict(search.best_params_),
+            **prob_report,
         }
 
     # 2) Ensemble (voting + stacking) costruiti sui 2 migliori modelli base
-    ranked = sorted(model_results.items(), key=lambda kv: kv[1]["best_cv_f1"], reverse=True)
+    ranked = sorted(model_results.items(), key=lambda kv: kv[1].get("selection_score", -1.0), reverse=True)
     top_names = [name for name, _ in ranked[:2]]
 
     if len(top_names) >= 2:
@@ -184,12 +343,23 @@ def train_market(
             voting="soft",
             n_jobs=-1,
         )
-        voting_score = cross_val_score(voting, X_selected, y, scoring=scorer, cv=cv, n_jobs=-1).mean()
-        voting.fit(X_selected, y)
+        voting_score = cross_val_score(voting, X, y, scoring=scorer, cv=cv_splits, n_jobs=-1).mean()
+        voting.fit(X, y)
+        voting_prob_report, voting_ranking_score = _evaluate_estimator(
+            estimator=voting,
+            X=X,
+            y=y,
+            cv_splits=cv_splits,
+            market=market,
+            season_series=season_series,
+            league_series=league_series,
+        )
 
         model_results["voting"] = {
             "best_cv_f1": _safe_float(voting_score),
+            "selection_score": voting_ranking_score,
             "best_params": {"base_models": top_names},
+            **voting_prob_report,
         }
         fitted_estimators["voting"] = voting
 
@@ -200,38 +370,108 @@ def train_market(
             stack_method="predict_proba",
             passthrough=True,
             n_jobs=-1,
-            cv=cv,
+            cv=cv_splits,
         )
-        stacking_score = cross_val_score(stacking, X_selected, y, scoring=scorer, cv=cv, n_jobs=-1).mean()
-        stacking.fit(X_selected, y)
+        stacking_score = cross_val_score(stacking, X, y, scoring=scorer, cv=cv_splits, n_jobs=-1).mean()
+        stacking.fit(X, y)
+        stacking_prob_report, stacking_ranking_score = _evaluate_estimator(
+            estimator=stacking,
+            X=X,
+            y=y,
+            cv_splits=cv_splits,
+            market=market,
+            season_series=season_series,
+            league_series=league_series,
+        )
 
         model_results["stacking"] = {
             "best_cv_f1": _safe_float(stacking_score),
+            "selection_score": stacking_ranking_score,
             "best_params": {"base_models": top_names, "passthrough": True},
+            **stacking_prob_report,
         }
         fitted_estimators["stacking"] = stacking
 
     # 3) Champion selection
-    champion_name, champion_payload = max(model_results.items(), key=lambda kv: kv[1]["best_cv_f1"])
+    champion_name, champion_payload = max(model_results.items(), key=lambda kv: kv[1].get("selection_score", -1.0))
     champion = fitted_estimators[champion_name]
+    champion_selected_features = _extract_selected_features(estimator=champion, feature_names=feature_names)
+    champion_estimator = champion
+    calibration_payload: dict[str, Any] = {
+        "enabled": False,
+        "method": None,
+        "pre_metrics": None,
+        "post_metrics": None,
+        "sample_size": len(df),
+        "calibrator_path": None,
+    }
+
+    try:
+        calibration_result = CalibrationService.calibrate_estimator(
+            estimator=champion,
+            X=X,
+            y=y,
+            cv_splits=cv_splits,
+        )
+        champion_estimator = calibration_result.calibrator
+        calibration_payload.update(
+            {
+                "enabled": True,
+                "method": calibration_result.method,
+                "sample_size": calibration_result.sample_size,
+                "positives": calibration_result.positives,
+                "negatives": calibration_result.negatives,
+                "pre_metrics": calibration_result.pre_metrics,
+                "post_metrics": calibration_result.post_metrics,
+            }
+        )
+    except Exception as calibration_exc:
+        calibration_payload.update({"error": str(calibration_exc)})
 
     if save_model:
+        champion_prob_metrics = champion_payload.get("probability_metrics") or {}
+        if calibration_payload.get("enabled"):
+            calibrator_path = os.path.abspath(os.path.join("best_models", f"{market}_champion_calibrator.pkl"))
+            os.makedirs(os.path.dirname(calibrator_path), exist_ok=True)
+            joblib.dump(champion_estimator, calibrator_path)
+            calibration_payload["calibrator_path"] = calibrator_path
+
         saver = SaveLoad(
             save_pkl=True,
             filename=f"{market}_champion",
             market_name=market,
             feature_names=feature_names,
             metrics={
+                "selection_metric": "composite_probability_score",
+                "selection_score": champion_payload.get("selection_score"),
                 "best_cv_f1": champion_payload["best_cv_f1"],
+                "log_loss": champion_prob_metrics.get("log_loss"),
+                "brier": champion_prob_metrics.get("brier"),
+                "ece": champion_prob_metrics.get("ece"),
+                "auc": champion_prob_metrics.get("auc"),
+                "calibration_enabled": calibration_payload.get("enabled"),
+                "calibration_method": calibration_payload.get("method"),
+                "pre_calibration_log_loss": ((calibration_payload.get("pre_metrics") or {}).get("log_loss") if calibration_payload.get("pre_metrics") else None),
+                "post_calibration_log_loss": ((calibration_payload.get("post_metrics") or {}).get("log_loss") if calibration_payload.get("post_metrics") else None),
+                "pre_calibration_brier": ((calibration_payload.get("pre_metrics") or {}).get("brier") if calibration_payload.get("pre_metrics") else None),
+                "post_calibration_brier": ((calibration_payload.get("post_metrics") or {}).get("brier") if calibration_payload.get("post_metrics") else None),
                 "model_family": champion_name,
                 "rows": len(df),
+                "selected_features_count": len(champion_selected_features),
             },
             registry_enabled=True,
         )
         saver.save_model(
-            estimator=champion,
+            estimator=champion_estimator,
             model_name=champion_name,
             params=champion_payload.get("best_params"),
+            extra={
+                "selected_features": champion_selected_features,
+                "selection_method": selection_method,
+                "selection_in_pipeline": True,
+                "grouped_metrics": champion_payload.get("grouped_metrics", []),
+                "calibration": calibration_payload,
+            },
         )
 
     return MarketTrainResult(
@@ -240,8 +480,19 @@ def train_market(
         status="trained",
         champion=champion_name,
         best_cv_f1=champion_payload["best_cv_f1"],
-        selected_features=feature_names,
-        details=model_results,
+        selected_features=champion_selected_features,
+        details={
+            "cv_strategy": "expanding_window",
+            "cv_folds": len(cv_splits),
+            "selection_method": selection_method,
+            "selection_in_pipeline": True,
+            "selection_metric": "composite_probability_score",
+            "champion_selection_score": champion_payload.get("selection_score"),
+            "input_features": len(feature_names),
+            "selected_features": len(champion_selected_features),
+            "calibration": calibration_payload,
+            "models": model_results,
+        },
     )
 
 
@@ -309,4 +560,18 @@ if __name__ == "__main__":
     train_results = train_all_markets()
     for train_result in train_results:
         print(train_result)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
