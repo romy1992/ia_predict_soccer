@@ -3,6 +3,7 @@ __pycache__/
 frontend/node_modules/
 frontend/dist/
 logs/
+/best_models/
 
 /alembic/__pycache__/
 /alembic/versions/__pycache__/
