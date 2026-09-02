@@ -51,7 +51,12 @@ class SaveLoad:
                     metrics=metadata.get('metrics', self.metrics),
                     feature_names=metadata.get('feature_names', self.feature_names),
                     params=metadata.get('params'),
-                    extra=metadata.get('extra')
+                    extra=metadata.get('extra'),
+                    dataset_version=metadata.get('dataset_version'),
+                    feature_version=metadata.get('feature_version'),
+                    windows=metadata.get('windows'),
+                    git_sha=metadata.get('git_sha'),
+                    stage=metadata.get('stage') or 'candidate',
                 )
 
     def load_model(self):

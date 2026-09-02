@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import pandas as pd
 from sklearn.feature_selection import SelectKBest, f_classif, RFE
 from sklearn.linear_model import LogisticRegression
+from sklearn.base import BaseEstimator
 
 
 @dataclass
@@ -15,6 +16,17 @@ class FeatureSelectionResult:
 
 class FeatureSelectionService:
     """Feature selection helpers used by the multi-market training pipeline."""
+
+    @staticmethod
+    def build_selector(method: str, feature_count: int) -> BaseEstimator:
+        feature_count = max(1, int(feature_count))
+        if method == "rfe":
+            n_features_to_select = max(1, min(20, feature_count))
+            estimator = LogisticRegression(max_iter=2000, class_weight="balanced")
+            return RFE(estimator=estimator, n_features_to_select=n_features_to_select, step=1)
+
+        k = max(1, min(30, feature_count))
+        return SelectKBest(score_func=f_classif, k=k)
 
     @staticmethod
     def select_k_best(X: pd.DataFrame, y: pd.Series, k: int = 20) -> FeatureSelectionResult:
@@ -44,4 +56,5 @@ class FeatureSelectionService:
             X_selected=pd.DataFrame(transformed, columns=selected, index=X.index),
             selected_features=selected,
         )
+
 

@@ -118,8 +118,9 @@ class FilterMarketService:
 
         return None
 
-    def _extract_market_odds_features(self, market_odds: dict) -> dict:
-        odds_values = [self._safe_float(v) for v in market_odds.values() if v is not None]
+    @staticmethod
+    def _extract_market_odds_features(market_odds: dict) -> dict:
+        odds_values = [FilterMarketService._safe_float(v) for v in market_odds.values() if v is not None]
         odds_values = [v for v in odds_values if v > 0]
         if not odds_values:
             return {}
@@ -140,8 +141,9 @@ class FilterMarketService:
 
         return features
 
-    def _extract_mean_features(self, match: dict) -> dict:
-        mean_home, mean_away = self._resolve_mean_stats(match)
+    @staticmethod
+    def _extract_mean_features(match: dict) -> dict:
+        mean_home, mean_away = FilterMarketService._resolve_mean_stats(match)
         if not mean_home or not mean_away:
             return {}
 
@@ -151,9 +153,9 @@ class FilterMarketService:
             if key == "id_team":
                 continue
 
-            home_v = self._safe_float(mean_home.get(key))
-            away_v = self._safe_float(mean_away.get(key))
-            normalized = self._normalize_feature_name(key)
+            home_v = FilterMarketService._safe_float(mean_home.get(key))
+            away_v = FilterMarketService._safe_float(mean_away.get(key))
+            normalized = FilterMarketService._normalize_feature_name(key)
             if normalized == "":
                 continue
 
@@ -175,7 +177,9 @@ class FilterMarketService:
         row = {
             "id_fixture": match.get("id_fixture"),
             "season": match.get("season"),
+            "league": match.get("current_league"),
             "market": market,
+            "prediction_at": match.get("date_match"),
         }
 
         row.update(self._extract_market_odds_features(market_odds))
@@ -228,5 +232,9 @@ class FilterMarketService:
 
         df = pd.DataFrame([row]).replace([np.inf, -np.inf], np.nan).fillna(0)
         return df
+
+
+
+
 
 
