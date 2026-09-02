@@ -49,13 +49,13 @@ class TestDashboardService(unittest.TestCase):
         service = DashboardService()
         service.registry.list_markets = lambda: []
         service._fetch_api_live_fixtures = lambda: [
-            self._fixture(2001, "2026-09-01", "1H", "Napoli", "Atalanta"),
-            self._fixture(2002, "2026-09-01", "NS", "Juventus", "Bologna"),
+            self._fixture(2001, "2099-09-01", "1H", "Napoli", "Atalanta"),
+            self._fixture(2002, "2099-09-01", "NS", "Juventus", "Bologna"),
         ]
         service._fetch_api_day_fixtures = lambda target_date: []
         service._fetch_matches = lambda: []
 
-        payload = service.get_live_matches(target_date=date(2026, 9, 1), limit=50)
+        payload = service.get_live_matches(target_date=date(2099, 9, 1), limit=50)
 
         self.assertEqual(payload["total"], 1)
         self.assertEqual(payload["returned"], 1)
@@ -130,12 +130,17 @@ class TestDashboardService(unittest.TestCase):
         self.assertEqual(len(payload["timeline"]), 1)
         self.assertEqual(payload["timeline"][0]["team"], "Inter")
         self.assertIn("under_over_2_5", payload["odds_summary"])
+        self.assertIn("bookmaker_baseline", payload)
+        self.assertTrue(payload["bookmaker_baseline"].get("generated"))
         self.assertGreaterEqual(len(payload["decision_cards"]), 2)
         labels = {c["value_label"] for c in payload["decision_cards"]}
         self.assertTrue(labels.issubset({"PLAY", "BORDERLINE", "NO BET"}))
+        self.assertIn("bookmaker_fair_probability", payload["decision_cards"][0])
 
 
 if __name__ == "__main__":
     unittest.main()
+
+
 
 

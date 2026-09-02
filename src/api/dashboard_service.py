@@ -12,6 +12,7 @@ from dateutil.parser import isoparse
 from sqlalchemy.exc import OperationalError, ProgrammingError
 from sqlalchemy.orm import selectinload
 
+from src.ml.baselines.bookmaker_baseline import build_fixture_baseline, get_market_outcome_baseline
 from src.repository.base.repository_db import SessionLocal
 from src.service_ia.config.app_config import load_app_config
 from src.service_ia.model.match import Match
@@ -454,6 +455,19 @@ class DashboardService:
         return str(prediction), None
 
     @staticmethod
+    def _baseline_outcome_for_prediction(market: str, prediction: int, pick_label: str) -> str:
+        if market == "h2h":
+            return "Home" if prediction == 1 else "Away"
+        if market == "goal_no_goal":
+            return "Yes" if prediction == 1 else "No"
+        if market == "dc":
+            return "Home/Draw" if prediction == 1 else "Draw/Away"
+        if market.startswith("under_over_"):
+            threshold = market.replace("under_over_", "").replace("_", ".")
+            return f"Over {threshold}" if prediction == 1 else f"Under {threshold}"
+        return pick_label
+
+    @staticmethod
     def _value_decision(predicted_probability: float, odd: Optional[float]) -> tuple[str, Optional[float], str]:
         if odd is None or odd <= 0:
             return "NO BET", None, "Quota non disponibile"
@@ -470,6 +484,7 @@ class DashboardService:
         row_context: dict[str, Any],
         predictions: dict[str, Any],
         odds_summary: dict[str, list[dict[str, Any]]],
+        bookmaker_baseline: Optional[dict[str, Any]] = None,
     ) -> list[dict[str, Any]]:
         cards: list[dict[str, Any]] = []
         for market, payload in predictions.items():
@@ -483,7 +498,23 @@ class DashboardService:
                 row_context=row_context,
                 odds_summary=odds_summary,
             )
+
+            baseline_outcome = self._baseline_outcome_for_prediction(
+                market=market,
+                prediction=prediction,
+                pick_label=pick,
+            )
+            baseline_row = get_market_outcome_baseline(
+                fixture_baseline=bookmaker_baseline or {},
+                market=market,
+                outcome=baseline_outcome,
+            )
+            market_baseline = ((bookmaker_baseline or {}).get("markets") or {}).get(market) or {}
+
             value_label, edge, reason = self._value_decision(predicted_probability, odd)
+            implied_raw = baseline_row.get("implied_raw") if baseline_row else None
+            fair_probability = baseline_row.get("fair_probability") if baseline_row else None
+            model_minus_fair = (predicted_probability - float(fair_probability)) if fair_probability is not None else None
             cards.append(
                 {
                     "market": market,
@@ -494,6 +525,10 @@ class DashboardService:
                     "class_1_probability": class1_probability,
                     "predicted_probability": predicted_probability,
                     "odd": odd,
+                    "bookmaker_implied_raw": implied_raw,
+                    "bookmaker_fair_probability": fair_probability,
+                    "bookmaker_overround": market_baseline.get("overround"),
+                    "model_minus_fair": model_minus_fair,
                     "edge": edge,
                     "value_label": value_label,
                     "value_reason": reason,
@@ -626,7 +661,9 @@ class DashboardService:
 
     def _latest_model_for_market(self, market: str) -> Optional[dict[str, Any]]:
         if market not in self._model_meta_cache:
-            self._model_meta_cache[market] = self.registry.get_latest(market=market) or {}
+            self._model_meta_cache[market] = (
+                self.registry.get_production(market=market) or self.registry.get_latest(market=market) or {}
+            )
         model = self._model_meta_cache[market]
         return model or None
 
@@ -658,7 +695,7 @@ class DashboardService:
             if frame is None or frame.empty:
                 continue
 
-            X = frame.drop(columns=["market", "id_fixture", "season"], errors="ignore")
+            X = frame.drop(columns=["market", "id_fixture", "season", "league", "prediction_at"], errors="ignore")
             selected_features = model_meta.get("feature_names") or []
             if selected_features:
                 for feature_name in selected_features:
@@ -899,6 +936,7 @@ class DashboardService:
                 "fixture": None,
                 "timeline": [],
                 "odds_summary": {},
+                "bookmaker_baseline": {"markets": {}, "generated": False},
                 "decision_cards": [],
                 "predictions": {},
                 "model_markets": model_markets,
@@ -915,21 +953,33 @@ class DashboardService:
         if not odds_summary:
             odds_summary = self._aggregate_odds_from_db(db_match)
 
+        bookmaker_baseline = build_fixture_baseline(odds_summary)
+
         decision_cards = self._build_decision_cards(
             row_context=fixture_row,
             predictions=predictions,
             odds_summary=odds_summary,
+            bookmaker_baseline=bookmaker_baseline,
         )
 
         return {
             "fixture": fixture_row,
             "timeline": timeline,
             "odds_summary": odds_summary,
+            "bookmaker_baseline": bookmaker_baseline,
             "decision_cards": decision_cards,
             "predictions": predictions,
             "model_markets": model_markets,
             "odds_updated_at": (odds_payload or {}).get("update") if odds_payload else None,
         }
+
+
+
+
+
+
+
+
 
 
 
