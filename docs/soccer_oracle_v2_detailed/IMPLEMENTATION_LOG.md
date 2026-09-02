@@ -55,6 +55,7 @@ Prima di ogni task viene applicata la premessa in `AI_MASTER_PROMPT.md`:
 - [x] EXP-02
 - [x] EXP-03
 - [x] EXP-04
+- [x] EXP-05
 
 ## Estensioni introdotte
 - settlement job idempotente con completezza finale (`/jobs/settlement`)
@@ -75,6 +76,8 @@ Prima di ogni task viene applicata la premessa in `AI_MASTER_PROMPT.md`:
 - Goal Distribution Expert: Poisson lambda regressor con validazione temporale (no train_test_split), soglie U/O 1.5/2.5/3.5/4.5, score distribution completa e confronto Poisson vs Binomiale Negativa (`src/ml/experts/goal_distribution/goal_distribution_expert.py`)
 - Statistics Expert: modello pre-match basato esclusivamente su `mean_statistics` (nessuna feature odds), validazione temporale con metriche probabilistiche ML-05, embedding numerico riusabile (`src/ml/experts/statistics/statistics_expert.py`)
 - Market/Odds Expert: fair probabilities (riuso bookmaker_baseline), dispersione bookmaker, movement quote e opening/latest/closing point-in-time-safe (closing mai valorizzato prima del kickoff) (`src/ml/experts/market/market_odds_expert.py`)
+- Direct Market Expert: interfaccia comune `predict_proba` sui champion model esistenti (h2h/dc/goal_no_goal/corners/cards/under_over_*), con metadati espliciti che impediscono di scambiare h2h binario per un 1X2 multiclasse (`src/ml/experts/direct/direct_market_expert.py`)
+- **Fase ORACLE EXPERTS completata (EXP-01..05)**
 
 ## Migrazioni applicate (locale + docker)
 - locale: `alembic stamp 55bbb5f0a367` + `alembic upgrade head`
@@ -85,6 +88,8 @@ Prima di ogni task viene applicata la premessa in `AI_MASTER_PROMPT.md`:
 - verifica rapida: tabella `match` letta con volume storico (>47k righe)
 
 Note: gli stati sopra sono riferiti all'implementazione tecnica nel branch corrente; la validazione finale dipende dall'esecuzione acceptance/test su ambiente dati reale.
+
+
 
 
 
