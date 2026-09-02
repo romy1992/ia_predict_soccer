@@ -1,0 +1,108 @@
+export function todayIso() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+export function formatPercent(value) {
+  const num = Number(value);
+  if (Number.isNaN(num)) {
+    return "--";
+  }
+  return `${(num * 100).toFixed(1)}%`;
+}
+
+export function marketLabel(market) {
+  const map = {
+    h2h: "Vincitore partita",
+    goal_no_goal: "Goal / No Goal",
+    dc: "Doppia chance",
+    corners: "Corners",
+    cards: "Cards",
+    under_over_1_5: "Over/Under 1.5",
+    under_over_2_5: "Over/Under 2.5",
+    under_over_3_5: "Over/Under 3.5",
+    under_over_4_5: "Over/Under 4.5",
+  };
+  return map[market] || market;
+}
+
+export function predictionLabel(market, prediction, row) {
+  if (market === "goal_no_goal") {
+    return prediction === 1 ? "Goal" : "No Goal";
+  }
+  if (market === "dc") {
+    return prediction === 1 ? "1X" : "X2";
+  }
+  if (market.startsWith("under_over_")) {
+    const threshold = market.replace("under_over_", "").replace("_", ".");
+    return prediction === 1 ? `Over ${threshold}` : `Under ${threshold}`;
+  }
+  if (market === "h2h") {
+    return prediction === 1 ? row.home : "Non casa";
+  }
+  if (market === "corners") {
+    return prediction === 1 ? "Over corners" : "Under corners";
+  }
+  if (market === "cards") {
+    return prediction === 1 ? "Over cards" : "Under cards";
+  }
+  return String(prediction);
+}
+
+export function phaseLabel(phase) {
+  if (phase === "live") {
+    return "In diretta";
+  }
+  if (phase === "finished") {
+    return "Finita";
+  }
+  return "Da giocare";
+}
+
+export function phaseClass(phase) {
+  if (phase === "live") {
+    return "badge-live";
+  }
+  if (phase === "finished") {
+    return "badge-finished";
+  }
+  return "badge-upcoming";
+}
+
+export function confidenceClass(probability) {
+  if (probability >= 0.8) {
+    return "prediction-strong";
+  }
+  if (probability >= 0.65) {
+    return "prediction-medium";
+  }
+  return "prediction-low";
+}
+
+export function formatOdd(value) {
+  const num = Number(value);
+  if (Number.isNaN(num) || num <= 0) {
+    return "-";
+  }
+  return num.toFixed(2);
+}
+
+export function formatEdge(value) {
+  const num = Number(value);
+  if (Number.isNaN(num)) {
+    return "-";
+  }
+  const pct = num * 100;
+  const sign = pct > 0 ? "+" : "";
+  return `${sign}${pct.toFixed(1)}%`;
+}
+
+export function valueClass(valueLabel) {
+  if (valueLabel === "PLAY") {
+    return "value-play";
+  }
+  if (valueLabel === "BORDERLINE") {
+    return "value-borderline";
+  }
+  return "value-no-bet";
+}
+
