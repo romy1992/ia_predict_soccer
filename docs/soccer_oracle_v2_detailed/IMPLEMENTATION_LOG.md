@@ -52,6 +52,7 @@ Prima di ogni task viene applicata la premessa in `AI_MASTER_PROMPT.md`:
 - [x] ML-06
 - [x] ML-07
 - [x] EXP-01
+- [x] EXP-02
 
 ## Estensioni introdotte
 - settlement job idempotente con completezza finale (`/jobs/settlement`)
@@ -69,6 +70,7 @@ Prima di ogni task viene applicata la premessa in `AI_MASTER_PROMPT.md`:
 - calibration framework (Platt/sigmoid + isotonic) con confronto pre/post e calibratore versionato per model run (`src/ml/calibration/calibration_service.py`)
 - Model Registry con lifecycle completo candidate/champion/production/retired, promotion history, lookup produzione per mercato (`src/service_ia/training/model_registry.py`)
 - Team Strength Expert: rating offensivo/difensivo, home advantage, rolling form point-in-time, backtest base (`src/ml/experts/team_strength/team_strength_expert.py`)
+- Goal Distribution Expert: Poisson lambda regressor con validazione temporale (no train_test_split), soglie U/O 1.5/2.5/3.5/4.5, score distribution completa e confronto Poisson vs Binomiale Negativa (`src/ml/experts/goal_distribution/goal_distribution_expert.py`)
 
 ## Migrazioni applicate (locale + docker)
 - locale: `alembic stamp 55bbb5f0a367` + `alembic upgrade head`
@@ -79,6 +81,8 @@ Prima di ogni task viene applicata la premessa in `AI_MASTER_PROMPT.md`:
 - verifica rapida: tabella `match` letta con volume storico (>47k righe)
 
 Note: gli stati sopra sono riferiti all'implementazione tecnica nel branch corrente; la validazione finale dipende dall'esecuzione acceptance/test su ambiente dati reale.
+
+
 
 
 
