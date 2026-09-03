@@ -1,10 +1,25 @@
 import logging
 
 from sqlalchemy import or_
+from sqlalchemy.orm import RelationshipProperty
 
 from src.repository.base.repository_db import SessionLocal
 
 logging.basicConfig(level=logging.DEBUG)
+
+
+def _is_relationship_attribute(col) -> bool:
+    """True se `col` e' un attributo di RELAZIONE ORM (es. `Match.odds`/
+    `Match.statistics`, one-to-many) invece di una colonna scalare (es.
+    `Match.mean_statistics`, JSON).
+
+    Bug fix: per le relazioni, SQLAlchemy NON supporta `is_not(None)`/
+    `is_(None)` (solleva `NotImplementedError`) — serve invece verificare
+    se la lista collegata e' vuota/non vuota con `.any()` (EXISTS subquery).
+    Le colonne scalari (incluse quelle JSON) restano invariate su
+    `is_not`/`is_` (nessun cambio di comportamento per i filtri gia'
+    funzionanti oggi)."""
+    return isinstance(getattr(col, "property", None), RelationshipProperty)
 
 
 class CrudRepository:
@@ -142,10 +157,14 @@ class CrudRepository:
                 if isinstance(v, (list, tuple)):
                     conditions.append(col.in_(v))
                 else:
+                    is_relationship = _is_relationship_attribute(col)
                     if v == 'not None':
-                        conditions.append(col.is_not(None))
+                        # Relazione (es. Match.odds/Match.statistics): "not
+                        # None" significa "esiste almeno un record collegato"
+                        # -> .any(), MAI is_not(None) (NotImplementedError).
+                        conditions.append(col.any() if is_relationship else col.is_not(None))
                     elif v == 'None':
-                        conditions.append(col.is_(None))
+                        conditions.append(~col.any() if is_relationship else col.is_(None))
                     # TODO: Rivedere questa parte per gestire gli operatori di confronto
                     # elif isinstance(v, str) and '>=' in v:
                     #     v = v.replace('>=', '').strip()
