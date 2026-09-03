@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 from datetime import date, datetime
@@ -27,11 +28,19 @@ from src.api.schemas import (
     JobTodayUpdateRequest,
     JobsHistoryResponse,
     MetricsResponse,
+    ModelConsensusResponse,
+    PaperPnlResponse,
     PredictRequest,
     PredictResponse,
+    PredictionLedgerLogRequest,
+    PredictionLedgerResponse,
     PredictionLogResponse,
+    PredictionSettlementResponse,
 )
 from src.data.quality_report_service import DataQualityService
+from src.ml.ensemble.model_consensus import build_model_consensus_for_fixture
+from src.oracle.decision_engine.decision_policy import DEFAULT_DECISION_POLICY, evaluate_decision
+from src.oracle.ledger.ledger_service import PredictionLedgerService
 from src.repository.base.database_audit import get_database_audit
 from src.repository.odds_snapshot_repository import OddsSnapshotRepository
 from src.jobs.job_history import JobHistory
@@ -149,6 +158,16 @@ def _parse_iso_date(value: Optional[str]) -> date:
         raise HTTPException(status_code=400, detail=f"Data non valida: {value}") from exc
 
 
+def _parse_iso_datetime_optional(value: Optional[str]) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"Datetime non valido: {value}") from exc
+    return parsed
+
+
 def _parse_int_csv(value: Optional[str], field_name: str) -> Optional[list[int]]:
     if not value:
         return None
@@ -227,6 +246,27 @@ def dashboard_match_detail(
         markets=selected_markets,
     )
     return DashboardMatchDetailResponse(**payload)
+
+
+@app.get("/dashboard/match/{fixture_id}/consensus", response_model=ModelConsensusResponse)
+def dashboard_match_consensus(fixture_id: int, market: str) -> ModelConsensusResponse:
+    """Model Consensus per spiegabilita' (ORACLE-04): output dei singoli
+    Oracle Expert generici (Direct Expert EXP-05 + Market/Odds Expert EXP-04)
+    per questa fixture/mercato, Oracle finale (meta-model ORACLE-02/03 se
+    registrato, altrimenti media semplice) e dispersione del consensus.
+    Nessuna logica scientifica nel frontend: tutto il calcolo avviene qui."""
+    if market not in FilterMarketService.SUPPORTED_MARKETS:
+        raise HTTPException(status_code=400, detail=f"Mercato non supportato: {market}")
+
+    report = build_model_consensus_for_fixture(market=market, fixture_id=fixture_id)
+    return ModelConsensusResponse(
+        fixture_id=report.fixture_id,
+        market=report.market,
+        experts=report.experts,
+        oracle_final=report.oracle_final,
+        consensus=report.consensus,
+        warnings=report.warnings,
+    )
 
 
 @app.post("/predict/{market}", response_model=PredictResponse)
@@ -487,6 +527,78 @@ def jobs_history(limit: int = 100, job_type: Optional[str] = None, status: Optio
 def predictions_log(limit: int = 100, market: Optional[str] = None) -> PredictionLogResponse:
     rows = PredictionLogger().tail(limit=limit, market=market)
     return PredictionLogResponse(rows=rows)
+
+
+@app.post("/predictions/ledger", response_model=PredictionLedgerResponse)
+def log_prediction_ledger(payload: PredictionLedgerLogRequest) -> PredictionLedgerResponse:
+    """Prediction Ledger / Paper Betting (BET-06): salva UNA prediction
+    PRIMA del kickoff. Calcola fair_odd/prob_edge/ev/decision qui (BET-01/
+    BET-04, riusati — mai un client che duplica la policy di decisione),
+    poi persiste (idempotente per fixture/market/outcome/model_run_id)."""
+    if payload.market not in FilterMarketService.SUPPORTED_MARKETS:
+        raise HTTPException(status_code=400, detail=f"Mercato non supportato: {payload.market}")
+
+    decision = evaluate_decision(
+        market=payload.market,
+        outcome=payload.outcome,
+        p_model=payload.p_model,
+        p_market_fair=payload.p_market_fair,
+        odd=payload.odd,
+        samples=payload.samples,
+        policy=DEFAULT_DECISION_POLICY,
+    )
+
+    row = PredictionLedgerService().log_prediction(
+        fixture_id=payload.fixture_id,
+        decision=decision,
+        model_run_id=payload.model_run_id,
+        model_name=payload.model_name,
+        kickoff_at=_parse_iso_datetime_optional(payload.kickoff_at),
+        stake=payload.stake,
+        dedupe=payload.dedupe,
+    )
+    return PredictionLedgerResponse(rows=[row.to_dict()], total=1)
+
+
+@app.get("/predictions/ledger", response_model=PredictionLedgerResponse)
+def list_prediction_ledger(
+    market: Optional[str] = None,
+    is_settled: Optional[bool] = None,
+    limit: int = 200,
+) -> PredictionLedgerResponse:
+    rows = PredictionLedgerService().list_ledger(market=market, is_settled=is_settled, limit=limit)
+    return PredictionLedgerResponse(rows=rows, total=len(rows))
+
+
+@app.get("/predictions/ledger/fixture/{fixture_id}", response_model=PredictionLedgerResponse)
+def list_prediction_ledger_for_fixture(fixture_id: int, market: Optional[str] = None) -> PredictionLedgerResponse:
+    rows = [row.to_dict() for row in PredictionLedgerService().repo.list_for_fixture(fixture_id=fixture_id, market=market)]
+    return PredictionLedgerResponse(rows=rows, total=len(rows))
+
+
+@app.post("/predictions/ledger/settle", response_model=PredictionSettlementResponse)
+def settle_prediction_ledger() -> PredictionSettlementResponse:
+    """Settlement batch (BET-06): settla SOLO le prediction il cui match e'
+    effettivamente concluso (`FINAL_STATUSES`); le altre restano pending."""
+    report = PredictionLedgerService().settle_pending()
+    return PredictionSettlementResponse(**report)
+
+
+@app.get("/predictions/ledger/pnl", response_model=PaperPnlResponse)
+def prediction_ledger_pnl(market: Optional[str] = None, stake: float = 1.0) -> PaperPnlResponse:
+    """PnL paper calcolabile (acceptance criteria BET-06): somma grezza dei
+    pnl gia' salvati per riga (`raw_summary`, sempre affidabile) piu' il
+    report ricco ROI/hit-rate/drawdown (`report`, riusa BET-03, assume
+    stake flat uniforme)."""
+    service = PredictionLedgerService()
+    raw_summary = service.raw_pnl_summary(market=market)
+    report = service.paper_pnl_report(market=market, stake=stake)
+    return PaperPnlResponse(market=market, raw_summary=raw_summary, report=dataclasses.asdict(report))
+
+
+
+
+
 
 
 
