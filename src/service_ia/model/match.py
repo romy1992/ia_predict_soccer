@@ -47,7 +47,13 @@ class Match(Base):
     )
 
     # Medie stagionali alla giornata corrente (cioè PRIMA CHE INIZIASSE LA PARTITA CORRENTE)
-    mean_statistics = Column(JSON, nullable=True)
+    # Bug fix: SQLAlchemy JSON di default (none_as_null=False) salva un
+    # Python None come letterale JSON 'null' (NON SQL NULL) -> `IS NOT NULL`
+    # risultava SEMPRE vero, rendendo il filtro "mean_statistics: not None"
+    # un no-op silenzioso su tutta la pipeline multi-mercato. Con
+    # none_as_null=True, assegnare None equivale a SQL NULL (comportamento
+    # atteso da `CrudRepository.search_filter`).
+    mean_statistics = Column(JSON(none_as_null=True), nullable=True)
 
     def to_dict(self):
         return {column.name: getattr(self, column.name) for column in self.__table__.columns}
