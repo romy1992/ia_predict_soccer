@@ -134,3 +134,56 @@ class OddsSnapshot(Base):
         return payload
 
 
+class PredictionLedger(Base):
+    """Prediction Ledger / Paper Betting (BET-06, Fase BETTING).
+
+    Ogni riga rappresenta UNA prediction salvata PRIMA del kickoff
+    ("Salvare prediction prima del kickoff", acceptance criteria): i campi
+    "originali" (dal market/outcome fino a `created_at`) sono scritti UNA
+    SOLA VOLTA da `PredictionLedgerService.log_prediction` e non vengono mai
+    più modificati ("Immutabilita' logica della prediction originale") —
+    il settlement (dopo il risultato reale) aggiorna ESCLUSIVAMENTE i campi
+    dedicati sotto "Settlement" (mai i campi originali), stesso principio
+    gia' applicato a `Match.is_settled/settlement_status/settlement_details`
+    in `SettlementService`.
+    """
+
+    __tablename__ = 'prediction_ledger'
+
+    id_prediction = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+
+    # --- Prediction originale (immutabile dopo la creazione) ---
+    fixture_id = Column(Integer, nullable=False)
+    market = Column(String, nullable=False)
+    outcome = Column(String, nullable=False)
+    model_run_id = Column(String, nullable=True)
+    model_name = Column(String, nullable=True)
+    policy_version = Column(String, nullable=True)
+    p_model = Column(Float, nullable=True)
+    p_market_fair = Column(Float, nullable=True)
+    odd = Column(Float, nullable=True)
+    fair_odd = Column(Float, nullable=True)
+    prob_edge = Column(Float, nullable=True)
+    ev = Column(Float, nullable=True)
+    decision = Column(String, nullable=False)
+    stake = Column(Float, nullable=False, default=1.0)
+    kickoff_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+
+    # --- Settlement (popolati SOLO dopo il risultato, mai in creazione) ---
+    is_settled = Column(Boolean, nullable=False, default=False)
+    settled_at = Column(DateTime(timezone=True), nullable=True)
+    settlement_status = Column(String, nullable=True)
+    actual_outcome = Column(String, nullable=True)
+    won = Column(Boolean, nullable=True)
+    pnl = Column(Float, nullable=True)
+
+    def to_dict(self):
+        payload = {column.name: getattr(self, column.name) for column in self.__table__.columns}
+        for key in ("kickoff_at", "created_at", "settled_at"):
+            if payload.get(key) is not None:
+                payload[key] = payload[key].isoformat()
+        return payload
+
+
+

@@ -132,6 +132,15 @@ class DashboardMatchDetailResponse(BaseModel):
     odds_updated_at: Optional[str] = None
 
 
+class ModelConsensusResponse(BaseModel):
+    fixture_id: int
+    market: str
+    experts: list[dict[str, Any]]
+    oracle_final: Optional[dict[str, Any]] = None
+    consensus: dict[str, Any]
+    warnings: list[str] = []
+
+
 class DataQualityResponse(BaseModel):
     generated_at: str
     source: dict[str, Any]
@@ -140,6 +149,47 @@ class DataQualityResponse(BaseModel):
     distribution: dict[str, Any]
     temporal_checks: dict[str, Any]
     settlement: dict[str, Any]
+
+
+class PredictionLedgerLogRequest(BaseModel):
+    """Input per BET-06: il chiamante fornisce fixture/market/outcome +
+    probabilita'/quota gia' note (tipicamente da model consensus/ORACLE-04 e
+    dalle quote correnti); l'endpoint calcola fair_odd/prob_edge/ev/decision
+    (BET-01/BET-04, riusati) prima di salvare — mai un client che calcola la
+    decisione da solo."""
+
+    fixture_id: int
+    market: str
+    outcome: str
+    p_model: Optional[float] = None
+    p_market_fair: Optional[float] = None
+    odd: Optional[float] = None
+    samples: int = 0
+    model_run_id: Optional[str] = None
+    model_name: Optional[str] = None
+    kickoff_at: Optional[str] = None
+    stake: float = 1.0
+    dedupe: bool = True
+
+
+class PredictionLedgerResponse(BaseModel):
+    rows: list[dict[str, Any]]
+    total: int
+
+
+class PredictionSettlementResponse(BaseModel):
+    candidates: int
+    settled: int
+    still_pending: int
+    void_no_result: int
+
+
+class PaperPnlResponse(BaseModel):
+    market: Optional[str] = None
+    raw_summary: dict[str, Any]
+    report: dict[str, Any]
+
+
 
 
 
