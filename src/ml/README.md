@@ -22,6 +22,7 @@ Questo package contiene componenti production-oriented introdotti in Soccer Orac
 - `ensemble/stacking.py`: Meta Model / Stacker per mercato, confronto `weighted_blend` (`WeightedBlendClassifier`) vs `learned_stacker` (`LogisticRegression`) sulle meta-feature ORACLE-01, entrambi validati con lo stesso OOF walk-forward (ORACLE-02).
 - `ensemble/oracle_calibration.py`: calibrazione finale (Platt/isotonic via `CalibrationService`, ML-06) del meta-model vincitore di ORACLE-02, con report pre/post metrics e fallback esplicito (meta-model raw) quando il campione è insufficiente o la calibrazione fallisce (ORACLE-03).
 - `ensemble/model_consensus.py`: Model Consensus per spiegabilità — output per-fixture di Direct Expert (EXP-05) e Market/Odds Expert (EXP-04), Oracle finale (meta-model ORACLE-02/03 se registrato, altrimenti media semplice come fallback esplicito) e dispersione tra esperti; esposto via `GET /dashboard/match/{fixture_id}/consensus` (ORACLE-04).
+- `live/live_feature_store.py`: feature store LIVE point-in-time (minute, scoreline, cards da eventi, shots/xG se disponibili dalle statistiche grezze, pre-match prior dal Prediction Ledger) per fixture/istante `as_of`, costruito sul dataset live distinto di LIVE-01 — ogni feature timestamped, mai leakage rispetto ad `as_of` (LIVE-02).
 
 ## Esecuzione rapida
 ```powershell
