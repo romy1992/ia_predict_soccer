@@ -7,5 +7,6 @@ export const MENU_ITEMS = [
   { id: "data-center", label: "Data Center" },
   { id: "data-quality", label: "Data Quality" },
   { id: "ml-lab", label: "ML Lab" },
+  { id: "monitoring", label: "Monitoring" },
 ];
 

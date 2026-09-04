@@ -25,13 +25,20 @@ from src.api.schemas import (
     HealthResponse,
     JobFutureSyncRequest,
     JobImportRequest,
+    JobLiveSyncRequest,
     JobResponse,
     JobRetrainRequest,
     JobSettlementRequest,
     JobTodayUpdateRequest,
     JobsHistoryResponse,
+    LiveFixtureEventsResponse,
+    LiveFixtureStatisticsResponse,
+    LiveFixturesResponse,
     MetricsResponse,
     ModelConsensusResponse,
+    ModelRegistryOverviewResponse,
+    MonitoringAlertsResponse,
+    MonitoringOverviewResponse,
     OracleMatchDetailResponse,
     PaperPnlResponse,
     PredictRequest,
@@ -40,9 +47,16 @@ from src.api.schemas import (
     PredictionLedgerResponse,
     PredictionLogResponse,
     PredictionSettlementResponse,
+    PromotionEvaluationResponse,
+    PromotionHistoryResponse,
+    PromotionRequest,
+    PromotionResponse,
+    RollbackRequest,
 )
 from src.data.quality_report_service import DataQualityService
 from src.ml.ensemble.model_consensus import build_model_consensus_for_fixture
+from src.ml.monitoring.monitoring_service import MonitoringService
+from src.ml.registry.promotion_policy import DEFAULT_PROMOTION_POLICY
 from src.oracle.betslip.pick_pool import PickPoolPolicy
 from src.oracle.betslip.pick_pool_service import PickPoolService
 from src.oracle.betslip.betslip_service import BetslipService
@@ -50,6 +64,8 @@ from src.oracle.decision_engine.decision_policy import DEFAULT_DECISION_POLICY, 
 from src.oracle.ledger.ledger_service import PredictionLedgerService
 from src.repository.base.database_audit import get_database_audit
 from src.repository.odds_snapshot_repository import OddsSnapshotRepository
+from src.data.live.live_sync_job import run_manual_live_sync
+from src.repository.live_data_repository import LiveDataRepository
 from src.jobs.job_history import JobHistory
 from src.jobs.scheduler import (
     run_manual_future_sync,
@@ -411,6 +427,67 @@ def trigger_today_update(payload: JobTodayUpdateRequest, background_tasks: Backg
     return JobResponse(queued=False, message="Today update job completed", details=report)
 
 
+@app.post("/jobs/live-sync", response_model=JobResponse)
+def trigger_live_sync(payload: JobLiveSyncRequest, background_tasks: BackgroundTasks) -> JobResponse:
+    """LIVE-01: sincronizza il dataset LIVE distinto (mai il dataset
+    pre-match) - stesso pattern queued/sync degli altri job manuali."""
+    params = {
+        "leagues": payload.leagues,
+        "include_events": payload.include_events,
+        "include_statistics": payload.include_statistics,
+    }
+    if payload.async_run:
+        row = JobHistory().queue_job(job_type="live_sync", params=params)
+        background_tasks.add_task(
+            run_manual_live_sync,
+            leagues=payload.leagues,
+            include_events=payload.include_events,
+            include_statistics=payload.include_statistics,
+            job_id=row["job_id"],
+        )
+        return JobResponse(queued=True, message="Live sync job queued", details={"job_id": row["job_id"]})
+
+    report = run_manual_live_sync(
+        leagues=payload.leagues,
+        include_events=payload.include_events,
+        include_statistics=payload.include_statistics,
+    )
+    return JobResponse(queued=False, message="Live sync job completed", details=report)
+
+
+@app.get("/live/fixtures", response_model=LiveFixturesResponse)
+def live_fixtures() -> LiveFixturesResponse:
+    """LIVE-01: fixture attualmente live nel dataset DISTINTO (ultimo
+    snapshot per fixture non in stato finale) - dato grezzo della pipeline,
+    NON il dettaglio arricchito con predizioni di `/dashboard/live`."""
+    repository = LiveDataRepository()
+    latest = repository.latest_fixture_snapshots()
+    rows = [
+        snapshot.to_dict()
+        for fixture_id, snapshot in latest.items()
+        if fixture_id in set(repository.list_active_fixture_ids())
+    ]
+    rows.sort(key=lambda row: row.get("fixture_id") or 0)
+    return LiveFixturesResponse(total=len(rows), rows=rows)
+
+
+@app.get("/live/fixtures/{fixture_id}/events", response_model=LiveFixtureEventsResponse)
+def live_fixture_events(fixture_id: int) -> LiveFixtureEventsResponse:
+    """LIVE-01: eventi live (con timestamp) per una fixture, dal dataset
+    distinto - ordinati per minuto di gioco."""
+    repository = LiveDataRepository()
+    rows = [event.to_dict() for event in repository.list_events_for_fixture(fixture_id)]
+    return LiveFixtureEventsResponse(fixture_id=fixture_id, total=len(rows), rows=rows)
+
+
+@app.get("/live/fixtures/{fixture_id}/statistics", response_model=LiveFixtureStatisticsResponse)
+def live_fixture_statistics(fixture_id: int) -> LiveFixtureStatisticsResponse:
+    """LIVE-01: ultimo snapshot statistiche PER SQUADRA per una fixture."""
+    repository = LiveDataRepository()
+    rows = [row.to_dict() for row in repository.latest_stat_snapshots_for_fixture(fixture_id)]
+    return LiveFixtureStatisticsResponse(fixture_id=fixture_id, total=len(rows), rows=rows)
+
+
 @app.post("/jobs/future-sync", response_model=JobResponse)
 def trigger_future_sync(payload: JobFutureSyncRequest, background_tasks: BackgroundTasks) -> JobResponse:
     if payload.days_ahead < 1:
@@ -517,6 +594,114 @@ def metrics(market: str, limit: int = 30) -> MetricsResponse:
 @app.get("/metrics/summary")
 def metrics_summary() -> dict[str, Any]:
     return {"summary": _load_summary()}
+
+
+@app.get("/models/{market}/registry", response_model=ModelRegistryOverviewResponse)
+def model_registry_overview(market: str, limit: int = 50) -> ModelRegistryOverviewResponse:
+    """OPS-02: vista lifecycle completa per mercato (latest/production/
+    history con `current_stage`/`promotion_history` gia' decorati da
+    `ModelRegistry`, nessuna logica duplicata)."""
+    if market not in FilterMarketService.SUPPORTED_MARKETS:
+        raise HTTPException(status_code=400, detail=f"Mercato non supportato: {market}")
+
+    registry = ModelRegistry()
+    latest = registry.get_latest(market=market)
+    production = registry.get_production(market=market)
+    history = registry.tail(limit=limit, market=market)
+    return ModelRegistryOverviewResponse(market=market, latest=latest, production=production, history=history)
+
+
+@app.get("/models/{market}/promotion/evaluate", response_model=PromotionEvaluationResponse)
+def evaluate_model_promotion(market: str, run_id: str, to_stage: str = "production") -> PromotionEvaluationResponse:
+    """OPS-02 (dry-run, nessuna modifica): gate metriche + confronto con
+    l'attuale production per lo stesso mercato — usato dall'operatore PER
+    DECIDERE prima di chiamare `POST /models/{market}/promote`."""
+    if market not in FilterMarketService.SUPPORTED_MARKETS:
+        raise HTTPException(status_code=400, detail=f"Mercato non supportato: {market}")
+
+    registry = ModelRegistry()
+    run = registry.get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"Run non trovato: {run_id}")
+    if run.get("market") != market:
+        raise HTTPException(status_code=400, detail=f"Il run {run_id} non appartiene al mercato '{market}'")
+
+    result = registry.evaluate_promotion(run_id=run_id, to_stage=to_stage, policy=DEFAULT_PROMOTION_POLICY)
+    return PromotionEvaluationResponse(**result)
+
+
+@app.post("/models/{market}/promote", response_model=PromotionResponse)
+def promote_model(market: str, payload: PromotionRequest) -> PromotionResponse:
+    """OPS-02: Candidate -> Champion -> Production promotion CONTROLLATA
+    (mai automatica — acceptance criteria "Ultimo training non diventa
+    automaticamente production"). Applica gate metriche + confronto con
+    l'attuale production; `force=True` permette un override manuale
+    esplicito SEMPRE tracciato nell'audit (`promotion_history.jsonl`)."""
+    if market not in FilterMarketService.SUPPORTED_MARKETS:
+        raise HTTPException(status_code=400, detail=f"Mercato non supportato: {market}")
+
+    registry = ModelRegistry()
+    run = registry.get_run(payload.run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"Run non trovato: {payload.run_id}")
+    if run.get("market") != market:
+        raise HTTPException(status_code=400, detail=f"Il run {payload.run_id} non appartiene al mercato '{market}'")
+
+    try:
+        result = registry.promote_with_policy(
+            run_id=payload.run_id,
+            to_stage=payload.to_stage,
+            reason=payload.reason,
+            actor=payload.actor or "manual",
+            force=payload.force,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return PromotionResponse(**result)
+
+
+@app.post("/models/{market}/rollback", response_model=PromotionResponse)
+def rollback_model(market: str, payload: RollbackRequest) -> PromotionResponse:
+    """OPS-02 (Rollback): riporta lo stage 'production' del mercato a un
+    run precedente (esplicito `to_run_id` oppure l'ultima production
+    precedente dall'audit trail). Bypassa deliberatamente il gate
+    metriche — azione di emergenza, sempre tracciata come
+    `event_type='rollback'`."""
+    if market not in FilterMarketService.SUPPORTED_MARKETS:
+        raise HTTPException(status_code=400, detail=f"Mercato non supportato: {market}")
+
+    registry = ModelRegistry()
+    try:
+        result = registry.rollback(
+            market=market,
+            to_run_id=payload.to_run_id,
+            reason=payload.reason,
+            actor=payload.actor or "manual",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return PromotionResponse(
+        promoted=True,
+        run_id=result["rolled_back_to"],
+        market=market,
+        to_stage="production",
+        evaluation=None,
+        run=result.get("run"),
+    )
+
+
+@app.get("/models/{market}/promotion-history", response_model=PromotionHistoryResponse)
+def model_promotion_history(market: str, limit: int = 100) -> PromotionHistoryResponse:
+    """OPS-02 (acceptance criteria "Audit promotion"): storico completo
+    degli eventi di lifecycle per il mercato, incluse promozioni bloccate
+    dal gate e rollback."""
+    if market not in FilterMarketService.SUPPORTED_MARKETS:
+        raise HTTPException(status_code=400, detail=f"Mercato non supportato: {market}")
+
+    registry = ModelRegistry()
+    events = registry.list_promotion_events(market=market, limit=limit)
+    return PromotionHistoryResponse(market=market, events=events)
 
 
 @app.get("/data/quality", response_model=DataQualityResponse)
@@ -678,6 +863,34 @@ def betslip_generate(
     payload["pool_id"] = pool_result.pool_id
     payload["pool_policy_version"] = pool_result.policy_version
     return BetslipGenerateResponse(**payload)
+
+
+@app.get("/monitoring/overview", response_model=MonitoringOverviewResponse)
+def monitoring_overview(market: Optional[str] = None) -> MonitoringOverviewResponse:
+    """OPS-03: prediction volume, calibration drift, ROI rolling (SOLO
+    diagnostico) e feature coverage in un'unica risposta. Senza `market`,
+    calibration drift/feature coverage restano `None` (richiedono un
+    modello specifico); prediction volume/ROI rolling sono invece
+    calcolati su TUTTI i mercati insieme."""
+    if market is not None and market not in FilterMarketService.SUPPORTED_MARKETS:
+        raise HTTPException(status_code=400, detail=f"Mercato non supportato: {market}")
+
+    service = MonitoringService()
+    payload = service.full_report(market=market)
+    return MonitoringOverviewResponse(**payload)
+
+
+@app.get("/monitoring/alerts", response_model=MonitoringAlertsResponse)
+def monitoring_alerts(market: Optional[str] = None) -> MonitoringAlertsResponse:
+    """OPS-03 (acceptance criteria "Alert base"): SOLO l'elenco alert, per
+    un polling leggero e frequente (es. badge nella sidebar) senza
+    ricalcolare l'intero `/monitoring/overview`."""
+    if market is not None and market not in FilterMarketService.SUPPORTED_MARKETS:
+        raise HTTPException(status_code=400, detail=f"Mercato non supportato: {market}")
+
+    service = MonitoringService()
+    payload = service.alerts_report(market=market)
+    return MonitoringAlertsResponse(**payload)
 
 
 

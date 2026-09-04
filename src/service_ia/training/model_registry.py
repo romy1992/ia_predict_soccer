@@ -1,3 +1,4 @@
+import dataclasses
 import datetime as dt
 import hashlib
 import json
@@ -5,6 +6,12 @@ import logging
 import os
 import subprocess
 from typing import Any, Dict, Optional
+
+from src.ml.registry.promotion_policy import (
+    DEFAULT_PROMOTION_POLICY,
+    PromotionPolicy,
+    evaluate_promotion,
+)
 
 logging.basicConfig(level=logging.INFO)
 
@@ -330,6 +337,209 @@ class ModelRegistry:
             for row in rows
         ]
         return decorated[-limit:]
+
+    # ------------------------------------------------------------------
+    # OPS-02: Candidate -> Champion -> Production promotion
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _evaluation_payload(
+        evaluation,
+        run_id: str,
+        market: str,
+        production_run_id: Optional[str],
+    ) -> Dict[str, Any]:
+        payload = dataclasses.asdict(evaluation)
+        payload["run_id"] = run_id
+        payload["market"] = market
+        payload["production_run_id"] = production_run_id
+        return payload
+
+    def evaluate_promotion(
+        self,
+        run_id: str,
+        to_stage: str = "production",
+        policy: PromotionPolicy = DEFAULT_PROMOTION_POLICY,
+    ) -> Optional[Dict[str, Any]]:
+        """Dry-run (acceptance criteria "Gate metriche" + "Confronto
+        production/candidate"): valuta se `run_id` potrebbe essere
+        promosso a `to_stage` SENZA eseguire alcuna modifica. Utile per
+        ispezionare l'esito prima di decidere (endpoint API/CLI). Ritorna
+        `None` solo se il run non esiste."""
+        run = self.get_run(run_id)
+        if run is None:
+            return None
+
+        target_stage = self._validate_stage(to_stage)
+        market = run.get("market") or ""
+        production = self.get_production(market=market) if target_stage == "production" else None
+        production_run_id = production.get("run_id") if production else None
+
+        evaluation = evaluate_promotion(
+            candidate_metrics=run.get("metrics"),
+            production_metrics=production.get("metrics") if production else None,
+            to_stage=target_stage,
+            policy=policy,
+        )
+        return self._evaluation_payload(evaluation, run_id=run_id, market=market, production_run_id=production_run_id)
+
+    def promote_with_policy(
+        self,
+        run_id: str,
+        to_stage: str = "production",
+        policy: PromotionPolicy = DEFAULT_PROMOTION_POLICY,
+        reason: Optional[str] = None,
+        actor: str = "manual",
+        force: bool = False,
+    ) -> Dict[str, Any]:
+        """Promozione CONTROLLATA (acceptance criteria "Ultimo training non
+        diventa automaticamente production"): esegue `promote()` (invariato)
+        SOLO se `evaluate_promotion` da' esito positivo, oppure se
+        l'operatore forza esplicitamente il bypass (`force=True`, SEMPRE
+        tracciato come override manuale nell'audit — mai un bypass
+        silenzioso). Se il gate blocca e `force=False`, la promozione NON
+        avviene e il tentativo viene comunque loggato nell'audit trail
+        come evento bloccato SENZA alterare lo stage corrente del run
+        (acceptance criteria "Audit promotion" — traccia anche i tentativi
+        respinti, non solo le promozioni riuscite)."""
+        run = self.get_run(run_id)
+        if run is None:
+            raise ValueError(f"Run non trovato: {run_id}")
+
+        target_stage = self._validate_stage(to_stage)
+        market = run.get("market") or ""
+        current_stage = (run.get("current_stage") or run.get("stage") or "candidate").strip().lower()
+        current_stage = current_stage if current_stage in self.STAGES else "candidate"
+
+        production = self.get_production(market=market) if target_stage == "production" else None
+        production_run_id = production.get("run_id") if production else None
+
+        evaluation = evaluate_promotion(
+            candidate_metrics=run.get("metrics"),
+            production_metrics=production.get("metrics") if production else None,
+            to_stage=target_stage,
+            policy=policy,
+        )
+        evaluation_payload = self._evaluation_payload(
+            evaluation, run_id=run_id, market=market, production_run_id=production_run_id
+        )
+
+        if not evaluation.allowed and not force:
+            # Evento "audit-only": to_stage=from_stage cosi' `_lifecycle_maps`
+            # non altera lo stage corrente del run (mai un tentativo
+            # bloccato che viene scambiato per una promozione riuscita).
+            self._append_promotion_event(
+                run_id=run_id,
+                market=market,
+                from_stage=current_stage,
+                to_stage=current_stage,
+                reason=reason,
+                actor=actor,
+                metadata={
+                    "event_type": "promotion_blocked",
+                    "attempted_stage": target_stage,
+                    "policy_version": policy.version,
+                    "evaluation": evaluation_payload,
+                },
+            )
+            return {
+                "promoted": False,
+                "run_id": run_id,
+                "market": market,
+                "to_stage": target_stage,
+                "evaluation": evaluation_payload,
+                "run": self.get_run(run_id),
+            }
+
+        updated_run = self.promote(
+            run_id=run_id,
+            to_stage=target_stage,
+            reason=reason,
+            actor=actor,
+            metadata={
+                "event_type": "promotion_forced" if (not evaluation.allowed and force) else "promotion_approved",
+                "policy_version": policy.version,
+                "evaluation": evaluation_payload,
+            },
+        )
+        return {
+            "promoted": True,
+            "run_id": run_id,
+            "market": market,
+            "to_stage": target_stage,
+            "evaluation": evaluation_payload,
+            "run": updated_run,
+        }
+
+    def _previous_production_run_id(self, market: str, exclude_run_id: Optional[str]) -> Optional[str]:
+        promotions = sorted(
+            (
+                event
+                for event in self._promotion_rows()
+                if event.get("market") == market and (event.get("to_stage") or "").strip().lower() == "production"
+            ),
+            key=lambda item: item.get("changed_at", ""),
+        )
+        candidates = [event.get("run_id") for event in promotions if event.get("run_id") != exclude_run_id]
+        return candidates[-1] if candidates else None
+
+    def rollback(
+        self,
+        market: str,
+        to_run_id: Optional[str] = None,
+        reason: Optional[str] = None,
+        actor: str = "manual",
+    ) -> Dict[str, Any]:
+        """Rollback esplicito: riporta lo stage 'production' di `market` a
+        un run PRECEDENTE. Se `to_run_id` non e' specificato, usa l'ultima
+        production PRECEDENTE a quella corrente (dall'audit trail
+        `promotion_history`, MAI un'euristica indovinata). Bypassa
+        DELIBERATAMENTE il gate metriche (e' un'azione di emergenza
+        esplicita dell'operatore, sempre tracciata nell'audit con
+        `event_type='rollback'`): un run gia' stato production in passato
+        e' per definizione gia' passato da una validazione."""
+        current_production = self.get_production(market=market)
+        current_production_run_id = current_production.get("run_id") if current_production else None
+
+        target_run_id = to_run_id or self._previous_production_run_id(
+            market=market, exclude_run_id=current_production_run_id
+        )
+        if target_run_id is None:
+            raise ValueError(f"Nessun run precedente disponibile per rollback sul mercato '{market}'")
+
+        target_run = self.get_run(target_run_id)
+        if target_run is None:
+            raise ValueError(f"Run di rollback non trovato: {target_run_id}")
+        if target_run.get("market") != market:
+            raise ValueError(f"Il run {target_run_id} non appartiene al mercato '{market}'")
+
+        updated_run = self.promote(
+            run_id=target_run_id,
+            to_stage="production",
+            reason=reason or "rollback",
+            actor=actor,
+            metadata={
+                "event_type": "rollback",
+                "rolled_back_from": current_production_run_id,
+            },
+        )
+        return {
+            "market": market,
+            "rolled_back_from": current_production_run_id,
+            "rolled_back_to": target_run_id,
+            "run": updated_run,
+        }
+
+    def list_promotion_events(self, market: Optional[str] = None, limit: int = 100) -> list[Dict[str, Any]]:
+        """Audit trail COMPLETO (acceptance criteria "Audit promotion"):
+        TUTTI gli eventi di `promotion_history.jsonl` in ordine
+        cronologico, incluse le promozioni bloccate dal gate
+        (`event_type='promotion_blocked'`) e i rollback
+        (`event_type='rollback'`) — non solo le promozioni riuscite."""
+        events = self._promotion_rows()
+        if market:
+            events = [event for event in events if event.get("market") == market]
+        events = sorted(events, key=lambda item: item.get("changed_at", ""))
+        return events[-limit:]
 
 
 

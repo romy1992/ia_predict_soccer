@@ -87,4 +87,3 @@ class PickPoolService:
         candidates = self.candidates_for_day(target_date=target_date, markets=markets)
         return build_pick_pool(candidates=candidates, policy=policy)
 
-

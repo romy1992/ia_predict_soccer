@@ -17,6 +17,8 @@ def _cfg(**overrides) -> AppConfig:
         future_sync_minute=30,
         training_hour=23,
         training_minute=0,
+        live_sync_interval_seconds=90,
+        live_cache_ttl_seconds=20,
         database_url="sqlite://",
         database_schema="public",
     )
@@ -39,11 +41,14 @@ class TestBuildSchedulerJobsSeparation(unittest.TestCase):
     def test_registers_exactly_four_independent_jobs(self):
         sched = scheduler_module.build_scheduler(cfg=_cfg())
         job_ids = {job.id for job in sched.get_jobs()}
-        self.assertEqual(job_ids, {"data_sync_today", "data_settlement", "data_future_sync", "ml_training"})
+        self.assertEqual(
+            job_ids,
+            {"data_sync_today", "data_settlement", "data_future_sync", "ml_training", "data_sync_live"},
+        )
 
     def test_build_scheduler_uses_default_config_when_none_given(self):
         sched = scheduler_module.build_scheduler()
-        self.assertEqual(len(sched.get_jobs()), 4)
+        self.assertEqual(len(sched.get_jobs()), 5)
 
 
 class TestMaxInstancesAndCoalesce(unittest.TestCase):
@@ -53,7 +58,7 @@ class TestMaxInstancesAndCoalesce(unittest.TestCase):
     def test_every_job_has_max_instances_one_and_coalesce_true(self):
         sched = scheduler_module.build_scheduler(cfg=_cfg())
         jobs = sched.get_jobs()
-        self.assertEqual(len(jobs), 4)
+        self.assertEqual(len(jobs), 5)
         for job in jobs:
             self.assertEqual(job.max_instances, 1, f"{job.id} deve avere max_instances=1")
             self.assertTrue(job.coalesce, f"{job.id} deve avere coalesce=True")
@@ -77,6 +82,14 @@ class TestTriggerTypesPerJob(unittest.TestCase):
         self.assertIsInstance(jobs_by_id["ml_training"].trigger, CronTrigger)
         self.assertEqual(_cron_field(jobs_by_id["data_future_sync"].trigger, "hour"), "6")
         self.assertEqual(_cron_field(jobs_by_id["ml_training"].trigger, "hour"), "2")
+
+    def test_live_sync_uses_interval_trigger_in_seconds(self):
+        """LIVE-01: polling MOLTO piu' frequente dei data job, espresso in
+        secondi (non minuti) - trigger indipendente dagli altri."""
+        sched = scheduler_module.build_scheduler(cfg=_cfg(live_sync_interval_seconds=45))
+        live_job = sched.get_job("data_sync_live")
+        self.assertIsInstance(live_job.trigger, IntervalTrigger)
+        self.assertEqual(live_job.trigger.interval.total_seconds(), 45)
 
 
 class TestJobTargetsAreCorrectAndIndependent(unittest.TestCase):
@@ -104,6 +117,12 @@ class TestJobTargetsAreCorrectAndIndependent(unittest.TestCase):
         sched = scheduler_module.build_scheduler(cfg=_cfg())
         future_job = sched.get_job("data_future_sync")
         self.assertIs(future_job.func, scheduler_module.run_manual_future_sync)
+
+    def test_live_sync_job_targets_run_manual_live_sync_never_retrain(self):
+        sched = scheduler_module.build_scheduler(cfg=_cfg())
+        live_job = sched.get_job("data_sync_live")
+        self.assertIs(live_job.func, scheduler_module.run_manual_live_sync)
+        self.assertIsNot(live_job.func, scheduler_module.run_manual_retrain)
 
     def test_no_single_job_bundles_import_and_retrain(self):
         # Nessuno dei job registrati deve puntare a `run_daily_pipeline`

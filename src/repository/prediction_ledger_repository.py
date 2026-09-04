@@ -73,14 +73,21 @@ class PredictionLedgerRepository:
         self,
         market: Optional[str] = None,
         is_settled: Optional[bool] = None,
+        since: Optional[datetime] = None,
         limit: int = 200,
     ) -> list[PredictionLedger]:
+        """`since` (OPS-03, opzionale, default `None` = comportamento
+        INVARIATO): filtra lato query `created_at >= since`, per finestre
+        temporali (prediction volume/ROI rolling) senza dover caricare
+        l'intera tabella e filtrare in memoria."""
         with SessionLocal() as session:
             query = session.query(PredictionLedger)
             if market:
                 query = query.filter(PredictionLedger.market == market)
             if is_settled is not None:
                 query = query.filter(PredictionLedger.is_settled.is_(bool(is_settled)))
+            if since is not None:
+                query = query.filter(PredictionLedger.created_at >= since)
             return query.order_by(PredictionLedger.created_at.desc()).limit(max(0, limit)).all()
 
 

@@ -10,6 +10,8 @@ import {
   getHealth,
   getJobs,
   getMarkets,
+  getMonitoringAlerts,
+  getMonitoringOverview,
   getPredictions,
   predict,
   triggerFutureSync,
@@ -52,6 +54,12 @@ export default function App() {
   const [betslipReport, setBetslipReport] = useState(null);
   const [betslipLoading, setBetslipLoading] = useState(false);
   const [betslipError, setBetslipError] = useState("");
+
+  const [monitoringMarket, setMonitoringMarket] = useState("all");
+  const [monitoringReport, setMonitoringReport] = useState(null);
+  const [monitoringAlerts, setMonitoringAlerts] = useState([]);
+  const [monitoringLoading, setMonitoringLoading] = useState(false);
+  const [monitoringError, setMonitoringError] = useState("");
 
   const [predictOutput, setPredictOutput] = useState("");
   const [opsMessage, setOpsMessage] = useState("");
@@ -185,6 +193,27 @@ export default function App() {
     [betslipDate]
   );
 
+  const loadMonitoring = useCallback(async () => {
+    setMonitoringLoading(true);
+    setMonitoringError("");
+    try {
+      const marketFilter = monitoringMarket === "all" ? undefined : monitoringMarket;
+      const [overviewPayload, alertsPayload] = await Promise.all([
+        getMonitoringOverview({ market: marketFilter }),
+        getMonitoringAlerts({ market: marketFilter }),
+      ]);
+      setMonitoringReport(overviewPayload);
+      setMonitoringAlerts(alertsPayload?.alerts || []);
+      return overviewPayload;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setMonitoringError(message);
+      throw err;
+    } finally {
+      setMonitoringLoading(false);
+    }
+  }, [monitoringMarket]);
+
   const loadEverything = useCallback(async () => {
     setIsLoading(true);
     setError("");
@@ -295,6 +324,13 @@ export default function App() {
     }
     loadBetslip().catch(() => {});
   }, [activePage, betslipReport, loadBetslip]);
+
+  useEffect(() => {
+    if (activePage !== "monitoring") {
+      return;
+    }
+    loadMonitoring().catch(() => {});
+  }, [activePage, monitoringMarket, loadMonitoring]);
 
   async function handleImport() {
     try {
@@ -435,8 +471,17 @@ export default function App() {
       onLoadReport: loadBetslip,
       dayData,
     },
+    monitoring: {
+      market: monitoringMarket,
+      onChangeMarket: setMonitoringMarket,
+      markets,
+      report: monitoringReport,
+      alerts: monitoringAlerts,
+      isLoading: monitoringLoading,
+      error: monitoringError,
+      onLoadReport: loadMonitoring,
+    },
   };
-
   return (
     <div className="layout">
       <Sidebar
