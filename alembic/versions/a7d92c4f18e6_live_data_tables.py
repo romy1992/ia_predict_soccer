@@ -94,4 +94,3 @@ def downgrade() -> None:
     op.drop_index('ix_live_fixture_snapshot_captured_at', table_name='live_fixture_snapshot')
     op.drop_index('ix_live_fixture_snapshot_fixture_id', table_name='live_fixture_snapshot')
     op.drop_table('live_fixture_snapshot')
-

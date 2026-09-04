@@ -371,4 +371,3 @@ class LiveFeatureStore:
             if datetime.fromisoformat(row.feature_available_at_max) > datetime.fromisoformat(row.as_of):
                 return False
         return True
-
