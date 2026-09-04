@@ -6,6 +6,7 @@ import {
   getDashboardLive,
   getDashboardMatchDetail,
   getDashboardOverview,
+  getBetslipGenerate,
   getHealth,
   getJobs,
   getMarkets,
@@ -46,6 +47,11 @@ export default function App() {
   const [qualityReport, setQualityReport] = useState(null);
   const [qualityLoading, setQualityLoading] = useState(false);
   const [qualityError, setQualityError] = useState("");
+
+  const [betslipDate, setBetslipDate] = useState(todayIso());
+  const [betslipReport, setBetslipReport] = useState(null);
+  const [betslipLoading, setBetslipLoading] = useState(false);
+  const [betslipError, setBetslipError] = useState("");
 
   const [predictOutput, setPredictOutput] = useState("");
   const [opsMessage, setOpsMessage] = useState("");
@@ -160,6 +166,25 @@ export default function App() {
     }
   }, []);
 
+  const loadBetslip = useCallback(
+    async (overrides = {}) => {
+      setBetslipLoading(true);
+      setBetslipError("");
+      try {
+        const payload = await getBetslipGenerate({ targetDate: betslipDate, ...overrides });
+        setBetslipReport(payload);
+        return payload;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        setBetslipError(message);
+        throw err;
+      } finally {
+        setBetslipLoading(false);
+      }
+    },
+    [betslipDate]
+  );
+
   const loadEverything = useCallback(async () => {
     setIsLoading(true);
     setError("");
@@ -260,6 +285,16 @@ export default function App() {
     }
     loadDataQuality({ topN: 20 }).catch(() => {});
   }, [activePage, qualityReport, loadDataQuality]);
+
+  useEffect(() => {
+    if (activePage !== "betslip") {
+      return;
+    }
+    if (betslipReport) {
+      return;
+    }
+    loadBetslip().catch(() => {});
+  }, [activePage, betslipReport, loadBetslip]);
 
   async function handleImport() {
     try {
@@ -390,6 +425,15 @@ export default function App() {
       isLoading: qualityLoading,
       error: qualityError,
       onLoadReport: loadDataQuality,
+    },
+    betslip: {
+      targetDate: betslipDate,
+      onChangeTargetDate: setBetslipDate,
+      report: betslipReport,
+      isLoading: betslipLoading,
+      error: betslipError,
+      onLoadReport: loadBetslip,
+      dayData,
     },
   };
 

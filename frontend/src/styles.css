@@ -645,6 +645,60 @@ th {
   border-radius: 6px;
 }
 
+/* SLIP-03: Schedina Oracle — badge/card di rischio per profilo Safe/
+   Balanced/Aggressive, stessa palette colori di .value-play/
+   .value-borderline/.value-no-bet (verde/giallo/rosso). */
+.risk-low {
+  background: #daf6e1;
+  color: #0d6630;
+}
+
+.risk-medium {
+  background: #fff3d8;
+  color: #8d5d00;
+}
+
+.risk-high {
+  background: #ffe6e6;
+  color: #9b1414;
+}
+
+.slip-card {
+  border-left-width: 4px;
+  border-left-style: solid;
+}
+
+.slip-card.risk-low {
+  border-left-color: #0d6630;
+}
+
+.slip-card.risk-medium {
+  border-left-color: #8d5d00;
+}
+
+.slip-card.risk-high {
+  border-left-color: #9b1414;
+}
+
+.slip-legs {
+  list-style: none;
+  margin: 8px 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.slip-legs li {
+  border-bottom: 1px dashed #eef2fb;
+  padding-bottom: 6px;
+}
+
+.slip-explanation {
+  margin: 8px 0 0;
+  font-style: italic;
+}
+
 @media (max-width: 1180px) {
   .layout {
     grid-template-columns: 1fr;
@@ -664,6 +718,7 @@ th {
     grid-template-columns: 1fr;
   }
 }
+
 
 
 
