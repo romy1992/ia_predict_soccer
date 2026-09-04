@@ -60,4 +60,3 @@ def downgrade() -> None:
     op.drop_index('ix_prediction_ledger_market', table_name='prediction_ledger')
     op.drop_index('ix_prediction_ledger_fixture_id', table_name='prediction_ledger')
     op.drop_table('prediction_ledger')
-

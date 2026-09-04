@@ -5,6 +5,7 @@ export default function MatchDetailPanel({
   matchDetail,
   matchDetailLoading,
   matchDetailError,
+  onOpenOracleDetail,
   onClose,
 }) {
   if (!selectedFixtureId && !matchDetail) {
@@ -33,7 +34,14 @@ export default function MatchDetailPanel({
     <section className="panel detail-panel">
       <div className="panel-header">
         <h3>Dettaglio match: {fixture.home} vs {fixture.away}</h3>
-        <button className="btn-secondary" onClick={onClose}>Chiudi dettaglio</button>
+        <div className="panel-header-actions">
+          {onOpenOracleDetail && (
+            <button className="btn-primary" onClick={() => onOpenOracleDetail(selectedFixtureId)}>
+              Oracle Match Detail &rarr;
+            </button>
+          )}
+          <button className="btn-secondary" onClick={onClose}>Chiudi dettaglio</button>
+        </div>
       </div>
 
       <div className="detail-head-meta">
@@ -61,7 +69,9 @@ export default function MatchDetailPanel({
                   <div className="decision-metrics">
                     <span>Conf.: {formatPercent(card.predicted_probability)}</span>
                     <span>Quota media: {formatOdd(card.odd)}</span>
+                    <span>Quota fair: {formatOdd(card.fair_odd)}</span>
                     <span>Edge: {formatEdge(card.edge)}</span>
+                    <span>EV: {formatEdge(card.ev)}</span>
                   </div>
                   <small>{card.value_reason}</small>
                 </div>
@@ -140,4 +150,3 @@ export default function MatchDetailPanel({
     </section>
   );
 }
-

@@ -363,4 +363,3 @@ class PointInTimeDatasetBuilder:
             )
 
         return {"csv": csv_path, "metadata": metadata_path}
-

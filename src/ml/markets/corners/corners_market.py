@@ -377,4 +377,3 @@ def run_corners_benchmark_from_db(
     matches = convert_orm_match_to_dict(match_repo.search_filter(filters=filters))
 
     return run_corners_benchmark(matches=matches, lines=lines, odds_market=odds_market, save_model=save_model)
-

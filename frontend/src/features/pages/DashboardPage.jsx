@@ -1,7 +1,7 @@
 import MatchTable from "../matches/components/MatchTable";
 import { phaseClass, phaseLabel } from "../shared/formatters";
 
-export default function DashboardPage({ overview, liveData, dayData, onOpenMatch, selectedFixtureId }) {
+export default function DashboardPage({ overview, liveData, dayData, onOpenMatch, onOpenOracleDetail, selectedFixtureId }) {
   const safeRows = dayData?.rows || [];
 
   return (
@@ -51,9 +51,8 @@ export default function DashboardPage({ overview, liveData, dayData, onOpenMatch
           <h3>Partite del giorno con previsioni</h3>
           <span className="pill">{dayData.returned}/{dayData.total}</span>
         </div>
-        <MatchTable rows={safeRows.slice(0, 12)} selectedFixtureId={selectedFixtureId} onOpenMatch={onOpenMatch} />
+        <MatchTable rows={safeRows.slice(0, 12)} selectedFixtureId={selectedFixtureId} onOpenMatch={onOpenMatch} onOpenOracleDetail={onOpenOracleDetail} />
       </section>
     </section>
   );
 }
-

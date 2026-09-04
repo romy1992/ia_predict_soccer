@@ -42,10 +42,10 @@ Questa documentazione descrive lo stato attuale (as-is), il target (to-be) e il 
 Il progetto attualmente convive con piu istanze PostgreSQL locali. Il controllo completo ha evidenziato:
 
 - `localhost:5432` -> PostgreSQL 17.5 (`C:/Program Files/PostgreSQL/17/data`), DB storico reale.
-- `localhost:5433` -> PostgreSQL 18.1 (`C:/Program Files/PostgreSQL/18/data`), solo DB `postgres`.
-- Docker `api` -> usa `DATABASE_URL=postgresql://postgres:postgres@db:5432/match_db` (DB interno al compose, separato dal `localhost:5432`).
+- `localhost:5433` -> PostgreSQL 18.1 (`C:/Program Files/PostgreSQL/18/data`), solo DB `postgres` (non usato dal progetto).
+- Docker `api`/`scheduler` -> **nessun Postgres containerizzato** (rimosso da `docker-compose.yml`). Usano `DATABASE_URL=postgresql://postgres:postgres@host.docker.internal:5432/match_db`, cioe' la STESSA istanza storica dell'host raggiunta tramite l'hostname speciale di Docker Desktop.
 
-Conclusione: il precedente risultato "DB vuoto" era riferito al DB Docker interno, non allo storico locale che contiene anni di dati.
+Conclusione (aggiornata 2026-09-03): risolto il mismatch. Non esiste piu' un DB Docker separato: sia l'esecuzione locale sia i container `api`/`scheduler` leggono/scrivono sullo stesso Postgres storico dell'host (`localhost:5432`, >47k righe `match`). Verificato via `GET /health/database` con l'API in esecuzione dentro Docker.
 
 ### 2.2 Volumi reali del DB storico (`localhost:5432`, `match_db`)
 
@@ -100,14 +100,18 @@ Distribuzione stato (top):
 
 Questo e un segnale molto buono per training mercato-specifico (inclusi U/O 1.5-4.5).
 
-### 2.5 Incoerenza tra ambienti (punto critico)
-Esiste un mismatch operativo tra:
+### 2.5 Incoerenza tra ambienti (RISOLTO 2026-09-03)
+In precedenza esisteva un mismatch operativo tra:
 - schema/volumi del DB storico locale (`localhost:5432`),
-- schema del DB usato dal compose Docker (`db:5432`) che risulta separato e con struttura differente.
+- schema del DB usato dal compose Docker (`db:5432`), separato e con struttura differente (dataset quasi vuoto).
 
-Impatto:
-- API in Docker possono leggere un DB diverso da quello usato localmente per analisi/training.
-- metriche e output dashboard possono divergere se non si allinea la sorgente dati.
+Fix applicato:
+- rimosso il servizio Postgres containerizzato da `docker-compose.yml`;
+- `api`/`scheduler` ora puntano a `postgresql://postgres:postgres@host.docker.internal:5432/match_db` (stesso host storico usato in locale);
+- applicata su `localhost:5432` la migration mancante (`f3a9c1d8e2b7`, `prediction_ledger`), gia' allineata alla head del codice;
+- verificato con `GET /health/database` dal container `soccer_api`: `host=host.docker.internal`, `match=47228`, `statistics=81244`, `odds=20402`.
+
+Impatto: API/dashboard in Docker e training locale condividono ora la stessa sorgente dati, nessuna divergenza di metriche/output.
 
 ### 2.6 Backup disponibili nel repo
 In `src/backup_db/` sono presenti dump storici `.backup` e `.sql` (circa 33-40 MB), utili per restore/replica controllata in ambiente Docker quando serve uniformare runtime e training.
@@ -153,14 +157,14 @@ Valutazione training readiness:
 - dataset storico adatto a training multi-mercato, incluso U/O `1.5`, `2.5`, `3.5`, `4.5`
 - prima del training serve un passaggio di normalizzazione anagrafica lega/stagione e gestione `NULL`
 
-### 2.8 Piano di allineamento ambienti dati (obbligatorio)
+### 2.8 Piano di allineamento ambienti dati (ATTUATO 2026-09-03)
 Per evitare mismatch tra API, dashboard e training:
 
-1. scegliere una sola sorgente ufficiale (`localhost:5432` storico oppure DB Docker restaurato)
-2. far puntare `api` e `scheduler` alla stessa sorgente (`DATABASE_URL` unica)
-3. validare schema condiviso (colonne `status`, `current_league`, `mean_statistics` incluse)
-4. bloccare i job ML finche i conteggi base non coincidono tra ambiente runtime e ambiente training
-5. documentare il profilo con un report di controllo versionato
+1. ~~scegliere una sola sorgente ufficiale~~ -> scelto `localhost:5432` (Postgres storico host, >47k match)
+2. ~~far puntare `api` e `scheduler` alla stessa sorgente~~ -> fatto, `DATABASE_URL` unica via `host.docker.internal:5432` in Docker
+3. ~~validare schema condiviso~~ -> fatto, `alembic upgrade head` allineato su `localhost:5432` (revisione `f3a9c1d8e2b7`)
+4. bloccare i job ML finche i conteggi base non coincidono tra ambiente runtime e ambiente training -> verificato via `/health/database`
+5. documentare il profilo con un report di controllo versionato -> vedi `IMPLEMENTATION_LOG.md` (voce 2026-09-03, disattivazione DB Docker)
 
 ---
 
@@ -354,6 +358,9 @@ Aprire uno sprint tecnico dedicato a:
 - audit DB + dataset builder per mercati richiesti
 - training U/O multi-linea con vincolo di coerenza
 - validazione soglie badge per mercato
+
+
+
 
 
 

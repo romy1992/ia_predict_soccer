@@ -209,4 +209,3 @@ def settle_prediction_record(
         won=won,
         pnl=pnl,
     )
-

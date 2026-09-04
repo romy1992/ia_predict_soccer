@@ -231,4 +231,3 @@ export default function DataQualityPage({ report, isLoading, error, onLoadReport
   );
 }
 
-

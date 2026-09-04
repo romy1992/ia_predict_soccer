@@ -5,6 +5,7 @@ import MatchesDayPage from "../matches/MatchesDayPage";
 import MatchesLivePage from "../matches/MatchesLivePage";
 import MlLabPage from "../ml-lab/MlLabPage";
 import OraclePage from "../oracle/OraclePage";
+import OracleMatchDetailPage from "../oracle/OracleMatchDetailPage";
 
 export default function AppRouter({ activePage, props }) {
   if (activePage === "dashboard") {
@@ -19,6 +20,9 @@ export default function AppRouter({ activePage, props }) {
   if (activePage === "predictions") {
     return <OraclePage {...props.predictions} />;
   }
+  if (activePage === "oracle-detail") {
+    return <OracleMatchDetailPage {...props.oracleDetail} />;
+  }
   if (activePage === "data-center" || activePage === "ops") {
     return <DataCenterPage {...props.dataCenter} />;
   }
@@ -31,7 +35,6 @@ export default function AppRouter({ activePage, props }) {
 
   return <DashboardFeaturePage {...props.dashboard} />;
 }
-
 
 
 

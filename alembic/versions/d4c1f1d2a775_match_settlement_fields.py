@@ -32,4 +32,3 @@ def downgrade() -> None:
     op.drop_column('match', 'settled_at')
     op.drop_column('match', 'settlement_status')
     op.drop_column('match', 'is_settled')
-

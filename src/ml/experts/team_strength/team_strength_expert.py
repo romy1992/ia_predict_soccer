@@ -342,4 +342,3 @@ class TeamStrengthExpert:
 
 
 TeamStrengthExpert.VERSION = TeamStrengthExpert._build_version()
-

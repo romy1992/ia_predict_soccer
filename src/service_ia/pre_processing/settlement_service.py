@@ -272,4 +272,3 @@ class SettlementService:
             "counts": counts,
             "rows": rows,
         }
-

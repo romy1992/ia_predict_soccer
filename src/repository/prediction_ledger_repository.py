@@ -84,4 +84,3 @@ class PredictionLedgerRepository:
             return query.order_by(PredictionLedger.created_at.desc()).limit(max(0, limit)).all()
 
 
-

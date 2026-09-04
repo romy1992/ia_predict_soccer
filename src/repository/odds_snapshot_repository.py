@@ -96,4 +96,3 @@ class OddsSnapshotRepository:
         payload.sort(key=lambda row: (row["market"], row["line"] or "", row["bookmaker"], row["outcome"]))
         return payload
 
-

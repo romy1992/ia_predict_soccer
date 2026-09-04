@@ -159,4 +159,3 @@ class MulticlassCalibrationService:
             post_metrics=post_metrics,
             calibrator=calibrator,
         )
-

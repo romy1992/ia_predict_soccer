@@ -244,4 +244,3 @@ class StatisticsExpert:
         proba = self._pipeline.predict_proba(X)
         p1 = proba[:, -1] if proba.ndim == 2 else proba
         return pd.Series(p1, index=frame.index, name="statistics_expert_embedding")
-

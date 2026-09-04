@@ -35,12 +35,14 @@ Se non li imposti, vengono usati i default del codice.
 
 ### Policy DATABASE_URL (dev/test/prod)
 - `dev locale`: imposta `DATABASE_URL` verso l'istanza locale scelta (es. `localhost:5432`)
-- `docker compose`: `api` e `scheduler` puntano entrambi a `postgresql://postgres:postgres@db:5432/match_db`
+- `docker compose`: **nessun Postgres containerizzato**. `api` e `scheduler` puntano ENTRAMBI allo stesso DB locale dell'host tramite `postgresql://postgres:postgres@host.docker.internal:5432/match_db` (`host.docker.internal` risolve automaticamente all'host su Docker Desktop; su Linux e' abilitato da `extra_hosts: host.docker.internal:host-gateway` gia' presente nel compose)
 - `test`: usa un DB isolato tramite override env (`DATABASE_URL`) prima di lanciare i test
 - verifica target attivo con `GET /health/database` (host/db/schema + conteggi tabelle)
 
 Nel setup corrente locale la sorgente runtime e impostata su:
 - `DATABASE_URL=postgresql://postgres:postgres@localhost:5432/match_db`
+
+Un'unica sorgente dati (Postgres nativo dell'host, dataset storico reale) per locale, Docker e training: nessun DB duplicato/vuoto da mantenere allineato.
 
 Per il frontend React puoi usare anche:
 - `VITE_API_BASE_URL=http://localhost:8000` in `frontend/.env`
@@ -54,8 +56,10 @@ docker compose ps
 URL servizi:
 - `http://localhost:3000` -> frontend React
 - `http://localhost:8000/docs` -> API FastAPI
-- `localhost:5433` -> Postgres container (porta host)
 - `scheduler` -> job giornaliero automatico alle 23:00
+
+Prerequisito: un Postgres raggiungibile su `localhost:5432/match_db` dell'host (nativo o comunque fuori da questo compose), con le migration Alembic allineate (`alembic upgrade head`).
+
 
 Stop servizi:
 ```powershell
@@ -146,7 +150,6 @@ Nota dati dashboard:
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/smoke_api.ps1
 ```
-
 
 
 

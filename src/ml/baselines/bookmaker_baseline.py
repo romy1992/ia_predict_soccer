@@ -154,4 +154,3 @@ def persist_fixture_baseline(
     with open(file_path, "w", encoding="utf-8") as file_handle:
         json.dump(fixture_baseline, file_handle, ensure_ascii=False, indent=2)
     return file_path
-

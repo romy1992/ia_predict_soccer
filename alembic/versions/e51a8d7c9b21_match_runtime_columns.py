@@ -48,4 +48,3 @@ def downgrade() -> None:
         op.drop_column("match", "league_match")
     if _column_exists("match", "current_league"):
         op.drop_column("match", "current_league")
-

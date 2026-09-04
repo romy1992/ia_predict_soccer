@@ -108,4 +108,3 @@ class DoubleChanceExpert:
     def derive(self, X: Any) -> list[dict[str, Any]]:
         rows_1x2 = self.market_1x2_expert.predict_proba_dict(X)
         return [build_double_chance_output(row) for row in rows_1x2]
-

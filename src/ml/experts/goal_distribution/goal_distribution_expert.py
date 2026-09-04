@@ -280,4 +280,3 @@ class GoalDistributionExpert:
 
 
 GoalDistributionExpert.VERSION = GoalDistributionExpert._build_version()
-

@@ -123,4 +123,3 @@ class ApiSportsProvider:
 
     def get_predictions(self, fixture_id: int) -> list[dict[str, Any]]:
         return self.request(path="predictions", params={"fixture": int(fixture_id)})
-

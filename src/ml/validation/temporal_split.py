@@ -100,4 +100,3 @@ def final_holdout_split(
     train_idx = list(range(0, split_index))
     holdout_idx = list(range(split_index, total_rows))
     return train_idx, holdout_idx
-
