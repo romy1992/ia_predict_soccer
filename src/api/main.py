@@ -16,6 +16,7 @@ from src.api.oracle_match_detail_service import OracleMatchDetailService
 from src.api.schemas import (
     DataQualityResponse,
     DatabaseHealthResponse,
+    BetslipGenerateResponse,
     BetslipPoolResponse,
     DashboardDayResponse,
     DashboardLiveResponse,
@@ -44,6 +45,7 @@ from src.data.quality_report_service import DataQualityService
 from src.ml.ensemble.model_consensus import build_model_consensus_for_fixture
 from src.oracle.betslip.pick_pool import PickPoolPolicy
 from src.oracle.betslip.pick_pool_service import PickPoolService
+from src.oracle.betslip.betslip_service import BetslipService
 from src.oracle.decision_engine.decision_policy import DEFAULT_DECISION_POLICY, evaluate_decision
 from src.oracle.ledger.ledger_service import PredictionLedgerService
 from src.repository.base.database_audit import get_database_audit
@@ -646,6 +648,36 @@ def betslip_pool(
     return BetslipPoolResponse(**dataclasses.asdict(result))
 
 
+@app.get("/betslip/generate", response_model=BetslipGenerateResponse)
+def betslip_generate(
+    target_date: Optional[str] = None,
+    include_borderline: bool = False,
+    min_odd: Optional[float] = None,
+    max_odd: Optional[float] = None,
+    min_ev: Optional[float] = None,
+    markets: Optional[str] = None,
+) -> BetslipGenerateResponse:
+    """Schedine 2/3/4 eventi con profili Safe/Balanced/Aggressive (SLIP-03):
+    per ciascun profilo, combina le pick del Pick Pool (SLIP-01) validate
+    dal Correlation Engine (SLIP-02, mai una coppia EXCLUDE nella stessa
+    schedina), dichiarando quota combinata e probabilita' (naive vs
+    corretta per la correlazione) con metodo esplicito. Nessuna nuova
+    logica di betting: riusa il Pick Pool COSI' COM'E'."""
+    selected_markets = [item.strip() for item in markets.split(",")] if markets else None
+    policy = PickPoolPolicy.with_overrides(
+        include_borderline=include_borderline,
+        min_odd=min_odd,
+        max_odd=max_odd,
+        min_ev=min_ev,
+    )
+    service = BetslipService()
+    pool_result, generation = service.generate_for_day(
+        target_date=_parse_iso_date(target_date), pool_policy=policy, markets=selected_markets
+    )
+    payload = dataclasses.asdict(generation)
+    payload["pool_id"] = pool_result.pool_id
+    payload["pool_policy_version"] = pool_result.policy_version
+    return BetslipGenerateResponse(**payload)
 
 
 

@@ -91,6 +91,34 @@ export function getOracleMatchDetail(fixtureId, { markets } = {}) {
   return request(`/dashboard/match/${fixtureId}/oracle-detail${query ? `?${query}` : ""}`);
 }
 
+export function getBetslipGenerate({
+  targetDate,
+  includeBorderline = false,
+  minOdd,
+  maxOdd,
+  minEv,
+  markets,
+} = {}) {
+  const params = new URLSearchParams();
+  if (targetDate) {
+    params.set("target_date", targetDate);
+  }
+  params.set("include_borderline", String(includeBorderline));
+  if (minOdd !== undefined && minOdd !== null && minOdd !== "") {
+    params.set("min_odd", String(minOdd));
+  }
+  if (maxOdd !== undefined && maxOdd !== null && maxOdd !== "") {
+    params.set("max_odd", String(maxOdd));
+  }
+  if (minEv !== undefined && minEv !== null && minEv !== "") {
+    params.set("min_ev", String(minEv));
+  }
+  if (markets && markets.length > 0) {
+    params.set("markets", markets.join(","));
+  }
+  return request(`/betslip/generate?${params.toString()}`);
+}
+
 function normalizeJobBody(asyncRunOrPayload, fallbackPayload = {}) {
   if (typeof asyncRunOrPayload === "object" && asyncRunOrPayload !== null) {
     return asyncRunOrPayload;

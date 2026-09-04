@@ -220,6 +220,25 @@ class BetslipPoolResponse(BaseModel):
     excluded: list[dict[str, Any]] = []
 
 
+class BetslipGenerateResponse(BaseModel):
+    """SLIP-03: schedine 2/3/4 eventi generate per i tre profili di rischio
+    (Safe/Balanced/Aggressive). `profiles` mappa il nome del profilo alla
+    lista di schedine generate (gia' "appiattite" da `dataclasses.asdict`) -
+    vedi `src/oracle/betslip/betslip_builder.py`, ciascuna con quota
+    combinata e probabilita' (naive/corretta per la correlazione)
+    dichiarate con metodo esplicito. `pool_id`/`pool_policy_version`
+    tracciano il Pick Pool (SLIP-01) da cui le schedine sono state
+    generate."""
+
+    generated_at: str
+    correlation_ruleset_version: str
+    pool_id: Optional[str] = None
+    pool_policy_version: Optional[str] = None
+    pool_considered: int
+    profiles: dict[str, list[dict[str, Any]]] = {}
+    warnings: list[str] = []
+
+
 
 
 

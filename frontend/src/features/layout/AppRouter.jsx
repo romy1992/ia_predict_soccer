@@ -1,6 +1,7 @@
 import DashboardFeaturePage from "../dashboard/DashboardFeaturePage";
 import DataCenterPage from "../data-center/DataCenterPage";
 import DataQualityPage from "../data-quality/DataQualityPage";
+import BetslipPage from "../betslip/BetslipPage";
 import MatchesDayPage from "../matches/MatchesDayPage";
 import MatchesLivePage from "../matches/MatchesLivePage";
 import MlLabPage from "../ml-lab/MlLabPage";
@@ -22,6 +23,9 @@ export default function AppRouter({ activePage, props }) {
   }
   if (activePage === "oracle-detail") {
     return <OracleMatchDetailPage {...props.oracleDetail} />;
+  }
+  if (activePage === "betslip") {
+    return <BetslipPage {...props.betslip} />;
   }
   if (activePage === "data-center" || activePage === "ops") {
     return <DataCenterPage {...props.dataCenter} />;
