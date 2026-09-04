@@ -47,4 +47,3 @@ def downgrade() -> None:
     op.drop_index('ix_odds_snapshot_market', table_name='odds_snapshot')
     op.drop_index('ix_odds_snapshot_fixture_id', table_name='odds_snapshot')
     op.drop_table('odds_snapshot')
-

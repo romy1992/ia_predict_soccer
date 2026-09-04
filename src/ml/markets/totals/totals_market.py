@@ -571,4 +571,3 @@ def run_totals_benchmark_from_db(
     matches = convert_orm_match_to_dict(match_repo.search_filter(filters=filters))
 
     return run_totals_benchmark(matches=matches, reference_market=reference_market, save_model=save_model)
-

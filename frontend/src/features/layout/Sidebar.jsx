@@ -29,4 +29,3 @@ export default function Sidebar({ activePage, onNavigate, onRefreshAll, lastRefr
     </aside>
   );
 }
-

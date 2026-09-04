@@ -217,4 +217,3 @@ class TestMarket1x2ExpertRegistryLifecycle(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

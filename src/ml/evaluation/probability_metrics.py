@@ -221,4 +221,3 @@ def champion_probability_score(metrics: dict[str, Any], f1_weighted: float) -> f
     )
 
 
-

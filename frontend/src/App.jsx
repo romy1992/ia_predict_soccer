@@ -56,6 +56,8 @@ export default function App() {
   const [matchDetail, setMatchDetail] = useState(null);
   const [matchDetailLoading, setMatchDetailLoading] = useState(false);
   const [matchDetailError, setMatchDetailError] = useState("");
+  const [oracleFixtureId, setOracleFixtureId] = useState(null);
+  const [previousPage, setPreviousPage] = useState("dashboard");
 
   const marketsQuery = useMemo(() => {
     if (selectedMarket === "all") {
@@ -211,6 +213,19 @@ export default function App() {
     [loadMatchDetail]
   );
 
+  const openOracleDetail = useCallback(
+    (fixtureId) => {
+      setPreviousPage((current) => (activePage === "oracle-detail" ? current : activePage));
+      setOracleFixtureId(fixtureId);
+      setActivePage("oracle-detail");
+    },
+    [activePage]
+  );
+
+  const closeOracleDetail = useCallback(() => {
+    setActivePage(previousPage || "today");
+  }, [previousPage]);
+
   useEffect(() => {
     loadEverything();
   }, [loadEverything]);
@@ -315,12 +330,14 @@ export default function App() {
       liveData,
       dayData,
       onOpenMatch: openMatchDetail,
+      onOpenOracleDetail: openOracleDetail,
       selectedFixtureId,
     },
     live: {
       liveData,
       selectedFixtureId,
       onOpenMatch: openMatchDetail,
+      onOpenOracleDetail: openOracleDetail,
     },
     today: {
       dayData,
@@ -329,6 +346,11 @@ export default function App() {
       onChangePhaseFilter: setPhaseFilter,
       selectedFixtureId,
       onOpenMatch: openMatchDetail,
+      onOpenOracleDetail: openOracleDetail,
+    },
+    oracleDetail: {
+      fixtureId: oracleFixtureId,
+      onBack: closeOracleDetail,
     },
     predictions: {
       markets,
@@ -406,6 +428,7 @@ export default function App() {
             matchDetail={matchDetail}
             matchDetailLoading={matchDetailLoading}
             matchDetailError={matchDetailError}
+            onOpenOracleDetail={openOracleDetail}
             onClose={() => {
               setSelectedFixtureId(null);
               setMatchDetail(null);
@@ -416,7 +439,6 @@ export default function App() {
     </div>
   );
 }
-
 
 
 

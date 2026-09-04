@@ -8,6 +8,7 @@ from typing import Any, Optional
 
 import joblib
 import pandas as pd
+from joblib import parallel_backend
 from sklearn.ensemble import RandomForestClassifier, StackingClassifier, VotingClassifier
 from sklearn.feature_selection import RFE, SelectKBest
 from sklearn.impute import SimpleImputer
@@ -310,7 +311,14 @@ def train_market(
             n_jobs=-1,
             verbose=0,
         )
-        search.fit(X, y)
+        # backend "threading" (non il default "loky" a processi): evita di
+        # nidificare due livelli di parallelismo a PROCESSI separati
+        # (GridSearchCV + RandomForestClassifier, entrambi n_jobs=-1), che
+        # su dataset ampi (13+ stagioni storiche) satura CPU/memoria della
+        # macchina fino a far uccidere il processo (OOM/SIGKILL esterno).
+        # Stesso fix gia' applicato in src/ml/markets/market_1x2.py.
+        with parallel_backend("threading", n_jobs=-1):
+            search.fit(X, y)
         best_estimator = search.best_estimator_
         fitted_estimators[model_name] = best_estimator
 
@@ -343,8 +351,9 @@ def train_market(
             voting="soft",
             n_jobs=-1,
         )
-        voting_score = cross_val_score(voting, X, y, scoring=scorer, cv=cv_splits, n_jobs=-1).mean()
-        voting.fit(X, y)
+        with parallel_backend("threading", n_jobs=-1):
+            voting_score = cross_val_score(voting, X, y, scoring=scorer, cv=cv_splits, n_jobs=-1).mean()
+            voting.fit(X, y)
         voting_prob_report, voting_ranking_score = _evaluate_estimator(
             estimator=voting,
             X=X,
@@ -372,8 +381,9 @@ def train_market(
             n_jobs=-1,
             cv=cv_splits,
         )
-        stacking_score = cross_val_score(stacking, X, y, scoring=scorer, cv=cv_splits, n_jobs=-1).mean()
-        stacking.fit(X, y)
+        with parallel_backend("threading", n_jobs=-1):
+            stacking_score = cross_val_score(stacking, X, y, scoring=scorer, cv=cv_splits, n_jobs=-1).mean()
+            stacking.fit(X, y)
         stacking_prob_report, stacking_ranking_score = _evaluate_estimator(
             estimator=stacking,
             X=X,
@@ -560,7 +570,6 @@ if __name__ == "__main__":
     train_results = train_all_markets()
     for train_result in train_results:
         print(train_result)
-
 
 
 

@@ -12,9 +12,11 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.api.dashboard_service import DashboardService
+from src.api.oracle_match_detail_service import OracleMatchDetailService
 from src.api.schemas import (
     DataQualityResponse,
     DatabaseHealthResponse,
+    BetslipPoolResponse,
     DashboardDayResponse,
     DashboardLiveResponse,
     DashboardMatchDetailResponse,
@@ -29,6 +31,7 @@ from src.api.schemas import (
     JobsHistoryResponse,
     MetricsResponse,
     ModelConsensusResponse,
+    OracleMatchDetailResponse,
     PaperPnlResponse,
     PredictRequest,
     PredictResponse,
@@ -39,6 +42,8 @@ from src.api.schemas import (
 )
 from src.data.quality_report_service import DataQualityService
 from src.ml.ensemble.model_consensus import build_model_consensus_for_fixture
+from src.oracle.betslip.pick_pool import PickPoolPolicy
+from src.oracle.betslip.pick_pool_service import PickPoolService
 from src.oracle.decision_engine.decision_policy import DEFAULT_DECISION_POLICY, evaluate_decision
 from src.oracle.ledger.ledger_service import PredictionLedgerService
 from src.repository.base.database_audit import get_database_audit
@@ -267,6 +272,22 @@ def dashboard_match_consensus(fixture_id: int, market: str) -> ModelConsensusRes
         consensus=report.consensus,
         warnings=report.warnings,
     )
+
+
+@app.get("/dashboard/match/{fixture_id}/oracle-detail", response_model=OracleMatchDetailResponse)
+def dashboard_match_oracle_detail(fixture_id: int, markets: Optional[str] = None) -> OracleMatchDetailResponse:
+    """Oracle Match Detail (MATCH-02): overview, probabilities, value bets,
+    team strength, expected goals, score matrix, odds movement e model
+    consensus per QUESTA fixture, in un'unica risposta strutturata
+    (acceptance criteria "Dettaglio navigabile per fixture"). Nessuna
+    logica di betting/ML nel frontend: ogni sezione e' gia' calcolata qui
+    da `OracleMatchDetailService` (riuso diretto di MATCH-01/EXP-01/EXP-02/
+    ORACLE-04, nessuna duplicazione). Dati mancanti gestiti esplicitamente
+    (`warnings`), mai un'eccezione che blocca l'intero dettaglio."""
+    selected_markets = [item.strip() for item in markets.split(",")] if markets else None
+    service = OracleMatchDetailService()
+    payload = service.build_oracle_match_detail(fixture_id=fixture_id, markets=selected_markets)
+    return OracleMatchDetailResponse(**payload)
 
 
 @app.post("/predict/{market}", response_model=PredictResponse)
@@ -595,6 +616,34 @@ def prediction_ledger_pnl(market: Optional[str] = None, stake: float = 1.0) -> P
     report = service.paper_pnl_report(market=market, stake=stake)
     return PaperPnlResponse(market=market, raw_summary=raw_summary, report=dataclasses.asdict(report))
 
+
+@app.get("/betslip/pool", response_model=BetslipPoolResponse)
+def betslip_pool(
+    target_date: Optional[str] = None,
+    include_borderline: bool = False,
+    min_odd: Optional[float] = None,
+    max_odd: Optional[float] = None,
+    min_ev: Optional[float] = None,
+    markets: Optional[str] = None,
+) -> BetslipPoolResponse:
+    """Pick Pool per Schedina Oracle (SLIP-01): pool DETERMINISTICO e
+    TRACCIABILE di pick candidati (solo PLAY di default, opzionalmente
+    anche BORDERLINE) per la giornata richiesta, filtrato da vincoli
+    quota/EV opzionali (soglie versionate, mai hardcoded). Nessuna nuova
+    logica di betting: riusa le `decision_cards` gia' calcolate da
+    `DashboardService` (MATCH-01/BET-01/02/04)."""
+    selected_markets = [item.strip() for item in markets.split(",")] if markets else None
+    policy = PickPoolPolicy.with_overrides(
+        include_borderline=include_borderline,
+        min_odd=min_odd,
+        max_odd=max_odd,
+        min_ev=min_ev,
+    )
+    service = PickPoolService()
+    result = service.build_pool_for_day(
+        target_date=_parse_iso_date(target_date), policy=policy, markets=selected_markets
+    )
+    return BetslipPoolResponse(**dataclasses.asdict(result))
 
 
 

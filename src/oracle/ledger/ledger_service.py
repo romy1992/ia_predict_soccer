@@ -251,4 +251,3 @@ class PredictionLedgerService:
             for row in rows
         ]
         return compute_backtest_report(bets=bets, stake=stake, include_decisions=include_decisions)
-

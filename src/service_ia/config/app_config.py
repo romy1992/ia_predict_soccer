@@ -72,4 +72,3 @@ def load_app_config() -> AppConfig:
         database_schema=database_schema,
     )
 
-

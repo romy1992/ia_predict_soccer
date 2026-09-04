@@ -82,6 +82,15 @@ export function getDashboardMatchDetail(fixtureId, { withPredictions = true, mar
   return request(`/dashboard/match/${fixtureId}?${params.toString()}`);
 }
 
+export function getOracleMatchDetail(fixtureId, { markets } = {}) {
+  const params = new URLSearchParams();
+  if (markets && markets.length > 0) {
+    params.set("markets", markets.join(","));
+  }
+  const query = params.toString();
+  return request(`/dashboard/match/${fixtureId}/oracle-detail${query ? `?${query}` : ""}`);
+}
+
 function normalizeJobBody(asyncRunOrPayload, fallbackPayload = {}) {
   if (typeof asyncRunOrPayload === "object" && asyncRunOrPayload !== null) {
     return asyncRunOrPayload;
@@ -175,7 +184,6 @@ export function getPredictions(limit = 50) {
 }
 
 export { API_BASE_URL };
-
 
 
 

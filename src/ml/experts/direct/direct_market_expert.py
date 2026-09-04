@@ -164,4 +164,3 @@ class DirectMarketExpert:
     def from_estimator(cls, market: str, estimator: Any, feature_names: Optional[list[str]] = None) -> "DirectMarketExpert":
         """Costruzione diretta (utile nei test, senza toccare registry/disco)."""
         return cls(market=market, estimator=estimator, feature_names=list(feature_names or []))
-

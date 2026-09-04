@@ -244,4 +244,3 @@ class MarketOddsExpert:
 
 
 MarketOddsExpert.VERSION = MarketOddsExpert._build_version()
-

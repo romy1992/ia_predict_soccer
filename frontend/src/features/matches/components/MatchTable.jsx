@@ -1,7 +1,8 @@
 import PredictionBadges from "./PredictionBadges";
+import ValueBadge from "./ValueBadge";
 import { phaseClass, phaseLabel } from "../../shared/formatters";
 
-export default function MatchTable({ rows, selectedFixtureId, onOpenMatch }) {
+export default function MatchTable({ rows, selectedFixtureId, onOpenMatch, onOpenOracleDetail }) {
   if (!rows || rows.length === 0) {
     return <div className="empty-panel">Nessuna partita trovata per i filtri correnti.</div>;
   }
@@ -17,6 +18,7 @@ export default function MatchTable({ rows, selectedFixtureId, onOpenMatch }) {
             <th>Score</th>
             <th>Stato</th>
             <th>Previsioni</th>
+            <th>Value</th>
             <th>Dettaglio</th>
           </tr>
         </thead>
@@ -39,10 +41,18 @@ export default function MatchTable({ rows, selectedFixtureId, onOpenMatch }) {
                 <span className={`phase-badge ${phaseClass(row.phase)}`}>{phaseLabel(row.phase)}</span>
               </td>
               <td><PredictionBadges row={row} /></td>
+              <td><ValueBadge decision={row.best_decision} /></td>
               <td>
-                <button className="btn-secondary" onClick={() => onOpenMatch(row.fixture_id)}>
-                  Apri
-                </button>
+                <div className="cell-actions">
+                  <button className="btn-secondary" onClick={() => onOpenMatch(row.fixture_id)}>
+                    Apri
+                  </button>
+                  {onOpenOracleDetail && (
+                    <button className="btn-secondary" onClick={() => onOpenOracleDetail(row.fixture_id)}>
+                      Oracle
+                    </button>
+                  )}
+                </div>
               </td>
             </tr>
           ))}
@@ -51,4 +61,3 @@ export default function MatchTable({ rows, selectedFixtureId, onOpenMatch }) {
     </div>
   );
 }
-

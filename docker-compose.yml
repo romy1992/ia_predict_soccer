@@ -1,41 +1,45 @@
 services:
-  db:
-    image: postgres:16-alpine
-    container_name: soccer_db
-    environment:
-      POSTGRES_DB: match_db
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-    ports:
-      - "5433:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d match_db"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-
+  # NOTA: nessun servizio Postgres containerizzato. Il DB e' SEMPRE quello
+  # locale (Postgres nativo Windows su localhost:5432, dataset storico reale
+  # con match/odds/statistics). I container raggiungono l'host tramite
+  # l'hostname speciale "host.docker.internal" (nativo su Docker Desktop,
+  # e reso portabile su Linux tramite extra_hosts/host-gateway).
   api:
     build:
       context: .
       dockerfile: Dockerfile.api
     container_name: soccer_api
+    restart: unless-stopped
     env_file:
       - properties/config.env
     environment:
-      DATABASE_URL: postgresql://postgres:postgres@db:5432/match_db
+      DATABASE_URL: postgresql://postgres:postgres@host.docker.internal:5432/match_db
       API_ODDS_ACTUAL_BASE: https://api.the-odds-api.com/v4/sports
       API_ODDS_HISTORIACAL_BASE: https://api.the-odds-api.com/v4/historical/sports
       CORS_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
-    depends_on:
-      db:
-        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "8000:8000"
     volumes:
       - ./best_models:/app/best_models
       - ./logs:/app/logs
+    # Limite esplicito: il training ML (GridSearchCV multi-mercato) puo'
+    # saturare CPU/RAM della VM Docker fino a far uccidere il processo con
+    # SIGKILL esterno (osservato 2 volte, OOMKilled=false -> non e' il
+    # cgroup del container a intervenire, ma qualcosa di piu' esterno,
+    # verosimilmente Docker Desktop/WSL2). Con un limite esplicito, se la
+    # memoria satura e' IL CONTAINER a andare in OOM in modo controllato
+    # (OOMKilled=true, riconosciuto da `restart: unless-stopped`), non la
+    # VM intera.
+    mem_limit: 4g
+    memswap_limit: 4g
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
 
   web:
     build:
@@ -44,6 +48,7 @@ services:
       args:
         VITE_API_BASE_URL: http://localhost:8000
     container_name: soccer_web
+    restart: unless-stopped
     depends_on:
       - api
     ports:
@@ -55,19 +60,16 @@ services:
       dockerfile: Dockerfile.api
     container_name: soccer_scheduler
     command: ["python", "-m", "src.jobs.scheduler"]
+    restart: unless-stopped
     env_file:
       - properties/config.env
     environment:
-      DATABASE_URL: postgresql://postgres:postgres@db:5432/match_db
+      DATABASE_URL: postgresql://postgres:postgres@host.docker.internal:5432/match_db
       API_ODDS_ACTUAL_BASE: https://api.the-odds-api.com/v4/sports
       API_ODDS_HISTORIACAL_BASE: https://api.the-odds-api.com/v4/historical/sports
-    depends_on:
-      db:
-        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./best_models:/app/best_models
       - ./logs:/app/logs
-
-volumes:
-  postgres_data:
 

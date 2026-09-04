@@ -33,4 +33,3 @@ Crea `frontend/.env` partendo da `frontend/.env.example`.
 Questo frontend viene containerizzato con `frontend/Dockerfile` ed esposto tramite Nginx su porta `3000` (mappata da `80` del container).
 
 
-

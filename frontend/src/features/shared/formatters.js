@@ -86,6 +86,14 @@ export function formatOdd(value) {
   return num.toFixed(2);
 }
 
+export function formatNumber(value, decimals = 2) {
+  const num = Number(value);
+  if (Number.isNaN(num)) {
+    return "-";
+  }
+  return num.toFixed(decimals);
+}
+
 export function formatEdge(value) {
   const num = Number(value);
   if (Number.isNaN(num)) {
@@ -105,4 +113,3 @@ export function valueClass(valueLabel) {
   }
   return "value-no-bet";
 }
-

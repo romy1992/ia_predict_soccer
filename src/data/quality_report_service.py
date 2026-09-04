@@ -244,4 +244,3 @@ class DataQualityService:
         return report
 
 
-

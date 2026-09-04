@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 import os
 import re
 from typing import Any, Optional
@@ -13,6 +13,8 @@ from sqlalchemy.exc import OperationalError, ProgrammingError
 from sqlalchemy.orm import selectinload
 
 from src.ml.baselines.bookmaker_baseline import build_fixture_baseline, get_market_outcome_baseline
+from src.oracle.decision_engine.decision_policy import evaluate_decision_from_fair_odds_outcome
+from src.oracle.fair_odds.fair_odds_engine import build_fair_odds_outcome
 from src.repository.base.repository_db import SessionLocal
 from src.service_ia.config.app_config import load_app_config
 from src.service_ia.model.match import Match
@@ -22,6 +24,12 @@ from src.service_ia.utility.request_api import base_api_statistics
 
 FINAL_STATUSES = {"FT", "AET", "PEN", "ABD", "CANC", "PST", "WO"}
 LIVE_STATUSES = {"1H", "HT", "2H", "ET", "BT", "P", "LIVE", "INT"}
+
+# MATCH-01: priorita' per scegliere la decision card "migliore" da mostrare
+# come badge sintetico in tabella (Match Center) tra quelle gia' calcolate
+# da `_build_decision_cards` — nessuna nuova logica di decisione, solo una
+# selezione tra righe gia' pronte.
+_DECISION_LABEL_PRIORITY = {"PLAY": 0, "BORDERLINE": 1, "NO BET": 2}
 
 
 @dataclass
@@ -423,11 +431,13 @@ class DashboardService:
                 pick = row_context.get("home") or "Home"
                 odd = normalized.get(self._normalize_text("Home"))
             else:
+                # BET-02 ("Usare outcome corretto"): NON usare la quota
+                # "Draw" come fallback per il pick "Away" — sono due
+                # outcome diversi, mixarli produrrebbe un edge/EV calcolato
+                # sulla quota sbagliata. Se manca la quota "Away", l'odd
+                # resta None (gestito esplicitamente dal Value Engine).
                 pick = row_context.get("away") or "Away"
                 odd = normalized.get(self._normalize_text("Away"))
-                if odd is None:
-                    draw_odd = normalized.get(self._normalize_text("Draw"))
-                    odd = draw_odd
             return pick, odd
 
         if market in {"corners", "cards"}:
@@ -467,18 +477,6 @@ class DashboardService:
             return f"Over {threshold}" if prediction == 1 else f"Under {threshold}"
         return pick_label
 
-    @staticmethod
-    def _value_decision(predicted_probability: float, odd: Optional[float]) -> tuple[str, Optional[float], str]:
-        if odd is None or odd <= 0:
-            return "NO BET", None, "Quota non disponibile"
-
-        edge = (predicted_probability * odd) - 1.0
-        if predicted_probability >= 0.62 and edge >= 0.03:
-            return "PLAY", edge, "Confidenza alta e edge positivo"
-        if predicted_probability >= 0.55 and edge >= 0.0:
-            return "BORDERLINE", edge, "Confidenza media o edge ridotto"
-        return "NO BET", edge, "Confidenza/edge insufficienti"
-
     def _build_decision_cards(
         self,
         row_context: dict[str, Any],
@@ -511,10 +509,21 @@ class DashboardService:
             )
             market_baseline = ((bookmaker_baseline or {}).get("markets") or {}).get(market) or {}
 
-            value_label, edge, reason = self._value_decision(predicted_probability, odd)
-            implied_raw = baseline_row.get("implied_raw") if baseline_row else None
-            fair_probability = baseline_row.get("fair_probability") if baseline_row else None
-            model_minus_fair = (predicted_probability - float(fair_probability)) if fair_probability is not None else None
+            # BET-01 (Fair Odds Engine): p_market_raw/p_market_fair/fair_odd
+            # standard per questo outcome, poi BET-04 (Decision Policy
+            # versionata, che riusa compute_prob_edge/EV di BET-02) valuta
+            # prob_edge/EV/decisione sullo STESSO outcome (mai un mix quota
+            # di un outcome diverso, vedi fix in _pick_and_odd_for_prediction)
+            # con soglie che possono variare per mercato/outcome, MAI
+            # hardcoded qui (acceptance criteria BET-04).
+            fair_odds_outcome = build_fair_odds_outcome(
+                market=market,
+                outcome=baseline_outcome,
+                market_baseline_row=baseline_row,
+                p_model=predicted_probability,
+            )
+            decision = evaluate_decision_from_fair_odds_outcome(fair_odds_outcome)
+
             cards.append(
                 {
                     "market": market,
@@ -525,18 +534,77 @@ class DashboardService:
                     "class_1_probability": class1_probability,
                     "predicted_probability": predicted_probability,
                     "odd": odd,
-                    "bookmaker_implied_raw": implied_raw,
-                    "bookmaker_fair_probability": fair_probability,
+                    "bookmaker_implied_raw": fair_odds_outcome.p_market_raw,
+                    "bookmaker_fair_probability": fair_odds_outcome.p_market_fair,
+                    # MATCH-01 ("fair market"): quota equivalente alla fair
+                    # probability del bookmaker, gia' calcolata da BET-01
+                    # (`fair_odd = 1/p_market_fair`) e finora NON esposta qui.
+                    "fair_odd": fair_odds_outcome.fair_odd,
                     "bookmaker_overround": market_baseline.get("overround"),
-                    "model_minus_fair": model_minus_fair,
-                    "edge": edge,
-                    "value_label": value_label,
-                    "value_reason": reason,
+                    "bookmakers_count": fair_odds_outcome.bookmakers,
+                    "model_minus_fair": decision.prob_edge,
+                    "edge": decision.prob_edge,
+                    "ev": decision.ev,
+                    "value_label": decision.decision,
+                    "value_reason": decision.reason,
+                    "policy_version": decision.policy_version,
                 }
             )
 
         cards.sort(key=lambda x: x.get("predicted_probability", 0), reverse=True)
         return cards
+
+    @staticmethod
+    def _select_best_decision_card(cards: list[dict[str, Any]]) -> Optional[dict[str, Any]]:
+        """MATCH-01: sintesi per la vista lista (Match Center) tra le
+        decision_cards gia' calcolate da `_build_decision_cards` (mai un
+        nuovo calcolo di edge/EV/decisione): sceglie quella con priorita'
+        PLAY > BORDERLINE > NO BET e, a parita', la probabilita' predetta
+        piu' alta. `None` se non ci sono card (nessun modello/quota)."""
+        if not cards:
+            return None
+        return min(
+            cards,
+            key=lambda c: (
+                _DECISION_LABEL_PRIORITY.get(c.get("value_label"), 99),
+                -float(c.get("predicted_probability") or 0.0),
+            ),
+        )
+
+    def _decisions_for_row(
+        self,
+        row: dict[str, Any],
+        predictions: dict[str, Any],
+        db_match: Optional[Match],
+    ) -> tuple[list[dict[str, Any]], Optional[dict[str, Any]]]:
+        """MATCH-01: badge decision/quote/edge/EV anche per le righe di
+        LISTA (Match Center), non solo nel dettaglio match. Riusa
+        ESATTAMENTE `_build_decision_cards` (mai una logica duplicata),
+        calcolato SOLO quando le quote sono gia' disponibili SENZA fetch
+        aggiuntive: da `db_match.odds` (relazione ORM gia' caricata da
+        `_fetch_matches` con `selectinload`, la stessa query unica gia'
+        eseguita per popolare la lista - fix performance esistente). MAI
+        una chiamata odds API-Sports per riga: la quota giornaliera e'
+        limitata (vedi job history) e centinaia di righe la esaurirebbero
+        subito. Se la fixture non e' ancora nel DB locale, resta
+        `([], None)`: aprendo il dettaglio (`get_match_detail`, che gia'
+        fa una fetch odds dedicata per singola fixture) il badge completo
+        resta comunque disponibile."""
+        if not predictions or db_match is None:
+            return [], None
+
+        odds_summary = self._aggregate_odds_from_db(db_match)
+        if not odds_summary:
+            return [], None
+
+        bookmaker_baseline = build_fixture_baseline(odds_summary)
+        cards = self._build_decision_cards(
+            row_context=row,
+            predictions=predictions,
+            odds_summary=odds_summary,
+            bookmaker_baseline=bookmaker_baseline,
+        )
+        return cards, self._select_best_decision_card(cards)
 
     @staticmethod
     def _serialize_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -610,7 +678,13 @@ class DashboardService:
         haystack = f"{row.get('home', '')} {row.get('away', '')} {row.get('league', '')}".lower()
         return search_l in haystack
 
-    def _serialize_api_fixture(self, fixture: dict[str, Any], with_predictions: bool, markets: list[str]) -> Optional[dict[str, Any]]:
+    def _serialize_api_fixture(
+        self,
+        fixture: dict[str, Any],
+        with_predictions: bool,
+        markets: list[str],
+        db_match: Optional[Match] = None,
+    ) -> Optional[dict[str, Any]]:
         fixture_meta = fixture.get("fixture") or {}
         teams = fixture.get("teams") or {}
         league = fixture.get("league") or {}
@@ -635,11 +709,19 @@ class DashboardService:
             "phase": self._classify_phase(status, dt_value),
             "score": self._score_from_api(fixture),
             "predictions": {},
+            # MATCH-01: badge decision/edge/EV per la vista lista, vedi
+            # `_decisions_for_row` - default vuoto finche' non calcolato.
+            "decision_cards": [],
+            "best_decision": None,
             "source": "api_sports",
         }
 
         if with_predictions and markets:
-            row["predictions"] = self._predict_fixture(fixture_id=fixture_id, markets=markets)
+            predictions = self._predict_fixture(fixture_id=fixture_id, markets=markets)
+            row["predictions"] = predictions
+            row["decision_cards"], row["best_decision"] = self._decisions_for_row(
+                row=row, predictions=predictions, db_match=db_match
+            )
 
         return row
 
@@ -736,21 +818,52 @@ class DashboardService:
             "phase": phase,
             "score": self._extract_scores(match),
             "predictions": {},
+            # MATCH-01: badge decision/edge/EV per la vista lista, vedi
+            # `_decisions_for_row` - default vuoto finche' non calcolato.
+            "decision_cards": [],
+            "best_decision": None,
             "source": "db",
         }
 
         if with_predictions and match.id_fixture:
-            row["predictions"] = self._predict_fixture(fixture_id=match.id_fixture, markets=markets)
+            predictions = self._predict_fixture(fixture_id=match.id_fixture, markets=markets)
+            row["predictions"] = predictions
+            # Riga gia' dal DB locale: `match.odds` e' gia' caricato via
+            # `selectinload` dalla query unica di `_fetch_matches` (nessuna
+            # nuova query/fetch per calcolare il badge decision).
+            row["decision_cards"], row["best_decision"] = self._decisions_for_row(
+                row=row, predictions=predictions, db_match=match
+            )
 
         return row
 
-    def _fetch_matches(self) -> list[Match]:
+    def _fetch_matches(self, target_date: date, day_margin: int = 1) -> list[Match]:
+        """Match del DB locale rilevanti per `target_date` (+- day_margin giorni).
+
+        Fix performance critico: la query precedente NON aveva alcun filtro
+        SQL sulla data, quindi caricava l'INTERO storico (47k+ match, con
+        selectin di statistics/odds -> centinaia di migliaia di righe) ad
+        OGNI richiesta dashboard, impiegando 20-40+ secondi (misurato:
+        22.6s in locale, timeout oltre 40s dal container via
+        host.docker.internal). `date_match` e' una stringa ISO 8601 con
+        offset fisso "+00:00" (es. "2026-09-03T18:00:00+00:00"): un
+        confronto lessicografico su range di date (prefisso "YYYY-MM-DD")
+        e' equivalente a un confronto temporale e riduce drasticamente le
+        righe caricate (da tutto il DB a poche centinaia al massimo). Il
+        margine di 1 giorno assorbe eventuali differenze di fuso orario; il
+        filtro Python esistente su `dt_value.date() == target_date` scarta
+        comunque le righe fuori target.
+        """
+        start = (target_date - timedelta(days=day_margin)).isoformat()
+        end = (target_date + timedelta(days=day_margin + 1)).isoformat()
         try:
             with SessionLocal() as session:
                 rows = (
                     session.query(Match)
                     .options(selectinload(Match.statistics), selectinload(Match.odds))
                     .filter(Match.id_fixture.is_not(None))
+                    .filter(Match.date_match >= start)
+                    .filter(Match.date_match < end)
                     .all()
                 )
             return rows
@@ -771,6 +884,14 @@ class DashboardService:
         except (ProgrammingError, OperationalError):
             return None
 
+    def _db_matches_lookup(self, target_date: date) -> dict[int, Match]:
+        """MATCH-01: mappa fixture_id -> Match dal DB locale per la finestra
+        di `target_date` (`_fetch_matches`, gia' ottimizzata con filtro SQL
+        sulla data - fix performance esistente, query UNICA). Riusata per
+        arricchire le righe del Match Center (lista giorno/live) con badge
+        decision/edge/EV SENZA alcuna nuova fetch odds verso l'API esterna."""
+        return {m.id_fixture: m for m in self._fetch_matches(target_date=target_date) if m.id_fixture is not None}
+
     def get_day_matches(
         self,
         target_date: date,
@@ -784,8 +905,19 @@ class DashboardService:
         rows: list[dict[str, Any]] = []
         seen_fixtures: set[int] = set()
 
+        # Query unica sul DB locale per la finestra di `target_date`,
+        # riusata sia per arricchire le righe API (badge decision, MATCH-01)
+        # sia per le righe DB-only piu' sotto (nessuna query duplicata).
+        db_by_fixture = self._db_matches_lookup(target_date)
+
         for fixture in self._fetch_api_day_fixtures(target_date):
-            row = self._serialize_api_fixture(fixture, with_predictions=with_predictions, markets=model_markets)
+            fixture_id = self._fixture_id_from_api(fixture)
+            row = self._serialize_api_fixture(
+                fixture,
+                with_predictions=with_predictions,
+                markets=model_markets,
+                db_match=db_by_fixture.get(fixture_id) if fixture_id is not None else None,
+            )
             if not row:
                 continue
             if row.get("date") and row.get("date") != target_date.isoformat():
@@ -798,7 +930,7 @@ class DashboardService:
             rows.append(row)
             seen_fixtures.add(row["fixture_id"])
 
-        for match in self._fetch_matches():
+        for match in db_by_fixture.values():
             dt_value = self._parse_datetime(match.date_match)
             if not dt_value or dt_value.date() != target_date:
                 continue
@@ -839,8 +971,19 @@ class DashboardService:
         rows: list[dict[str, Any]] = []
         seen_fixtures: set[int] = set()
 
+        # Stessa lookup DB usata da `get_day_matches` (MATCH-01): arricchisce
+        # le righe live-API con badge decision/edge/EV quando la fixture e'
+        # gia' nel DB locale, senza nuove fetch odds verso l'API esterna.
+        db_by_fixture = self._db_matches_lookup(target_date)
+
         for fixture in self._fetch_api_live_fixtures():
-            row = self._serialize_api_fixture(fixture, with_predictions=with_predictions, markets=model_markets)
+            fixture_id = self._fixture_id_from_api(fixture)
+            row = self._serialize_api_fixture(
+                fixture,
+                with_predictions=with_predictions,
+                markets=model_markets,
+                db_match=db_by_fixture.get(fixture_id) if fixture_id is not None else None,
+            )
             if not row or row.get("phase") != "live":
                 continue
             # Evita sporadici live notturni fuori data target
@@ -972,6 +1115,14 @@ class DashboardService:
             "model_markets": model_markets,
             "odds_updated_at": (odds_payload or {}).get("update") if odds_payload else None,
         }
+
+
+
+
+
+
+
+
 
 
 

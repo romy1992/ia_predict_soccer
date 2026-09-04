@@ -191,4 +191,3 @@ def multiclass_champion_score(metrics: dict[str, Any], f1_weighted: float) -> fl
         + (0.20 * (1.0 - min(1.0, brier / 2.0)))
         + (0.15 * (1.0 - min(1.0, ece)))
     )
-

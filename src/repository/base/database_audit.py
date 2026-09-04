@@ -81,4 +81,3 @@ def get_database_audit() -> dict[str, Any]:
         payload["error"] = str(exc)
 
     return payload
-

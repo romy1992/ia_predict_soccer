@@ -141,6 +141,24 @@ class ModelConsensusResponse(BaseModel):
     warnings: list[str] = []
 
 
+class OracleMatchDetailResponse(BaseModel):
+    """MATCH-02: dettaglio Oracle completo per una fixture. Ogni sezione e'
+    opzionale/vuota quando non disponibile (acceptance criteria "Dati
+    mancanti gestiti") - `warnings` elenca esplicitamente quali."""
+
+    fixture_id: int
+    overview: dict[str, Any]
+    probabilities: list[dict[str, Any]] = []
+    value_bets: list[dict[str, Any]] = []
+    team_strength: Optional[dict[str, Any]] = None
+    expected_goals: Optional[dict[str, Any]] = None
+    score_matrix: Optional[dict[str, Any]] = None
+    odds_movement: list[dict[str, Any]] = []
+    model_consensus: dict[str, Any] = {}
+    model_markets: list[str] = []
+    warnings: list[str] = []
+
+
 class DataQualityResponse(BaseModel):
     generated_at: str
     source: dict[str, Any]
@@ -189,6 +207,17 @@ class PaperPnlResponse(BaseModel):
     raw_summary: dict[str, Any]
     report: dict[str, Any]
 
+
+class BetslipPoolResponse(BaseModel):
+    """SLIP-01: pool di pick candidati per la Schedina Oracle. `picks`/
+    `excluded` sono liste di dict gia' "appiattiti" da `PickPoolResult`
+    (`dataclasses.asdict`) - vedi `src/oracle/betslip/pick_pool.py`."""
+
+    pool_id: str
+    generated_at: str
+    policy_version: str
+    picks: list[dict[str, Any]] = []
+    excluded: list[dict[str, Any]] = []
 
 
 

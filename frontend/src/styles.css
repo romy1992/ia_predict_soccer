@@ -523,6 +523,33 @@ th {
   color: #9b1414;
 }
 
+/* MATCH-01: badge decision compatto per la vista lista (Match Center),
+   stessa palette colori di .value-play/.value-borderline/.value-no-bet
+   ma layout a piu' righe come .prediction-chip (label + mercato + quota/edge). */
+.value-badge-table {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 2px;
+  border-radius: 10px;
+  padding: 6px 8px;
+  min-width: 150px;
+  font-weight: 400;
+}
+
+.value-badge-table strong {
+  font-size: 11px;
+}
+
+.value-badge-table em {
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 600;
+}
+
+.value-badge-table small {
+  font-size: 11px;
+}
+
 .timeline-list {
   display: flex;
   flex-direction: column;
@@ -574,6 +601,50 @@ th {
   font-size: 12px;
 }
 
+.cell-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.panel-header-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.team-strength-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.metric-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  color: #33456c;
+  border-bottom: 1px dashed #eef2fb;
+  padding: 3px 0;
+}
+
+.metric-row span {
+  color: #6a7b9f;
+}
+
+.score-matrix-table th,
+.score-matrix-table td {
+  text-align: center;
+  min-width: 46px;
+}
+
+.score-matrix-best {
+  background: #daf6e1;
+  color: #0d6630;
+  font-weight: 700;
+  border-radius: 6px;
+}
+
 @media (max-width: 1180px) {
   .layout {
     grid-template-columns: 1fr;
@@ -593,6 +664,8 @@ th {
     grid-template-columns: 1fr;
   }
 }
+
+
 
 
 
