@@ -60,4 +60,3 @@ def run_manual_live_sync(
             },
         )
         raise
-

@@ -107,4 +107,3 @@ class LiveDataRepository:
     @staticmethod
     def _now() -> datetime:
         return datetime.now(timezone.utc)
-

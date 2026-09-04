@@ -311,4 +311,3 @@ class LiveDataService:
             "stat_snapshots_saved": len(stat_rows),
             "errors": errors,
         }
-

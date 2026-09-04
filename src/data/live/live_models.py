@@ -142,4 +142,3 @@ class LiveFixtureStatSnapshot(Base):
             payload["captured_at"] = payload["captured_at"].isoformat()
         return payload
 
-
