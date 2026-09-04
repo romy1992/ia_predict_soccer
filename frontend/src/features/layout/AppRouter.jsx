@@ -5,6 +5,7 @@ import BetslipPage from "../betslip/BetslipPage";
 import MatchesDayPage from "../matches/MatchesDayPage";
 import MatchesLivePage from "../matches/MatchesLivePage";
 import MlLabPage from "../ml-lab/MlLabPage";
+import MonitoringPage from "../monitoring/MonitoringPage";
 import OraclePage from "../oracle/OraclePage";
 import OracleMatchDetailPage from "../oracle/OracleMatchDetailPage";
 
@@ -35,6 +36,9 @@ export default function AppRouter({ activePage, props }) {
   }
   if (activePage === "ml-lab") {
     return <MlLabPage {...props.mlLab} />;
+  }
+  if (activePage === "monitoring") {
+    return <MonitoringPage {...props.monitoring} />;
   }
 
   return <DashboardFeaturePage {...props.dashboard} />;

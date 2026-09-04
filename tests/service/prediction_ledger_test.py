@@ -36,7 +36,7 @@ from src.oracle.ledger.prediction_ledger import (
 from src.repository.base.crud_repository import CrudRepository
 from src.repository.match_repository import MatchRepository
 from src.repository.prediction_ledger_repository import PredictionLedgerRepository
-from src.service_ia.model.match import Base, Match, Statistics
+from src.service_ia.model.match import Base, Match, PredictionLedger, Statistics
 
 
 class TestBuildPredictionRecord(unittest.TestCase):
@@ -338,6 +338,28 @@ class TestPredictionLedgerServiceWithDb(unittest.TestCase):
         report = self.service.paper_pnl_report(market="h2h")
         self.assertEqual(report.overall.bets, 2)
         self.assertEqual(report.overall.wins, 1)
+
+    def test_list_all_since_filters_by_created_at(self):
+        """OPS-03: estensione opzionale (default `None` = comportamento
+        INVARIATO, verificato dagli altri test di questa classe che non
+        passano mai `since`) - con `since` esplicito, solo le righe con
+        `created_at >= since` sono ritornate."""
+        old_row = PredictionLedger(
+            fixture_id=900, market="h2h", outcome="Home", decision="PLAY", stake=1.0,
+            created_at=datetime.now(timezone.utc) - timedelta(days=40),
+        )
+        recent_row = PredictionLedger(
+            fixture_id=901, market="h2h", outcome="Home", decision="PLAY", stake=1.0,
+            created_at=datetime.now(timezone.utc) - timedelta(days=1),
+        )
+        self.ledger_repo.save(old_row)
+        self.ledger_repo.save(recent_row)
+
+        cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+        rows = self.ledger_repo.list_all(market="h2h", since=cutoff)
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].fixture_id, 901)
 
 
 if __name__ == "__main__":

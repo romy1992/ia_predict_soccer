@@ -113,3 +113,19 @@ export function valueClass(valueLabel) {
   }
   return "value-no-bet";
 }
+
+/**
+ * OPS-03 (Monitoring): mappa la severity di un alert (info/warning/
+ * critical) sulla STESSA palette colori gia' usata da `valueClass`
+ * (verde/giallo/rosso) - nessuna nuova classe CSS, riuso diretto.
+ */
+export function severityClass(severity) {
+  if (severity === "critical") {
+    return "value-no-bet";
+  }
+  if (severity === "warning") {
+    return "value-borderline";
+  }
+  return "value-play";
+}
+

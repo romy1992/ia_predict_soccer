@@ -285,4 +285,3 @@ def build_pick_pool(
         excluded=excluded,
     )
 
-

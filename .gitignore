@@ -4,6 +4,8 @@ frontend/node_modules/
 frontend/dist/
 logs/
 /best_models/
+# log di output di test run manuali (non vanno versionati)
+*.log
 
 /alembic/__pycache__/
 /alembic/versions/__pycache__/

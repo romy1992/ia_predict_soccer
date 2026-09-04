@@ -240,4 +240,3 @@ class OracleMatchDetailService:
             "model_markets": model_markets,
             "warnings": warnings,
         }
-

@@ -9,6 +9,7 @@ from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
+from src.data.live.live_sync_job import run_manual_live_sync
 from src.jobs.job_history import JobHistory
 from src.service_ia.config.app_config import AppConfig, load_app_config
 from src.service_ia.pre_processing.download_match_service import calculate_mean, download_import_matches
@@ -308,6 +309,12 @@ def build_scheduler(cfg: Optional[AppConfig] = None) -> BlockingScheduler:
       completamento di un data job, gira col proprio orario/frequenza
       configurabile separatamente (acceptance criteria "No retrain
       automatico ad ogni import").
+
+    LIVE-01 aggiunge un QUINTO job, anch'esso indipendente:
+    - `data_sync_live` (molto frequente, `IntervalTrigger` ogni
+      `cfg.live_sync_interval_seconds` SECONDI): sincronizza il dataset
+      LIVE distinto (`src/data/live/`, tabelle `live_*`) - MAI le tabelle
+      pre-match `match`/`statistics`/`odds` (nessun impatto sul training).
     """
     cfg = cfg or load_app_config()
     scheduler = BlockingScheduler(timezone="Europe/Rome")
@@ -344,6 +351,15 @@ def build_scheduler(cfg: Optional[AppConfig] = None) -> BlockingScheduler:
         misfire_grace_time=3600,
     )
 
+    # --- Live job (LIVE-01, dataset SEPARATO, polling frequente in secondi) ---
+    _add_job(
+        scheduler,
+        run_manual_live_sync,
+        trigger=IntervalTrigger(seconds=cfg.live_sync_interval_seconds),
+        job_id="data_sync_live",
+        misfire_grace_time=max(30, cfg.live_sync_interval_seconds * 2),
+    )
+
     return scheduler
 
 
@@ -353,13 +369,15 @@ def start_scheduler() -> None:
 
     logging.info(
         "Scheduler started: data_sync_today ogni %d min, data_settlement ogni %d min, "
-        "data_future_sync alle %02d:%02d, ml_training (indipendente) alle %02d:%02d",
+        "data_future_sync alle %02d:%02d, ml_training (indipendente) alle %02d:%02d, "
+        "data_sync_live (LIVE-01) ogni %d sec",
         cfg.data_sync_interval_minutes,
         cfg.settlement_interval_minutes,
         cfg.future_sync_hour,
         cfg.future_sync_minute,
         cfg.training_hour,
         cfg.training_minute,
+        cfg.live_sync_interval_seconds,
     )
     scheduler.start()
 

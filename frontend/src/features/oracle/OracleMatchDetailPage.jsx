@@ -346,4 +346,3 @@ export default function OracleMatchDetailPage({ fixtureId, onBack }) {
     </section>
   );
 }
-

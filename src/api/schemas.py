@@ -53,6 +53,17 @@ class JobTodayUpdateRequest(BaseModel):
     async_run: bool = True
 
 
+class JobLiveSyncRequest(BaseModel):
+    """LIVE-01: sync manuale del dataset LIVE distinto (`live_fixture_snapshot`
+    /`live_match_event`/`live_fixture_stat_snapshot`) - MAI le tabelle
+    pre-match `match`/`statistics`/`odds`."""
+
+    leagues: Optional[list[int]] = None
+    include_events: bool = True
+    include_statistics: bool = True
+    async_run: bool = True
+
+
 class JobFutureSyncRequest(BaseModel):
     days_ahead: int = 7
     seasons: Optional[list[int]] = None
@@ -109,6 +120,28 @@ class DashboardLiveResponse(BaseModel):
     total: int
     returned: int
     model_markets: list[str]
+    rows: list[dict[str, Any]]
+
+
+class LiveFixturesResponse(BaseModel):
+    """LIVE-01: fixture attualmente "live" cosi' come risultano nel dataset
+    distinto (ultimo `LiveFixtureSnapshot` per fixture non in stato finale) -
+    NON il dettaglio arricchito con predizioni di `/dashboard/live` (quello
+    resta invariato, questo endpoint espone il dato grezzo della pipeline)."""
+
+    total: int
+    rows: list[dict[str, Any]]
+
+
+class LiveFixtureEventsResponse(BaseModel):
+    fixture_id: int
+    total: int
+    rows: list[dict[str, Any]]
+
+
+class LiveFixtureStatisticsResponse(BaseModel):
+    fixture_id: int
+    total: int
     rows: list[dict[str, Any]]
 
 
@@ -237,6 +270,97 @@ class BetslipGenerateResponse(BaseModel):
     pool_considered: int
     profiles: dict[str, list[dict[str, Any]]] = {}
     warnings: list[str] = []
+
+
+class ModelRegistryOverviewResponse(BaseModel):
+    """OPS-02: vista lifecycle per mercato — `latest` (ultimo run
+    registrato, MAI implicitamente production) vs `production` (run
+    attualmente in stage 'production', se presente) vs `history` (tutti i
+    run registrati, decorati con `current_stage`/`promotion_history`)."""
+
+    market: str
+    latest: Optional[dict[str, Any]] = None
+    production: Optional[dict[str, Any]] = None
+    history: list[dict[str, Any]] = []
+
+
+class PromotionEvaluationResponse(BaseModel):
+    """OPS-02: verdetto del gate metriche + confronto candidate/production
+    per un run, SENZA eseguire alcuna modifica (dry-run) — vedi
+    `src/ml/registry/promotion_policy.py::evaluate_promotion`."""
+
+    run_id: str
+    market: str
+    production_run_id: Optional[str] = None
+    to_stage: str
+    policy_version: str
+    allowed: bool
+    gate: dict[str, Any]
+    comparison: Optional[dict[str, Any]] = None
+    blocking_reasons: list[str] = []
+
+
+class PromotionRequest(BaseModel):
+    run_id: str
+    to_stage: str = "production"
+    reason: Optional[str] = None
+    actor: str = "manual"
+    force: bool = False
+
+
+class RollbackRequest(BaseModel):
+    to_run_id: Optional[str] = None
+    reason: Optional[str] = None
+    actor: str = "manual"
+
+
+class PromotionResponse(BaseModel):
+    """Esito di `POST /models/{market}/promote` o `/rollback`. Quando
+    `promoted=False` (gate bloccante e `force=False`), `run` riflette lo
+    stage INVARIATO del run — nessuna promozione e' avvenuta (acceptance
+    criteria "Ultimo training non diventa automaticamente production")."""
+
+    promoted: bool
+    run_id: str
+    market: str
+    to_stage: str
+    evaluation: Optional[dict[str, Any]] = None
+    run: Optional[dict[str, Any]] = None
+
+
+class PromotionHistoryResponse(BaseModel):
+    """OPS-02 (acceptance criteria "Audit promotion"): tutti gli eventi di
+    `promotion_history.jsonl` per il mercato, incluse le promozioni
+    bloccate dal gate e i rollback - non solo le promozioni riuscite."""
+
+    market: str
+    events: list[dict[str, Any]] = []
+
+
+class MonitoringOverviewResponse(BaseModel):
+    """OPS-03: risposta aggregata per la dashboard di monitoring. Senza
+    `market`, `calibration_drift`/`feature_coverage` restano `None`
+    (richiedono un modello/mercato specifico)."""
+
+    generated_at: str
+    market: Optional[str] = None
+    thresholds_version: str
+    prediction_volume: dict[str, Any]
+    calibration_drift: Optional[dict[str, Any]] = None
+    roi_rolling: dict[str, Any]
+    feature_coverage: Optional[dict[str, Any]] = None
+    alerts: list[dict[str, Any]] = []
+
+
+class MonitoringAlertsResponse(BaseModel):
+    """OPS-03 (acceptance criteria "Alert base"): SOLO l'elenco alert,
+    utile per un polling leggero e frequente senza ricalcolare l'intero
+    `MonitoringOverviewResponse`."""
+
+    generated_at: str
+    market: Optional[str] = None
+    thresholds_version: str
+    alerts: list[dict[str, Any]] = []
 
 
 

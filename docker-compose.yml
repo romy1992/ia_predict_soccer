@@ -1,9 +1,15 @@
 services:
-  # NOTA: nessun servizio Postgres containerizzato. Il DB e' SEMPRE quello
-  # locale (Postgres nativo Windows su localhost:5432, dataset storico reale
-  # con match/odds/statistics). I container raggiungono l'host tramite
-  # l'hostname speciale "host.docker.internal" (nativo su Docker Desktop,
-  # e reso portabile su Linux tramite extra_hosts/host-gateway).
+  # NOTA: nessun servizio Postgres containerizzato. Il DB e' SEMPRE il remoto
+  # "dev" ospitato su Railway (richiesto esplicitamente 2026-09-04, sostituisce
+  # il precedente Postgres nativo Windows su localhost:5432 come sorgente di
+  # riferimento per locale/Docker/training - vedi README_PLATFORM.md, sezione
+  # "Policy DATABASE_URL"). `DATABASE_URL` NON viene piu' sovrascritto qui
+  # sotto `environment:` per nessun servizio: e' unica sorgente di verita'
+  # `properties/config.env` (via `env_file`), per evitare che i due valori
+  # divergano di nuovo (bug corretto il 2026-09-04: `api` era rimasto
+  # agganciato al vecchio DB locale mentre `scheduler` gia' puntava a
+  # Railway). `extra_hosts`/`host.docker.internal` restano configurati per
+  # compatibilita' con eventuali altri usi locali futuri.
   api:
     build:
       context: .
@@ -13,7 +19,6 @@ services:
     env_file:
       - properties/config.env
     environment:
-      DATABASE_URL: postgresql://postgres:postgres@host.docker.internal:5432/match_db
       API_ODDS_ACTUAL_BASE: https://api.the-odds-api.com/v4/sports
       API_ODDS_HISTORIACAL_BASE: https://api.the-odds-api.com/v4/historical/sports
       CORS_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
@@ -64,7 +69,6 @@ services:
     env_file:
       - properties/config.env
     environment:
-      DATABASE_URL: postgresql://postgres:postgres@host.docker.internal:5432/match_db
       API_ODDS_ACTUAL_BASE: https://api.the-odds-api.com/v4/sports
       API_ODDS_HISTORIACAL_BASE: https://api.the-odds-api.com/v4/historical/sports
     extra_hosts:

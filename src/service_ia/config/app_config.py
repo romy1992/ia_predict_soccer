@@ -6,7 +6,13 @@ from dataclasses import dataclass
 from dotenv import load_dotenv
 
 
-DEFAULT_DATABASE_URL = "postgresql://postgres:postgres@localhost:5432/match_db"
+# Default runtime DB: punta SEMPRE al DB "dev" remoto ospitato su Railway
+# (richiesto esplicitamente 2026-09-04, vedi README_PLATFORM.md sezione
+# "Policy DATABASE_URL"). Usato SOLO se la env var DATABASE_URL non e'
+# valorizzata affatto (nessun properties/config.env caricato). Vecchio
+# valore locale (Postgres nativo Windows), mantenuto solo come riferimento:
+# DEFAULT_DATABASE_URL = "postgresql://postgres:postgres@localhost:5432/match_db"
+DEFAULT_DATABASE_URL = "postgresql://postgres:zwOQshmeSysBkmIefrYVqMQTgMKckJAz@sakura.proxy.rlwy.net:18862/railway"
 DEFAULT_DATABASE_SCHEMA = "public"
 _ENV_LOADED = False
 
@@ -75,6 +81,13 @@ class AppConfig:
     # come fallback per compatibilita' con ambienti gia' configurati.
     training_hour: int
     training_minute: int
+    # LIVE-01: pipeline dati live SEPARATA dai data job pre-match sopra -
+    # polling frequente (secondi, non minuti: i punteggi/eventi live cambiano
+    # molto piu' spesso delle fixture odierne) e TTL di una cache dedicata
+    # (mai la stessa `_api_cache` di `DashboardService`, che resta invariata)
+    # per evitare chiamate HTTP ripetute entro la stessa finestra di poll.
+    live_sync_interval_seconds: int
+    live_cache_ttl_seconds: int
     database_url: str
     database_schema: str
 
@@ -94,6 +107,8 @@ def load_app_config() -> AppConfig:
     settlement_interval_minutes = _int_env("SETTLEMENT_INTERVAL_MINUTES", default=60)
     future_sync_hour = _int_env("FUTURE_SYNC_HOUR", default=4)
     future_sync_minute = _int_env("FUTURE_SYNC_MINUTE", default=30)
+    live_sync_interval_seconds = _int_env("LIVE_SYNC_INTERVAL_SECONDS", default=90)
+    live_cache_ttl_seconds = _int_env("LIVE_CACHE_TTL_SECONDS", default=20)
     database_url = os.environ.get("DATABASE_URL", DEFAULT_DATABASE_URL).strip()
     database_schema = os.environ.get("DATABASE_SCHEMA", DEFAULT_DATABASE_SCHEMA).strip() or DEFAULT_DATABASE_SCHEMA
 
@@ -106,6 +121,8 @@ def load_app_config() -> AppConfig:
         future_sync_minute=future_sync_minute,
         training_hour=training_hour,
         training_minute=training_minute,
+        live_sync_interval_seconds=live_sync_interval_seconds,
+        live_cache_ttl_seconds=live_cache_ttl_seconds,
         database_url=database_url,
         database_schema=database_schema,
     )

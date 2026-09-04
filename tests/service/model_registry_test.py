@@ -2,7 +2,18 @@ import os
 import tempfile
 import unittest
 
+from src.ml.registry.promotion_policy import PromotionGateThresholds, PromotionPolicy
 from src.service_ia.training.model_registry import ModelRegistry
+
+
+GOOD_METRICS = {"log_loss": 0.5, "brier": 0.15, "ece": 0.05, "auc": 0.7, "sample_size": 200}
+BAD_METRICS = {"log_loss": 50.0, "brier": 0.9, "ece": 0.9, "auc": 0.1, "sample_size": 5}
+PERMISSIVE_POLICY = PromotionPolicy(
+    gate=PromotionGateThresholds(
+        max_log_loss=None, max_brier=None, max_ece=None, min_auc=None, min_sample_size=0,
+        require_at_least_one_metric=False,
+    )
+)
 
 
 class TestModelRegistry(unittest.TestCase):
@@ -169,6 +180,254 @@ class TestModelRegistry(unittest.TestCase):
             self.assertEqual(run_state["current_stage"], "retired")
             self.assertGreaterEqual(len(run_state["promotion_history"]), 3)
             self.assertIsNone(production)
+
+    # ------------------------------------------------------------------
+    # OPS-02: evaluate_promotion (dry-run)
+    # ------------------------------------------------------------------
+    def test_evaluate_promotion_returns_none_for_missing_run(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            registry = ModelRegistry(registry_dir=tmp)
+            self.assertIsNone(registry.evaluate_promotion(run_id="does-not-exist", to_stage="production"))
+
+    def test_evaluate_promotion_is_a_dry_run_and_never_mutates_state(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            registry = ModelRegistry(registry_dir=tmp)
+            payload = registry.register(
+                model_path=os.path.join(tmp, "model.pkl"),
+                market="h2h",
+                model_name="logistic",
+                metrics=GOOD_METRICS,
+            )
+
+            result = registry.evaluate_promotion(run_id=payload["run_id"], to_stage="production")
+
+            self.assertIsNotNone(result)
+            self.assertTrue(result["allowed"])
+            # Nessuna mutazione: ancora candidate, nessun evento in audit trail.
+            run_state = registry.get_run(payload["run_id"])
+            self.assertEqual(run_state["current_stage"], "candidate")
+            self.assertEqual(registry.list_promotion_events(market="h2h"), [])
+
+    def test_evaluate_promotion_reports_production_run_id_when_present(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            registry = ModelRegistry(registry_dir=tmp)
+            prod_payload = registry.register(
+                model_path=os.path.join(tmp, "prod.pkl"), market="h2h", model_name="logistic", metrics=GOOD_METRICS
+            )
+            registry.promote(run_id=prod_payload["run_id"], to_stage="production", reason="seed", actor="test")
+
+            candidate_payload = registry.register(
+                model_path=os.path.join(tmp, "candidate.pkl"), market="h2h", model_name="stacking", metrics=GOOD_METRICS
+            )
+            result = registry.evaluate_promotion(run_id=candidate_payload["run_id"], to_stage="production")
+            self.assertEqual(result["production_run_id"], prod_payload["run_id"])
+
+    # ------------------------------------------------------------------
+    # OPS-02: promote_with_policy (Gate metriche + Promozione controllata)
+    # ------------------------------------------------------------------
+    def test_promote_with_policy_blocks_bad_metrics_and_leaves_stage_unchanged(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            registry = ModelRegistry(registry_dir=tmp)
+            payload = registry.register(
+                model_path=os.path.join(tmp, "model.pkl"), market="h2h", model_name="logistic", metrics=BAD_METRICS
+            )
+
+            result = registry.promote_with_policy(run_id=payload["run_id"], to_stage="production")
+
+            self.assertFalse(result["promoted"])
+            self.assertFalse(result["evaluation"]["allowed"])
+            run_state = registry.get_run(payload["run_id"])
+            self.assertEqual(run_state["current_stage"], "candidate")
+            self.assertIsNone(registry.get_production(market="h2h"))
+
+    def test_promote_with_policy_blocked_attempt_is_still_audited(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            registry = ModelRegistry(registry_dir=tmp)
+            payload = registry.register(
+                model_path=os.path.join(tmp, "model.pkl"), market="h2h", model_name="logistic", metrics=BAD_METRICS
+            )
+            registry.promote_with_policy(run_id=payload["run_id"], to_stage="production", reason="try", actor="qa")
+
+            events = registry.list_promotion_events(market="h2h")
+            self.assertEqual(len(events), 1)
+            self.assertEqual(events[0]["metadata"]["event_type"], "promotion_blocked")
+            self.assertEqual(events[0]["metadata"]["attempted_stage"], "production")
+            # from_stage == to_stage: nessuna transizione reale registrata.
+            self.assertEqual(events[0]["from_stage"], events[0]["to_stage"])
+
+    def test_promote_with_policy_allows_first_promotion_with_good_metrics(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            registry = ModelRegistry(registry_dir=tmp)
+            payload = registry.register(
+                model_path=os.path.join(tmp, "model.pkl"), market="h2h", model_name="logistic", metrics=GOOD_METRICS
+            )
+
+            result = registry.promote_with_policy(run_id=payload["run_id"], to_stage="production", actor="qa")
+
+            self.assertTrue(result["promoted"])
+            self.assertEqual(registry.get_production(market="h2h")["run_id"], payload["run_id"])
+            events = registry.list_promotion_events(market="h2h")
+            self.assertEqual(events[-1]["metadata"]["event_type"], "promotion_approved")
+
+    def test_promote_with_policy_blocks_candidate_worse_than_production(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            registry = ModelRegistry(registry_dir=tmp)
+            strong = registry.register(
+                model_path=os.path.join(tmp, "strong.pkl"),
+                market="h2h",
+                model_name="logistic",
+                metrics={"selection_score": 0.9},
+            )
+            registry.promote(run_id=strong["run_id"], to_stage="production", reason="seed", actor="test")
+
+            weaker = registry.register(
+                model_path=os.path.join(tmp, "weaker.pkl"),
+                market="h2h",
+                model_name="stacking",
+                metrics={"selection_score": 0.3},
+            )
+            result = registry.promote_with_policy(run_id=weaker["run_id"], to_stage="production")
+
+            self.assertFalse(result["promoted"])
+            self.assertEqual(registry.get_production(market="h2h")["run_id"], strong["run_id"])
+
+    def test_promote_with_policy_force_bypasses_gate_and_is_audited_as_forced(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            registry = ModelRegistry(registry_dir=tmp)
+            payload = registry.register(
+                model_path=os.path.join(tmp, "model.pkl"), market="h2h", model_name="logistic", metrics=BAD_METRICS
+            )
+
+            result = registry.promote_with_policy(run_id=payload["run_id"], to_stage="production", force=True, actor="admin")
+
+            self.assertTrue(result["promoted"])
+            self.assertEqual(registry.get_production(market="h2h")["run_id"], payload["run_id"])
+            events = registry.list_promotion_events(market="h2h")
+            self.assertEqual(events[-1]["metadata"]["event_type"], "promotion_forced")
+
+    def test_promote_with_policy_raises_for_missing_run(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            registry = ModelRegistry(registry_dir=tmp)
+            with self.assertRaises(ValueError):
+                registry.promote_with_policy(run_id="does-not-exist", to_stage="production")
+
+    def test_promote_with_policy_champion_stage_ignores_production_comparison(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            registry = ModelRegistry(registry_dir=tmp)
+            payload = registry.register(
+                model_path=os.path.join(tmp, "model.pkl"), market="h2h", model_name="logistic", metrics=GOOD_METRICS
+            )
+            result = registry.promote_with_policy(run_id=payload["run_id"], to_stage="champion")
+            self.assertTrue(result["promoted"])
+            self.assertIsNone(result["evaluation"]["comparison"])
+
+    def test_last_training_never_becomes_production_via_register_alone(self):
+        """Acceptance criteria OPS-02: l'ultimo training registrato non
+        diventa MAI automaticamente production, nemmeno passando per
+        `promote_with_policy` se non viene esplicitamente invocato."""
+        with tempfile.TemporaryDirectory() as tmp:
+            registry = ModelRegistry(registry_dir=tmp)
+            registry.register(
+                model_path=os.path.join(tmp, "model.pkl"), market="h2h", model_name="logistic", metrics=GOOD_METRICS
+            )
+            self.assertIsNone(registry.get_production(market="h2h"))
+
+    # ------------------------------------------------------------------
+    # OPS-02: rollback
+    # ------------------------------------------------------------------
+    def test_rollback_to_previous_production_without_explicit_run_id(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            registry = ModelRegistry(registry_dir=tmp)
+            first = registry.register(model_path=os.path.join(tmp, "a.pkl"), market="h2h", model_name="logistic")
+            second = registry.register(model_path=os.path.join(tmp, "b.pkl"), market="h2h", model_name="stacking")
+
+            registry.promote(run_id=first["run_id"], to_stage="production", reason="v1", actor="test")
+            registry.promote(run_id=second["run_id"], to_stage="production", reason="v2", actor="test")
+            self.assertEqual(registry.get_production(market="h2h")["run_id"], second["run_id"])
+
+            result = registry.rollback(market="h2h", reason="v2 e' instabile", actor="oncall")
+
+            self.assertEqual(result["rolled_back_to"], first["run_id"])
+            self.assertEqual(result["rolled_back_from"], second["run_id"])
+            self.assertEqual(registry.get_production(market="h2h")["run_id"], first["run_id"])
+
+    def test_rollback_to_explicit_run_id(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            registry = ModelRegistry(registry_dir=tmp)
+            first = registry.register(model_path=os.path.join(tmp, "a.pkl"), market="h2h", model_name="logistic")
+            second = registry.register(model_path=os.path.join(tmp, "b.pkl"), market="h2h", model_name="stacking")
+            registry.promote(run_id=second["run_id"], to_stage="production", reason="v2", actor="test")
+
+            result = registry.rollback(market="h2h", to_run_id=first["run_id"], actor="oncall")
+
+            self.assertEqual(registry.get_production(market="h2h")["run_id"], first["run_id"])
+            events = registry.list_promotion_events(market="h2h")
+            self.assertEqual(events[-1]["metadata"]["event_type"], "rollback")
+
+    def test_rollback_raises_when_no_previous_production_available(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            registry = ModelRegistry(registry_dir=tmp)
+            only = registry.register(model_path=os.path.join(tmp, "a.pkl"), market="h2h", model_name="logistic")
+            registry.promote(run_id=only["run_id"], to_stage="production", reason="v1", actor="test")
+
+            with self.assertRaises(ValueError):
+                registry.rollback(market="h2h")
+
+    def test_rollback_raises_when_run_id_belongs_to_different_market(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            registry = ModelRegistry(registry_dir=tmp)
+            h2h_run = registry.register(model_path=os.path.join(tmp, "a.pkl"), market="h2h", model_name="logistic")
+            other_market_run = registry.register(
+                model_path=os.path.join(tmp, "b.pkl"), market="under_over_2_5", model_name="logistic"
+            )
+            registry.promote(run_id=h2h_run["run_id"], to_stage="production", reason="v1", actor="test")
+
+            with self.assertRaises(ValueError):
+                registry.rollback(market="h2h", to_run_id=other_market_run["run_id"])
+
+    # ------------------------------------------------------------------
+    # OPS-02: audit trail (list_promotion_events)
+    # ------------------------------------------------------------------
+    def test_list_promotion_events_includes_blocked_promotions_and_rollbacks(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            registry = ModelRegistry(registry_dir=tmp)
+            first = registry.register(
+                model_path=os.path.join(tmp, "a.pkl"), market="h2h", model_name="logistic", metrics=GOOD_METRICS
+            )
+            second = registry.register(
+                model_path=os.path.join(tmp, "b.pkl"), market="h2h", model_name="stacking", metrics=BAD_METRICS
+            )
+            third = registry.register(
+                model_path=os.path.join(tmp, "c.pkl"), market="h2h", model_name="voting", metrics=GOOD_METRICS
+            )
+
+            registry.promote_with_policy(run_id=first["run_id"], to_stage="production", actor="qa")
+            registry.promote_with_policy(run_id=second["run_id"], to_stage="production", actor="qa")  # bloccato
+            registry.promote_with_policy(run_id=third["run_id"], to_stage="production", actor="qa")  # approvato
+            registry.rollback(market="h2h", reason="third e' instabile", actor="oncall")  # torna a first
+
+            events = registry.list_promotion_events(market="h2h")
+            event_types = [event["metadata"].get("event_type") for event in events]
+            self.assertIn("promotion_approved", event_types)
+            self.assertIn("promotion_blocked", event_types)
+            self.assertIn("rollback", event_types)
+            self.assertEqual(registry.get_production(market="h2h")["run_id"], first["run_id"])
+
+    def test_list_promotion_events_filters_by_market(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            registry = ModelRegistry(registry_dir=tmp)
+            h2h_run = registry.register(model_path=os.path.join(tmp, "a.pkl"), market="h2h", model_name="logistic")
+            other_run = registry.register(
+                model_path=os.path.join(tmp, "b.pkl"), market="under_over_2_5", model_name="logistic"
+            )
+            registry.promote(run_id=h2h_run["run_id"], to_stage="production", reason="v1", actor="test")
+            registry.promote(run_id=other_run["run_id"], to_stage="production", reason="v1", actor="test")
+
+            h2h_events = registry.list_promotion_events(market="h2h")
+            self.assertTrue(all(event["market"] == "h2h" for event in h2h_events))
+
+            all_events = registry.list_promotion_events()
+            self.assertGreaterEqual(len(all_events), len(h2h_events))
 
 
 if __name__ == "__main__":

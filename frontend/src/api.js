@@ -211,6 +211,24 @@ export function getPredictions(limit = 50) {
   return request(`/predictions/log?limit=${limit}`);
 }
 
+export function getMonitoringOverview({ market } = {}) {
+  const params = new URLSearchParams();
+  if (market && market !== "all") {
+    params.set("market", market);
+  }
+  const query = params.toString();
+  return request(`/monitoring/overview${query ? `?${query}` : ""}`);
+}
+
+export function getMonitoringAlerts({ market } = {}) {
+  const params = new URLSearchParams();
+  if (market && market !== "all") {
+    params.set("market", market);
+  }
+  const query = params.toString();
+  return request(`/monitoring/alerts${query ? `?${query}` : ""}`);
+}
+
 export { API_BASE_URL };
 
 

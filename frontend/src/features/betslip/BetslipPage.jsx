@@ -171,4 +171,3 @@ function SlipCard({ slip, fixtureIndex }) {
   );
 }
 
-
