@@ -5,7 +5,7 @@ Questa guida copre i nuovi moduli introdotti per:
 - model registry,
 - API backend,
 - dashboard React,
-- scheduler giornaliero alle 23:00.
+- scheduler con job separati (data sync frequenti + training giornaliero indipendente, OPS-01).
 
 ## Nuovi moduli principali
 - `src/service_ia/training/train_multi_market.py`
@@ -27,9 +27,13 @@ Nel file `properties/config.env` puoi aggiungere:
 - `DATABASE_URL=postgresql://postgres:postgres@localhost:5432/match_db`
 - `APP_LEAGUES=135,136,140,39`
 - `APP_SEASONS=2025,2026`
-- `SCHEDULER_HOUR=23`
-- `SCHEDULER_MINUTE=0`
 - `DATABASE_SCHEMA=public`
+
+Scheduler (OPS-01, job separati - vedi sezione dedicata piu' sotto):
+- `DATA_SYNC_INTERVAL_MINUTES=30` (fixture odierne, IntervalTrigger)
+- `SETTLEMENT_INTERVAL_MINUTES=60` (settlement, IntervalTrigger)
+- `FUTURE_SYNC_HOUR=4` / `FUTURE_SYNC_MINUTE=30` (fixture future, CronTrigger giornaliero)
+- `TRAINING_HOUR=23` / `TRAINING_MINUTE=0` (retrain ML, CronTrigger giornaliero INDIPENDENTE dai data job — `SCHEDULER_HOUR`/`SCHEDULER_MINUTE` restano supportati come fallback legacy)
 
 Se non li imposti, vengono usati i default del codice.
 
@@ -56,7 +60,7 @@ docker compose ps
 URL servizi:
 - `http://localhost:3000` -> frontend React
 - `http://localhost:8000/docs` -> API FastAPI
-- `scheduler` -> job giornaliero automatico alle 23:00
+- `scheduler` -> 4 job APScheduler separati e indipendenti (OPS-01): data sync/settlement frequenti (minuti) + future sync/training giornalieri (orari indipendenti) — vedi sezione "Run scheduler" piu' sotto
 
 Prerequisito: un Postgres raggiungibile su `localhost:5432/match_db` dell'host (nativo o comunque fuori da questo compose), con le migration Alembic allineate (`alembic upgrade head`).
 
@@ -96,16 +100,21 @@ Output principali:
 - `best_models/registry/index.jsonl`
 - `best_models/training_summary.json`
 
-## Run scheduler (job giornaliero)
+## Run scheduler (job separati, OPS-01)
 ```powershell
 python -m src.jobs.scheduler
 ```
 
-Il job giornaliero esegue:
-1. import match/statistiche/quote,
-2. aggiornamento mean feature,
-3. retrain multi-mercato,
-4. log esito job in `best_models/jobs_history.jsonl`.
+Lo scheduler registra 4 job APScheduler COMPLETAMENTE separati e indipendenti (`max_instances=1`, `coalesce=True` su ciascuno) — mai un retrain automatico legato al ciclo di import:
+
+| Job id             | Funzione                     | Trigger                                  | Frequenza di default        |
+|--------------------|-------------------------------|-------------------------------------------|------------------------------|
+| `data_sync_today`  | `run_manual_today_update`     | `IntervalTrigger` (minuti)                 | ogni 30 minuti               |
+| `data_settlement`  | `run_manual_settlement`       | `IntervalTrigger` (minuti)                 | ogni 60 minuti               |
+| `data_future_sync` | `run_manual_future_sync`      | `CronTrigger` (orario giornaliero)         | 04:30                        |
+| `ml_training`      | `run_manual_retrain`          | `CronTrigger` (orario giornaliero, INDIPENDENTE) | 23:00                  |
+
+Ogni job logga il proprio esito in `best_models/jobs_history.jsonl` (`job_type`: `today_update`/`settlement`/`future_sync`/`retrain`). `build_scheduler(cfg)` costruisce lo scheduler SENZA avviarlo (usato dai test); `start_scheduler()` lo avvia (entry point di `python -m src.jobs.scheduler`).
 
 ## Trigger manuale da API
 - `POST /jobs/import`
