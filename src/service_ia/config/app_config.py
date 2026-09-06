@@ -74,6 +74,16 @@ class AppConfig:
     # frequenza delle fixture odierne/in corso).
     future_sync_hour: int
     future_sync_minute: int
+    # Daily refresh combinato: STESSO job invocato dal bottone "Aggiorna
+    # tutto" (Sidebar, sempre visibile) - importa le partite di IERI (tutti
+    # i campionati censiti) + sync del calendario prossimo in una finestra
+    # di `daily_refresh_days_ahead` giorni (con upsert anche sulle partite
+    # gia' presenti). Orario di default (05:00) volutamente DOPO mezzanotte
+    # e PRIMA di `future_sync_hour`/`training_hour`, cosi' "ieri" e' un
+    # giorno ormai completo (tutte le partite serali sono terminate).
+    daily_refresh_hour: int
+    daily_refresh_minute: int
+    daily_refresh_days_ahead: int
     # Training job: giornaliero, orario INDIPENDENTE dai data job (mai un
     # retrain automatico legato al ciclo di import - acceptance criteria
     # "No retrain automatico ad ogni import"). Nome storico "scheduler_hour"/
@@ -88,6 +98,12 @@ class AppConfig:
     # per evitare chiamate HTTP ripetute entro la stessa finestra di poll.
     live_sync_interval_seconds: int
     live_cache_ttl_seconds: int
+    # Limite giornaliero del piano API-Sports attivo, usato SOLO per
+    # calcolare la percentuale di quota consumata mostrata in Impostazioni
+    # (`GET /settings/quota`) - l'header `x-ratelimit-requests-remaining`
+    # espone solo il RIMANENTE, mai il limite totale, quindi va configurato
+    # esplicitamente (default 7500, osservato nei log del piano attuale).
+    api_sports_daily_limit: int
     database_url: str
     database_schema: str
 
@@ -107,8 +123,12 @@ def load_app_config() -> AppConfig:
     settlement_interval_minutes = _int_env("SETTLEMENT_INTERVAL_MINUTES", default=60)
     future_sync_hour = _int_env("FUTURE_SYNC_HOUR", default=4)
     future_sync_minute = _int_env("FUTURE_SYNC_MINUTE", default=30)
+    daily_refresh_hour = _int_env("DAILY_REFRESH_HOUR", default=5)
+    daily_refresh_minute = _int_env("DAILY_REFRESH_MINUTE", default=0)
+    daily_refresh_days_ahead = _int_env("DAILY_REFRESH_DAYS_AHEAD", default=7)
     live_sync_interval_seconds = _int_env("LIVE_SYNC_INTERVAL_SECONDS", default=90)
     live_cache_ttl_seconds = _int_env("LIVE_CACHE_TTL_SECONDS", default=20)
+    api_sports_daily_limit = _int_env("API_SPORTS_DAILY_LIMIT", default=7500)
     database_url = os.environ.get("DATABASE_URL", DEFAULT_DATABASE_URL).strip()
     database_schema = os.environ.get("DATABASE_SCHEMA", DEFAULT_DATABASE_SCHEMA).strip() or DEFAULT_DATABASE_SCHEMA
 
@@ -119,10 +139,14 @@ def load_app_config() -> AppConfig:
         settlement_interval_minutes=settlement_interval_minutes,
         future_sync_hour=future_sync_hour,
         future_sync_minute=future_sync_minute,
+        daily_refresh_hour=daily_refresh_hour,
+        daily_refresh_minute=daily_refresh_minute,
+        daily_refresh_days_ahead=daily_refresh_days_ahead,
         training_hour=training_hour,
         training_minute=training_minute,
         live_sync_interval_seconds=live_sync_interval_seconds,
         live_cache_ttl_seconds=live_cache_ttl_seconds,
+        api_sports_daily_limit=api_sports_daily_limit,
         database_url=database_url,
         database_schema=database_schema,
     )

@@ -2,6 +2,7 @@ import unittest
 from unittest.mock import patch
 
 from src.service_ia.model.match import Match
+from src.service_ia.pre_processing.api_sports_provider import ApiSportsQuotaExceededError
 from src.service_ia.pre_processing.download_match_service import calculate_mean, download_import_matches
 
 
@@ -242,6 +243,97 @@ class TestDownloadMatch(unittest.TestCase):
 
         mock_search_filter.assert_called()
         mock_update_bulk.assert_called()
+
+
+class FakeProviderQuotaExceededOnOdds(FakeProvider):
+    """Simula la quota GIORNALIERA che si esaurisce DURANTE il processing
+    di una fixture (su `get_fixture_odds`), non durante `get_fixtures`."""
+
+    def get_fixture_odds(self, fixture_id):
+        raise ApiSportsQuotaExceededError("quota esaurita (test)")
+
+
+class TestDownloadImportMatchesQuotaExceededMidway(unittest.TestCase):
+    """BUGFIX 2026-09-06: quando la quota si esaurisce DENTRO il loop
+    per-fixture (get_fixture_statistics/get_fixture_odds), PRIMA veniva
+    inghiottita dal blocco `except Exception` generico e il loop
+    CONTINUAVA su tutte le fixture/leghe rimanenti senza mai impostare
+    `quota_exceeded=True` - causa principale per cui "Aggiorna tutto"
+    restava "in esecuzione" per decine di minuti/ore invece di fermarsi
+    subito, come gia' avveniva per l'eccezione sollevata da
+    `get_fixtures`."""
+
+    @patch("src.service_ia.pre_processing.download_match_service.BET_BOOKMAKERS", [{"id": 1}])
+    @patch("src.service_ia.pre_processing.download_match_service.form_last_5_tot", return_value=None)
+    @patch("src.service_ia.pre_processing.download_match_service.repo_snapshot.save_many")
+    @patch("src.service_ia.pre_processing.download_match_service.repo_match.save_all")
+    @patch("src.service_ia.pre_processing.download_match_service.repo_match.save")
+    @patch("src.service_ia.pre_processing.download_match_service.repo_match.filter_by")
+    def test_stops_immediately_and_flags_quota_exceeded(
+        self,
+        mock_filter_by,
+        _mock_save,
+        _mock_save_all,
+        _mock_snapshot_save,
+        _mock_form,
+    ):
+        mock_filter_by.return_value.first.return_value = None
+        # 3 fixture nella stessa lega: la quota si esaurisce SULLA PRIMA
+        # (get_fixture_odds) - le altre 2 non devono essere processate.
+        provider = FakeProviderQuotaExceededOnOdds(
+            fixtures=[_sample_fixture(1326590), _sample_fixture(1326591), _sample_fixture(1326592)],
+            statistics=_sample_statistics(),
+        )
+
+        report = download_import_matches(
+            seasons=[2026],
+            leagues=[135],
+            fixture_date="2026-09-01",
+            statuses="FT",
+            provider=provider,
+        )
+
+        self.assertTrue(report["quota_exceeded"])
+        # Nessuna fixture completata: la primissima ha gia' fatto scattare
+        # l'interruzione immediata (nessun `continue` sulle successive).
+        self.assertEqual(report["inserted"], 0)
+        self.assertEqual(report["updated"], 0)
+
+    @patch("src.service_ia.pre_processing.download_match_service.BET_BOOKMAKERS", [{"id": 1}])
+    @patch("src.service_ia.pre_processing.download_match_service.form_last_5_tot", return_value=None)
+    @patch("src.service_ia.pre_processing.download_match_service.repo_snapshot.save_many")
+    @patch("src.service_ia.pre_processing.download_match_service.repo_match.save_all")
+    @patch("src.service_ia.pre_processing.download_match_service.repo_match.save")
+    @patch("src.service_ia.pre_processing.download_match_service.repo_match.filter_by")
+    def test_stops_across_multiple_leagues(
+        self,
+        mock_filter_by,
+        _mock_save,
+        _mock_save_all,
+        _mock_snapshot_save,
+        _mock_form,
+    ):
+        """La quota esaurita durante la lega 135 deve fermare ANCHE il
+        tentativo sulla lega successiva (136) - mai una chiamata HTTP in
+        piu' dopo che la quota giornaliera e' gia' segnalata esaurita."""
+        mock_filter_by.return_value.first.return_value = None
+        provider = FakeProviderQuotaExceededOnOdds(
+            fixtures=[_sample_fixture(1326590)],
+            statistics=_sample_statistics(),
+        )
+
+        report = download_import_matches(
+            seasons=[2026],
+            leagues=[135, 136],
+            fixture_date="2026-09-01",
+            statuses="FT",
+            provider=provider,
+        )
+
+        self.assertTrue(report["quota_exceeded"])
+        # Una sola lega vista: fixtures_seen conta SOLO la prima lega (135),
+        # la seconda (136) non viene nemmeno interrogata.
+        self.assertEqual(report["fixtures_seen"], 1)
 
 
 if __name__ == "__main__":

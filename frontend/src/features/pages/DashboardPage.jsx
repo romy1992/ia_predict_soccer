@@ -1,7 +1,22 @@
 import MatchTable from "../matches/components/MatchTable";
+import PhaseTabs from "../matches/components/PhaseTabs";
+import MarketTabs from "../matches/components/MarketTabs";
 import { phaseClass, phaseLabel } from "../shared/formatters";
 
-export default function DashboardPage({ overview, liveData, dayData, onOpenMatch, onOpenOracleDetail, selectedFixtureId }) {
+export default function DashboardPage({
+  overview,
+  liveData,
+  dayData,
+  onOpenMatch,
+  onOpenOracleDetail,
+  selectedFixtureId,
+  phaseFilter,
+  onChangePhaseFilter,
+  markets,
+  selectedMarket,
+  onChangeSelectedMarket,
+  isFilterLoading,
+}) {
   const safeRows = dayData?.rows || [];
 
   return (
@@ -48,10 +63,15 @@ export default function DashboardPage({ overview, liveData, dayData, onOpenMatch
 
       <section className="panel">
         <div className="panel-header">
-          <h3>Partite del giorno con previsioni</h3>
+          <h3>Partite del giorno</h3>
           <span className="pill">{dayData.returned}/{dayData.total}</span>
+          {isFilterLoading && <span className="pill pill-loading">Aggiornamento...</span>}
         </div>
-        <MatchTable rows={safeRows.slice(0, 12)} selectedFixtureId={selectedFixtureId} onOpenMatch={onOpenMatch} onOpenOracleDetail={onOpenOracleDetail} />
+
+        <PhaseTabs phases={["all", "to_play", "live", "finished"]} value={phaseFilter} onChange={onChangePhaseFilter} />
+        <MarketTabs markets={markets} value={selectedMarket} onChange={onChangeSelectedMarket} />
+
+        <MatchTable rows={safeRows} selectedFixtureId={selectedFixtureId} onOpenMatch={onOpenMatch} onOpenOracleDetail={onOpenOracleDetail} />
       </section>
     </section>
   );

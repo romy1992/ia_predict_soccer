@@ -3,11 +3,32 @@
 .idea
 .venv
 __pycache__
+**/__pycache__
 *.py[cod]
 *.log
 frontend/node_modules
 frontend/dist
 best_models
+**/best_models
 logs
 src/backup_db
+**/backup_db
+
+# BUGFIX 2026-09-05: queste cartelle da sole gonfiavano il build context a
+# ~840MB (56s solo per il transfer ad ogni build, vedi diagnosi in chat),
+# rendendo i rebuild lentissimi e - peggio - creando una finestra ampia in
+# cui una build poteva leggere uno stato incoerente/parzialmente
+# sincronizzato del filesystem (Docker Desktop su Windows). Nessuna di
+# queste e' referenziata dal codice attivo sotto src/ (la pipeline live
+# legge/scrive sempre dal DB, mai da questi CSV/pickle legacy):
+# - /service_ia (radice): copia LEGACY duplicata, il codice attivo importa
+#   sempre da `src.service_ia...`, mai da `service_ia...` nudo.
+# - src/service_ia/training/under_over/inconsistent: esperimento di
+#   training abbandonato (solo `.../consistent/` e' referenziato altrove).
+# - src/service_ia/dataset: CSV/Excel di un vecchio flusso pre-DB, mai letti
+#   dal training pipeline corrente (`train_multi_market.py` legge dal DB).
+/service_ia
+src/service_ia/training/under_over/inconsistent
+src/service_ia/dataset
+
 

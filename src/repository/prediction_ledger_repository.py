@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Optional
 
+from sqlalchemy import func
+
 from src.repository.base.repository_db import SessionLocal
 from src.service_ia.model.match import PredictionLedger
 
@@ -22,6 +24,14 @@ class PredictionLedgerRepository:
     def get_by_id(self, id_prediction: str) -> Optional[PredictionLedger]:
         with SessionLocal() as session:
             return session.get(PredictionLedger, id_prediction)
+
+    def get_earliest_created_date(self) -> Optional[datetime]:
+        """Prima data in assoluto in cui e' stata salvata una prediction
+        (MIN(created_at)): usato per costruire l'elenco date accumulato di
+        `DashboardService.get_available_dates` ("giorno 1 di previsioni" ->
+        oggi), al posto di un calendario libero in UI."""
+        with SessionLocal() as session:
+            return session.query(func.min(PredictionLedger.created_at)).scalar()
 
     def find_existing(
         self,

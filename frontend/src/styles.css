@@ -49,6 +49,18 @@ body {
   color: #b8caea;
 }
 
+.sidebar-refresh-hint {
+  margin-top: -8px;
+  color: #8ba0c9;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.sidebar .job-status-banner {
+  font-size: 12px;
+  margin-top: 0;
+}
+
 .menu {
   display: flex;
   flex-direction: column;
@@ -150,6 +162,89 @@ button {
   width: 100%;
 }
 
+.spinner {
+  display: inline-block;
+  width: 13px;
+  height: 13px;
+  border: 2px solid rgba(255, 255, 255, 0.4);
+  border-top-color: #ffffff;
+  border-radius: 50%;
+  margin-right: 8px;
+  vertical-align: -2px;
+  animation: spin 0.7s linear infinite;
+}
+
+.spinner-dark {
+  border: 2px solid rgba(47, 79, 144, 0.25);
+  border-top-color: #2f4f90;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.progress-bar {
+  position: relative;
+  width: 100%;
+  height: 6px;
+  border-radius: 999px;
+  background: #dde7ff;
+  overflow: hidden;
+  margin-top: 10px;
+}
+
+.progress-bar-fill {
+  position: absolute;
+  top: 0;
+  left: -40%;
+  width: 40%;
+  height: 100%;
+  border-radius: 999px;
+  background: #2f4f90;
+  animation: progress-indeterminate 1.1s ease-in-out infinite;
+}
+
+@keyframes progress-indeterminate {
+  0% {
+    left: -40%;
+  }
+  100% {
+    left: 100%;
+  }
+}
+
+.job-status-banner {
+  margin-top: 12px;
+  border-radius: 10px;
+  padding: 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid #d8e5ff;
+  background: #eef4ff;
+  color: #1e448d;
+  font-size: 13px;
+}
+
+.job-status-banner.success {
+  border-color: #bfe8c9;
+  background: #eafff1;
+  color: #0b6b2d;
+}
+
+.job-status-banner.failed {
+  border-color: #ffc0c0;
+  background: #ffecec;
+  color: #a20000;
+}
+
+.job-status-banner .progress-bar {
+  flex: 1;
+  margin-top: 0;
+}
+
 .stack {
   display: flex;
   flex-direction: column;
@@ -209,6 +304,12 @@ button {
   border-radius: 999px;
   font-size: 13px;
   font-weight: 600;
+}
+
+.pill-loading {
+  background: #e7edfb;
+  color: #2952c8;
+  margin-left: 8px;
 }
 
 .live-grid {
@@ -277,8 +378,13 @@ button {
 
 .tabs {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   margin-bottom: 10px;
+}
+
+.tabs-market {
+  margin-top: -4px;
 }
 
 .tab {
@@ -717,6 +823,116 @@ th {
   .detail-grid {
     grid-template-columns: 1fr;
   }
+}
+
+/* Impostazioni: barra quota giornaliera API-Sports */
+.quota-bar {
+  position: relative;
+  width: 100%;
+  height: 14px;
+  border-radius: 999px;
+  background: #eef1f8;
+  overflow: hidden;
+  margin-top: 6px;
+}
+
+.quota-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: #2f4f90;
+  transition: width 0.4s ease;
+}
+
+.quota-bar-fill.ok {
+  background: #1f9d55;
+}
+
+.quota-bar-fill.warning {
+  background: #d99a1b;
+}
+
+.quota-bar-fill.danger {
+  background: #c0392b;
+}
+
+.quota-meta {
+  margin-top: 8px;
+  font-size: 14px;
+  color: #2c3550;
+}
+
+/* Impostazioni: elenco job schedulati + toggle switch */
+.settings-jobs-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.settings-job-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px;
+  border-radius: 10px;
+  background: #f7f9fd;
+  border: 1px solid #e7ecf7;
+}
+
+.settings-job-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.switch {
+  position: relative;
+  display: inline-block;
+  width: 44px;
+  height: 24px;
+  flex-shrink: 0;
+}
+
+.switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.switch-slider {
+  position: absolute;
+  cursor: pointer;
+  inset: 0;
+  background-color: #c7cfe0;
+  border-radius: 999px;
+  transition: background-color 0.2s ease;
+}
+
+.switch-slider::before {
+  content: "";
+  position: absolute;
+  height: 18px;
+  width: 18px;
+  left: 3px;
+  top: 3px;
+  background-color: #ffffff;
+  border-radius: 50%;
+  transition: transform 0.2s ease;
+  box-shadow: 0 1px 3px rgba(9, 23, 48, 0.3);
+}
+
+.switch input:checked + .switch-slider {
+  background-color: #2f4f90;
+}
+
+.switch input:checked + .switch-slider::before {
+  transform: translateX(20px);
+}
+
+.switch input:disabled + .switch-slider {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 

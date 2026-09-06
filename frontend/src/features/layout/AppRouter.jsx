@@ -2,22 +2,15 @@ import DashboardFeaturePage from "../dashboard/DashboardFeaturePage";
 import DataCenterPage from "../data-center/DataCenterPage";
 import DataQualityPage from "../data-quality/DataQualityPage";
 import BetslipPage from "../betslip/BetslipPage";
-import MatchesDayPage from "../matches/MatchesDayPage";
-import MatchesLivePage from "../matches/MatchesLivePage";
 import MlLabPage from "../ml-lab/MlLabPage";
 import MonitoringPage from "../monitoring/MonitoringPage";
 import OraclePage from "../oracle/OraclePage";
 import OracleMatchDetailPage from "../oracle/OracleMatchDetailPage";
+import SettingsPage from "../settings/SettingsPage";
 
 export default function AppRouter({ activePage, props }) {
   if (activePage === "dashboard") {
     return <DashboardFeaturePage {...props.dashboard} />;
-  }
-  if (activePage === "live") {
-    return <MatchesLivePage {...props.live} />;
-  }
-  if (activePage === "today") {
-    return <MatchesDayPage {...props.today} />;
   }
   if (activePage === "predictions") {
     return <OraclePage {...props.predictions} />;
@@ -39,6 +32,9 @@ export default function AppRouter({ activePage, props }) {
   }
   if (activePage === "monitoring") {
     return <MonitoringPage {...props.monitoring} />;
+  }
+  if (activePage === "settings") {
+    return <SettingsPage {...props.settings} />;
   }
 
   return <DashboardFeaturePage {...props.dashboard} />;

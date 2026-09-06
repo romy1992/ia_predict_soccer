@@ -118,85 +118,114 @@ export default function DataCenterPage({
     <section className="stack">
       <section className="panel">
         <div className="panel-header">
-          <h3>Data Center - Import manuale</h3>
+          <h3>Data Center</h3>
         </div>
-
-        <div className="inline-form">
-          <label>
-            Seasons (csv)
-            <input
-              value={seasonsInput}
-              onChange={(e) => setSeasonsInput(e.target.value)}
-              placeholder="es. 2025,2026"
-            />
-          </label>
-
-          <label>
-            Leagues (csv)
-            <input
-              value={leaguesInput}
-              onChange={(e) => setLeaguesInput(e.target.value)}
-              placeholder="es. 135,39,140"
-            />
-          </label>
-
-          <label>
-            Statuses
-            <input
-              value={statuses}
-              onChange={(e) => setStatuses(e.target.value)}
-              placeholder="FT-AET-PEN-ABD"
-            />
-          </label>
-
-          <label className="check">
-            <input
-              type="checkbox"
-              checked={asyncRun}
-              onChange={(e) => onChangeAsyncRun(e.target.checked)}
-            />
-            <span>Esegui async</span>
-          </label>
-        </div>
-
-        <div className="inline-form" style={{ marginTop: 10 }}>
-          <label>
-            From date
-            <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} />
-          </label>
-          <label>
-            To date
-            <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} />
-          </label>
-          <button className="btn-primary" disabled={isSubmitting} onClick={handleHistoricalImport}>
-            Import storico
-          </button>
-          <button className="btn-secondary" disabled={isSubmitting} onClick={handleSettlement}>
-            Settlement finali
-          </button>
-        </div>
-
-        <div className="inline-form" style={{ marginTop: 10 }}>
-          <label>
-            Target date
-            <input type="date" value={targetDate} onChange={(e) => setTargetDate(e.target.value)} />
-          </label>
-          <button className="btn-primary" disabled={isSubmitting} onClick={handleTodayUpdate}>
-            Aggiorna oggi
-          </button>
-
-          <label>
-            Days ahead
-            <input value={daysAhead} onChange={(e) => setDaysAhead(e.target.value)} />
-          </label>
-          <button className="btn-primary" disabled={isSubmitting} onClick={handleFutureSync}>
-            Sync future
-          </button>
-        </div>
-
+        <p className="muted">
+          L'azione combinata <strong>"ieri (risultati+quote) + prossimi 7 giorni, tutti i campionati censiti"</strong>{" "}
+          si esegue ora dal bottone <strong>"Aggiorna tutto"</strong> nella sidebar (sempre visibile, in ogni
+          pagina) - oppure automaticamente ogni giorno tramite il job schedulato "Aggiorna tutto (ieri + prossimi
+          giorni)" (attiva/disattiva in <strong>Impostazioni</strong>). Qui sotto trovi invece le azioni granulari su
+          partite disputate/prossime - utili per backfill/debug su intervalli o leghe specifiche - eseguibili
+          manualmente o gia' coperte dai rispettivi job schedulati (anch'essi in Impostazioni).
+        </p>
+        <label className="check">
+          <input type="checkbox" checked={asyncRun} onChange={(e) => onChangeAsyncRun(e.target.checked)} />
+          <span>Esegui azioni sotto in background (async)</span>
+        </label>
         {localError && <div className="error-box">Errore: {localError}</div>}
         {opsMessage && <pre className="code-block">{opsMessage}</pre>}
       </section>
+
+      <div className="detail-grid">
+        <section className="panel">
+          <div className="panel-header">
+            <h3>Partite disputate</h3>
+          </div>
+          <p className="muted">
+            Recupera risultati, statistiche e quote finali delle partite gia' concluse (per un intervallo di date a
+            scelta) e riconcilia il settlement.
+          </p>
+
+          <div className="inline-form">
+            <label>
+              Seasons (csv)
+              <input
+                value={seasonsInput}
+                onChange={(e) => setSeasonsInput(e.target.value)}
+                placeholder="es. 2025,2026"
+              />
+            </label>
+
+            <label>
+              Leagues (csv)
+              <input
+                value={leaguesInput}
+                onChange={(e) => setLeaguesInput(e.target.value)}
+                placeholder="es. 135,39,140"
+              />
+            </label>
+
+            <label>
+              Statuses
+              <input
+                value={statuses}
+                onChange={(e) => setStatuses(e.target.value)}
+                placeholder="FT-AET-PEN-ABD"
+              />
+            </label>
+          </div>
+
+          <div className="inline-form" style={{ marginTop: 10 }}>
+            <label>
+              From date
+              <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} />
+            </label>
+            <label>
+              To date
+              <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} />
+            </label>
+          </div>
+
+          <div className="inline-form" style={{ marginTop: 10 }}>
+            <button className="btn-primary" disabled={isSubmitting} onClick={handleHistoricalImport}>
+              {isSubmitting ? (<><span className="spinner spinner-dark" />In corso...</>) : "Import storico"}
+            </button>
+            <button className="btn-secondary" disabled={isSubmitting} onClick={handleSettlement}>
+              {isSubmitting ? (<><span className="spinner spinner-dark" />In corso...</>) : "Settlement finali"}
+            </button>
+          </div>
+        </section>
+
+        <section className="panel">
+          <div className="panel-header">
+            <h3>Partite prossime</h3>
+          </div>
+          <p className="muted">
+            Sincronizza le partite non ancora giocate: aggiorna lo stato/quote di una data specifica oppure carica il
+            calendario dei prossimi N giorni.
+          </p>
+
+          <div className="inline-form">
+            <label>
+              Target date
+              <input type="date" value={targetDate} onChange={(e) => setTargetDate(e.target.value)} />
+            </label>
+            <button className="btn-primary" disabled={isSubmitting} onClick={handleTodayUpdate}>
+              {isSubmitting ? (<><span className="spinner" />In corso...</>) : "Aggiorna oggi"}
+            </button>
+          </div>
+
+          <div className="inline-form" style={{ marginTop: 10 }}>
+            <label>
+              Days ahead
+              <input value={daysAhead} onChange={(e) => setDaysAhead(e.target.value)} />
+            </label>
+            <button className="btn-primary" disabled={isSubmitting} onClick={handleFutureSync}>
+              {isSubmitting ? (<><span className="spinner" />In corso...</>) : "Sync future"}
+            </button>
+          </div>
+        </section>
+      </div>
 
       <section className="panel">
         <div className="panel-header">

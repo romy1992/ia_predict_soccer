@@ -1,8 +1,9 @@
-import { marketLabel } from "../shared/formatters";
+import { formatDateIt, marketLabel } from "../shared/formatters";
 
 export default function TopFilters({
   selectedDate,
   onChangeDate,
+  availableDates,
   markets,
   selectedMarket,
   onChangeSelectedMarket,
@@ -10,6 +11,8 @@ export default function TopFilters({
   onChangeSearchInput,
   onApplySearch,
 }) {
+  const dateOptions = availableDates && availableDates.length > 0 ? availableDates : [selectedDate];
+
   return (
     <header className="topbar">
       <div>
@@ -22,7 +25,13 @@ export default function TopFilters({
       <div className="filters">
         <label>
           Data
-          <input type="date" value={selectedDate} onChange={(e) => onChangeDate(e.target.value)} />
+          <select value={selectedDate} onChange={(e) => onChangeDate(e.target.value)}>
+            {dateOptions.map((iso) => (
+              <option key={iso} value={iso}>
+                {formatDateIt(iso)}
+              </option>
+            ))}
+          </select>
         </label>
 
         <label>

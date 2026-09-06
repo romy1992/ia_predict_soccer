@@ -107,27 +107,31 @@ Output principali:
 python -m src.jobs.scheduler
 ```
 
-Lo scheduler registra 4 job APScheduler COMPLETAMENTE separati e indipendenti (`max_instances=1`, `coalesce=True` su ciascuno) — mai un retrain automatico legato al ciclo di import:
+Lo scheduler registra 6 job APScheduler COMPLETAMENTE separati e indipendenti (`max_instances=1`, `coalesce=True` su ciascuno) — mai un retrain automatico legato al ciclo di import:
 
-| Job id             | Funzione                     | Trigger                                  | Frequenza di default        |
-|--------------------|-------------------------------|-------------------------------------------|------------------------------|
-| `data_sync_today`  | `run_manual_today_update`     | `IntervalTrigger` (minuti)                 | ogni 30 minuti               |
-| `data_settlement`  | `run_manual_settlement`       | `IntervalTrigger` (minuti)                 | ogni 60 minuti               |
-| `data_future_sync` | `run_manual_future_sync`      | `CronTrigger` (orario giornaliero)         | 04:30                        |
-| `ml_training`      | `run_manual_retrain`          | `CronTrigger` (orario giornaliero, INDIPENDENTE) | 23:00                  |
-| `data_sync_live`   | `run_manual_live_sync`        | `IntervalTrigger` (SECONDI, LIVE-01)       | ogni 90 secondi              |
+| Job id               | Funzione                     | Trigger                                  | Frequenza di default        |
+|-----------------------|-------------------------------|-------------------------------------------|------------------------------|
+| `data_sync_today`    | `run_manual_today_update`     | `IntervalTrigger` (minuti)                 | ogni 30 minuti               |
+| `data_settlement`    | `run_manual_settlement`       | `IntervalTrigger` (minuti)                 | ogni 60 minuti               |
+| `data_future_sync`   | `run_manual_future_sync`      | `CronTrigger` (orario giornaliero)         | 04:30                        |
+| `data_daily_refresh` | `run_daily_refresh`           | `CronTrigger` (orario giornaliero)         | 05:00 (ieri + prossimi 7gg)  |
+| `ml_training`        | `run_manual_retrain`          | `CronTrigger` (orario giornaliero, INDIPENDENTE) | 23:00                  |
+| `data_sync_live`     | `run_manual_live_sync`        | `IntervalTrigger` (SECONDI, LIVE-01)       | ogni 90 secondi              |
 
-Ogni job logga il proprio esito in `best_models/jobs_history.jsonl` (`job_type`: `today_update`/`settlement`/`future_sync`/`retrain`/`live_sync`). `build_scheduler(cfg)` costruisce lo scheduler SENZA avviarlo (usato dai test); `start_scheduler()` lo avvia (entry point di `python -m src.jobs.scheduler`).
+`data_daily_refresh` e' lo STESSO job invocato dal bottone "Aggiorna tutto" della Sidebar (sempre visibile, in ogni pagina del frontend): importa le partite di IERI (tutti i campionati censiti) + sincronizza il calendario prossimo (`DAILY_REFRESH_DAYS_AHEAD` giorni, default 7, con upsert sulle partite gia' presenti). Si sovrappone volutamente alla finestra di `data_future_sync` — disattivabile da Impostazioni se si vuole un solo giro/giorno.
+
+Ogni job logga il proprio esito in `best_models/jobs_history.jsonl` (`job_type`: `today_update`/`settlement`/`future_sync`/`daily_refresh`/`retrain`/`live_sync`). `build_scheduler(cfg)` costruisce lo scheduler SENZA avviarlo (usato dai test); `start_scheduler()` lo avvia (entry point di `python -m src.jobs.scheduler`).
 
 ## Trigger manuale da API
 - `POST /jobs/import`
 - `POST /jobs/today-update`
 - `POST /jobs/future-sync`
+- `POST /jobs/daily-refresh` (ieri + prossimi N giorni - bottone "Aggiorna tutto")
 - `POST /jobs/settlement`
 - `POST /jobs/retrain`
 - `POST /jobs/live-sync` (LIVE-01)
 
-Entrambi supportano `async_run=true/false`.
+Tutti supportano `async_run=true/false`.
 
 ## Nota operativa
 Le predizioni vengono loggate in:

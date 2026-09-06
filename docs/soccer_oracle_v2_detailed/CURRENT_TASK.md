@@ -5,6 +5,8 @@ Nessuno: la roadmap operativa è **COMPLETA** (53/53 task, 12/12 fasi — vedi `
 
 `LIVE-03` (ultimo task, Fase 11 LIVE ORACLE) è stato completato e validato.
 
+Dopo LIVE-03 sono state completate e validate ulteriori estensioni extra-roadmap (2026-09-05/06, vedi `IMPLEMENTATION_LOG.md` sezione "Estensioni introdotte" per il dettaglio completo): bugfix critico gestione quota API-Sports, job "Aggiorna tutto"/Daily Refresh (bottone Sidebar sempre visibile), pagina Impostazioni (enable/disable job + quota API-Sports), consolidamento frontend Dashboard (rimosse le pagine separate Live/Today/Match Center, `PhaseTabs`/`MarketTabs` + select data accumulata), fix critici di performance/concorrenza DB (`scoped_session`, sessione persistente per job, bulk upsert `odds_snapshot`). Suite completa rieseguita: 688 passed. Import `src.api.main` verificato end-to-end (51 route). Build frontend verificata senza errori.
+
 ## Regola
 Completare e validare questo task prima di aggiornare il file al task successivo.
 
