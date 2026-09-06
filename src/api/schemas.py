@@ -71,6 +71,18 @@ class JobFutureSyncRequest(BaseModel):
     async_run: bool = True
 
 
+class JobDailyRefreshRequest(BaseModel):
+    """Bottone "Aggiorna tutto" del Data Center: combina in un'unica azione
+    l'import delle partite disputate IERI (tutti i campionati censiti se
+    `leagues` non e' valorizzato) con la sync del calendario prossimo
+    (`days_ahead` giorni, default 7)."""
+
+    seasons: Optional[list[int]] = None
+    leagues: Optional[list[int]] = None
+    days_ahead: int = 7
+    async_run: bool = True
+
+
 class JobSettlementRequest(BaseModel):
     from_date: Optional[str] = None
     to_date: Optional[str] = None
@@ -90,6 +102,50 @@ class JobResponse(BaseModel):
     queued: bool
     message: str
     details: Optional[dict[str, Any]] = None
+
+
+class JobSettingRow(BaseModel):
+    job_id: str
+    label: str
+    description: str
+    enabled: bool
+
+
+class JobSettingsResponse(BaseModel):
+    jobs: list[JobSettingRow]
+
+
+class JobSettingsUpdateRequest(BaseModel):
+    updates: dict[str, bool] = Field(..., description="Mappa job_id -> enabled (aggiornamento parziale).")
+
+
+class ApiQuotaResponse(BaseModel):
+    """Stato quota API-Sports (pagina Impostazioni).
+
+    `source` distingue la fonte del dato:
+    - `"live"`: risultato di una vera interrogazione dell'endpoint
+      ufficiale `GET /status` di API-Sports (`POST /settings/quota/refresh`,
+      bottone "Aggiorna") - stesso numero della dashboard account
+      api-sports.io, autoritativo.
+    - `"estimated"`: stima dedotta PASSIVAMENTE dagli ultimi header
+      `x-ratelimit-*` osservati su una chiamata dati qualsiasi (api o
+      scheduler, stato condiviso su disco) - puo' restare disallineata dal
+      valore reale se la quota e' stata consumata da processi che non
+      passano da questo provider (bug diagnosticato 2026-09-05: senza un
+      controllo live, la barra poteva mostrare 0% con la quota reale gia'
+      al 100%)."""
+
+    available: bool
+    source: Optional[str] = None
+    plan: Optional[str] = None
+    daily_limit: Optional[int] = None
+    daily_remaining: Optional[int] = None
+    daily_used: Optional[int] = None
+    daily_used_percentage: Optional[float] = None
+    minute_limit: Optional[int] = None
+    minute_remaining: Optional[int] = None
+    updated_at: Optional[str] = None
+    message: Optional[str] = None
 
 
 class MetricsResponse(BaseModel):
@@ -152,6 +208,16 @@ class DashboardOverviewResponse(BaseModel):
     model_markets: list[str]
     live_preview: list[dict[str, Any]]
     day_highlights: list[dict[str, Any]]
+
+
+class DashboardAvailableDatesResponse(BaseModel):
+    """Elenco date selezionabili nel filtro UI (TopFilters): dal giorno 1 di
+    prediction salvata ad oggi, accumulato progressivamente (mai un
+    calendario libero)."""
+
+    dates: list[str]
+    first_date: Optional[str] = None
+    last_date: Optional[str] = None
 
 
 class DashboardMatchDetailResponse(BaseModel):
@@ -361,6 +427,20 @@ class MonitoringAlertsResponse(BaseModel):
     market: Optional[str] = None
     thresholds_version: str
     alerts: list[dict[str, Any]] = []
+
+
+# Con `from __future__ import annotations` attivo, Pydantic v2 puo' lasciare
+# un modello in stato "deferred" (mock) finche' nessuno lo valida/serializza
+# davvero - e se quel modello e' usato SOLO come body di un endpoint mai
+# chiamato prima del primo `GET /openapi.json`, FastAPI incontra
+# `PydanticUserError: ... is not fully defined` in fase di generazione dello
+# schema OpenAPI (vedi https://errors.pydantic.dev/.../u/class-not-fully-defined).
+# Forziamo qui il build EAGER di ogni modello del modulo, cosi' nessun nuovo
+# schema aggiunto in futuro puo' ripresentare lo stesso problema.
+for _name, _obj in list(globals().items()):
+    if isinstance(_obj, type) and issubclass(_obj, BaseModel) and _obj is not BaseModel:
+        _obj.model_rebuild(force=True)
+del _name, _obj
 
 
 

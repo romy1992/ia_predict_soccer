@@ -3,7 +3,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import os
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import Any, Optional
 
 import joblib
@@ -16,18 +16,23 @@ from src.api.oracle_match_detail_service import OracleMatchDetailService
 from src.api.schemas import (
     DataQualityResponse,
     DatabaseHealthResponse,
+    ApiQuotaResponse,
     BetslipGenerateResponse,
     BetslipPoolResponse,
+    DashboardAvailableDatesResponse,
     DashboardDayResponse,
     DashboardLiveResponse,
     DashboardMatchDetailResponse,
     DashboardOverviewResponse,
     HealthResponse,
+    JobDailyRefreshRequest,
     JobFutureSyncRequest,
     JobImportRequest,
     JobLiveSyncRequest,
     JobResponse,
     JobRetrainRequest,
+    JobSettingsResponse,
+    JobSettingsUpdateRequest,
     JobSettlementRequest,
     JobTodayUpdateRequest,
     JobsHistoryResponse,
@@ -66,14 +71,19 @@ from src.repository.base.database_audit import get_database_audit
 from src.repository.odds_snapshot_repository import OddsSnapshotRepository
 from src.data.live.live_sync_job import run_manual_live_sync
 from src.repository.live_data_repository import LiveDataRepository
+from src.jobs.api_quota_state import get_quota_snapshot
 from src.jobs.job_history import JobHistory
+from src.jobs.job_settings import list_job_definitions, update_job_settings
 from src.jobs.scheduler import (
+    run_daily_refresh,
     run_manual_future_sync,
     run_manual_import,
     run_manual_retrain,
     run_manual_settlement,
     run_manual_today_update,
 )
+from src.service_ia.config.app_config import load_app_config
+from src.service_ia.pre_processing.api_sports_provider import ApiSportsProvider
 from src.service_ia.pre_processing.settlement_service import SettlementService
 from src.service_ia.training.market_service.filter_market_service import FilterMarketService
 from src.service_ia.training.model_registry import ModelRegistry
@@ -213,6 +223,15 @@ def dashboard_overview(target_date: Optional[str] = None) -> DashboardOverviewRe
     service = DashboardService()
     payload = service.get_overview(target_date=_parse_iso_date(target_date))
     return DashboardOverviewResponse(**payload)
+
+
+@app.get("/dashboard/available-dates", response_model=DashboardAvailableDatesResponse)
+def dashboard_available_dates() -> DashboardAvailableDatesResponse:
+    """Elenco date accumulato (dal giorno 1 di previsioni salvate ad oggi)
+    usato da TopFilters al posto di un calendario libero."""
+    service = DashboardService()
+    payload = service.get_available_dates()
+    return DashboardAvailableDatesResponse(**payload)
 
 
 @app.get("/dashboard/live", response_model=DashboardLiveResponse)
@@ -515,6 +534,38 @@ def trigger_future_sync(payload: JobFutureSyncRequest, background_tasks: Backgro
         leagues=payload.leagues,
     )
     return JobResponse(queued=False, message="Future sync job completed", details=report)
+
+
+@app.post("/jobs/daily-refresh", response_model=JobResponse)
+def trigger_daily_refresh(payload: JobDailyRefreshRequest, background_tasks: BackgroundTasks) -> JobResponse:
+    """Bottone "Aggiorna tutto" del Data Center: combina import partite
+    disputate IERI (tutti i campionati censiti) + sync calendario prossimo
+    (`days_ahead` giorni, con quote). Vedi `run_daily_refresh`."""
+    if payload.days_ahead < 1:
+        raise HTTPException(status_code=400, detail="days_ahead deve essere >= 1")
+
+    params = {
+        "seasons": payload.seasons,
+        "leagues": payload.leagues,
+        "days_ahead": payload.days_ahead,
+    }
+    if payload.async_run:
+        row = JobHistory().queue_job(job_type="daily_refresh", params=params)
+        background_tasks.add_task(
+            run_daily_refresh,
+            seasons=payload.seasons,
+            leagues=payload.leagues,
+            days_ahead=payload.days_ahead,
+            job_id=row["job_id"],
+        )
+        return JobResponse(queued=True, message="Daily refresh job queued", details={"job_id": row["job_id"]})
+
+    report = run_daily_refresh(
+        seasons=payload.seasons,
+        leagues=payload.leagues,
+        days_ahead=payload.days_ahead,
+    )
+    return JobResponse(queued=False, message="Daily refresh job completed", details=report)
 
 
 @app.post("/jobs/settlement", response_model=JobResponse)
@@ -891,6 +942,162 @@ def monitoring_alerts(market: Optional[str] = None) -> MonitoringAlertsResponse:
     service = MonitoringService()
     payload = service.alerts_report(market=market)
     return MonitoringAlertsResponse(**payload)
+
+
+@app.get("/settings/jobs", response_model=JobSettingsResponse)
+def get_settings_jobs() -> JobSettingsResponse:
+    """Pagina Impostazioni: stato enabled/disabled corrente di ciascun job
+    schedulato (`src/jobs/scheduler.py`), letto da `job_settings.json`
+    (file condiviso tra i container `api` e `scheduler`)."""
+    return JobSettingsResponse(jobs=list_job_definitions())
+
+
+@app.post("/settings/jobs", response_model=JobSettingsResponse)
+def post_settings_jobs(payload: JobSettingsUpdateRequest) -> JobSettingsResponse:
+    """Aggiorna (merge parziale) i flag enabled/disabled dei job. Il
+    container `scheduler` verifica questo stato PRIMA di ogni esecuzione
+    (non solo all'avvio), quindi il toggle ha effetto immediato senza
+    restart di nessun container."""
+    try:
+        update_job_settings(payload.updates)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return JobSettingsResponse(jobs=list_job_definitions())
+
+
+def _is_today_utc(iso_ts: Optional[str]) -> bool:
+    """API-Sports resetta la quota giornaliera a mezzanotte UTC: uno
+    snapshot `status_*` di un giorno UTC precedente NON e' piu' affidabile
+    (es. "100% esaurita ieri" mostrato ancora oggi che la quota si e'
+    resettata sarebbe un falso allarme, opposto ma speculare al bug
+    originale) - va quindi trattato come scaduto e si ricade sulla stima
+    passiva finche' l'utente non fa un nuovo controllo reale."""
+    if not iso_ts:
+        return False
+    try:
+        dt = datetime.fromisoformat(iso_ts)
+    except ValueError:
+        return False
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc).date() == datetime.now(timezone.utc).date()
+
+
+def _build_quota_response(cfg, snapshot: Optional[dict[str, Any]]) -> ApiQuotaResponse:
+    """Costruisce la risposta di `/settings/quota` preferendo SEMPRE, se
+    disponibile e riferito ALLA GIORNATA UTC CORRENTE (vedi `_is_today_utc`),
+    l'ultimo check live autoritativo (`status_*`, popolato da
+    `ApiSportsProvider.get_status()` via `POST /settings/quota/refresh` o
+    automaticamente non appena una chiamata dati incontra `errors` -
+    vedi `_mark_quota_exhausted`) rispetto alla stima passiva dedotta dagli
+    header `x-ratelimit-*` (`daily_remaining`, popolato da QUALSIASI
+    chiamata dati - vedi `record_quota_snapshot`). La stima passiva puo'
+    essere disallineata dalla realta' (bug diagnosticato 2026-09-05:
+    mostrava 0% anche con quota reale al 100%, perche' l'header
+    `x-ratelimit-requests-remaining` NON e' un segnale affidabile di
+    esaurimento - solo il campo `errors` del body lo e')."""
+    if not snapshot:
+        return ApiQuotaResponse(
+            available=False,
+            daily_limit=cfg.api_sports_daily_limit,
+            message="Nessuna chiamata API-Sports ancora registrata da questo deploy.",
+        )
+
+    status_current = snapshot.get("status_requests_current")
+    status_limit = snapshot.get("status_requests_limit_day")
+    status_updated_at = snapshot.get("status_updated_at")
+    if (
+        isinstance(status_current, int)
+        and isinstance(status_limit, int)
+        and status_limit > 0
+        and _is_today_utc(status_updated_at)
+    ):
+        daily_used = status_current
+        daily_limit = status_limit
+        daily_remaining = max(daily_limit - daily_used, 0)
+        daily_used_percentage = round(min(daily_used / daily_limit * 100, 100.0), 1)
+        error_message = snapshot.get("status_error_message")
+        return ApiQuotaResponse(
+            available=True,
+            source="live",
+            plan=snapshot.get("status_plan"),
+            daily_limit=daily_limit,
+            daily_remaining=daily_remaining,
+            daily_used=daily_used,
+            daily_used_percentage=daily_used_percentage,
+            minute_limit=snapshot.get("minute_limit"),
+            minute_remaining=snapshot.get("minute_remaining"),
+            updated_at=snapshot.get("status_updated_at") or snapshot.get("updated_at"),
+            message=f"Provider API-Sports: {error_message}" if error_message else None,
+        )
+
+    daily_remaining = snapshot.get("daily_remaining")
+    if daily_remaining is None:
+        return ApiQuotaResponse(
+            available=False,
+            daily_limit=cfg.api_sports_daily_limit,
+            message="Nessuna chiamata API-Sports ancora registrata da questo deploy.",
+        )
+
+    # Preferisce il limite REALE osservato nell'header `x-ratelimit-requests-
+    # limit` (vedi `ApiSportsProvider._handle_quota_headers`) al fallback
+    # hardcoded `API_SPORTS_DAILY_LIMIT`, che puo' disallinearsi dal piano
+    # effettivo se questo non viene aggiornato manualmente.
+    daily_limit = snapshot.get("daily_limit") or cfg.api_sports_daily_limit
+    daily_used: Optional[int] = None
+    daily_used_percentage: Optional[float] = None
+    if isinstance(daily_remaining, int) and daily_limit > 0:
+        daily_used = max(daily_limit - daily_remaining, 0)
+        daily_used_percentage = round(min(daily_used / daily_limit * 100, 100.0), 1)
+
+    return ApiQuotaResponse(
+        available=True,
+        source="estimated",
+        daily_limit=daily_limit,
+        daily_remaining=daily_remaining,
+        daily_used=daily_used,
+        daily_used_percentage=daily_used_percentage,
+        minute_limit=snapshot.get("minute_limit"),
+        minute_remaining=snapshot.get("minute_remaining"),
+        updated_at=snapshot.get("updated_at"),
+        message=(
+            'Stima non verificata (l\'header di rate-limit NON e\' affidabile per capire se la quota giornaliera'
+            ' e\' esaurita): clicca "Aggiorna" per un controllo reale su API-Sports.'
+        ),
+    )
+
+
+@app.get("/settings/quota", response_model=ApiQuotaResponse)
+def get_settings_quota() -> ApiQuotaResponse:
+    """Pagina Impostazioni: stato quota giornaliera API-Sports. Lettura
+    VELOCE e senza consumare chiamate reali - mostra l'ultimo valore noto
+    (live se gia' stato eseguito un `POST /settings/quota/refresh`, stima
+    altrimenti). Per un controllo certo vedi `post_settings_quota_refresh`."""
+    cfg = load_app_config()
+    snapshot = get_quota_snapshot()
+    return _build_quota_response(cfg, snapshot)
+
+
+@app.post("/settings/quota/refresh", response_model=ApiQuotaResponse)
+def post_settings_quota_refresh() -> ApiQuotaResponse:
+    """Bottone "Aggiorna" in Impostazioni: a differenza di `GET
+    /settings/quota` (che rilegge solo la cache locale), questo endpoint
+    interroga DAVVERO l'endpoint ufficiale `GET /status` di API-Sports
+    (`ApiSportsProvider.get_status`, 1 chiamata reale consumata) e
+    restituisce il consumo AUTORITATIVO - lo stesso numero della dashboard
+    account api-sports.io. Non e' in polling automatico apposta (per non
+    sprecare quota solo per controllarla): parte SOLO dal click esplicito
+    dell'utente."""
+    cfg = load_app_config()
+    provider = ApiSportsProvider()
+    status = provider.get_status()
+    snapshot = get_quota_snapshot()
+    response = _build_quota_response(cfg, snapshot)
+    if status is None and response.source != "live":
+        response.message = (
+            "Controllo reale su API-Sports non riuscito (rete/config): mostrato l'ultimo valore stimato noto."
+        )
+    return response
 
 
 

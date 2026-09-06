@@ -13,6 +13,9 @@ _SCHEDULING_ENV_KEYS = [
     "SETTLEMENT_INTERVAL_MINUTES",
     "FUTURE_SYNC_HOUR",
     "FUTURE_SYNC_MINUTE",
+    "DAILY_REFRESH_HOUR",
+    "DAILY_REFRESH_MINUTE",
+    "DAILY_REFRESH_DAYS_AHEAD",
 ]
 
 
@@ -37,6 +40,9 @@ class TestLoadAppConfigScheduling(unittest.TestCase):
         self.assertEqual(cfg.settlement_interval_minutes, 60)
         self.assertEqual(cfg.future_sync_hour, 4)
         self.assertEqual(cfg.future_sync_minute, 30)
+        self.assertEqual(cfg.daily_refresh_hour, 5)
+        self.assertEqual(cfg.daily_refresh_minute, 0)
+        self.assertEqual(cfg.daily_refresh_days_ahead, 7)
 
     def test_training_hour_explicit_override(self):
         cfg = self._run_with_env({"TRAINING_HOUR": "5", "TRAINING_MINUTE": "15"})
@@ -66,6 +72,17 @@ class TestLoadAppConfigScheduling(unittest.TestCase):
         cfg = self._run_with_env({"FUTURE_SYNC_HOUR": "6", "FUTURE_SYNC_MINUTE": "10"})
         self.assertEqual(cfg.future_sync_hour, 6)
         self.assertEqual(cfg.future_sync_minute, 10)
+
+    def test_daily_refresh_override(self):
+        """Job "Aggiorna tutto" (ieri + prossimi giorni, equivalente al
+        bottone sidebar): orario e ampiezza finestra futura configurabili
+        via env, indipendenti da `future_sync_hour`/`training_hour`."""
+        cfg = self._run_with_env(
+            {"DAILY_REFRESH_HOUR": "6", "DAILY_REFRESH_MINUTE": "45", "DAILY_REFRESH_DAYS_AHEAD": "10"}
+        )
+        self.assertEqual(cfg.daily_refresh_hour, 6)
+        self.assertEqual(cfg.daily_refresh_minute, 45)
+        self.assertEqual(cfg.daily_refresh_days_ahead, 10)
 
     def test_invalid_value_falls_back_to_default(self):
         cfg = self._run_with_env({"DATA_SYNC_INTERVAL_MINUTES": "not-a-number"})

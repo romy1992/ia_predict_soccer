@@ -16,12 +16,13 @@ from uuid import uuid4
 
 import pandas as pd
 
+from src.repository.base.repository_db import SessionLocal
 from src.repository.match_repository import MatchRepository
 from src.repository.odds_snapshot_repository import OddsSnapshotRepository
 from src.service_ia.config.app_config import load_app_config
 from src.service_ia.mapper.statistic_mapper import get_attribute_statistics, form_last_5_tot
 from src.service_ia.model.match import Match, Statistics, Odds, OddsSnapshot
-from src.service_ia.pre_processing.api_sports_provider import ApiSportsProvider
+from src.service_ia.pre_processing.api_sports_provider import ApiSportsProvider, ApiSportsQuotaExceededError
 from src.service_ia.utility.request_api import base_api_statistics, get_api_sports_provider
 
 logging.basicConfig(level=logging.DEBUG)
@@ -419,6 +420,7 @@ def download_import_matches(
             "days_ahead": days_ahead,
         },
         "errors": [],
+        "quota_exceeded": False,
     }
 
     list_matches = []
@@ -431,7 +433,12 @@ def download_import_matches(
         if is_next and current_league and season != current_league:
             continue
 
+        if report["quota_exceeded"]:
+            break
+
         for league in leagues:
+            if report["quota_exceeded"]:
+                break
             logging.info('<<< Start season %s for league %s >>>', season, league)
             params = {
                 'league': league,
@@ -447,7 +454,20 @@ def download_import_matches(
             if normalized_statuses:
                 params['status'] = '-'.join(normalized_statuses)
 
-            fixtures = provider.get_fixtures(**params)
+            try:
+                fixtures = provider.get_fixtures(**params)
+            except ApiSportsQuotaExceededError as quota_exc:
+                # Quota globale (giornaliera/di piano) esaurita: inutile
+                # continuare a interrogare le altre leghe, falliranno tutte
+                # allo stesso modo. Interrompiamo qui SENZA perdere quanto
+                # gia' raccolto per le leghe precedenti in questo stesso giro.
+                logging.error('<<< API-Sports quota esaurita, stop import: %s >>>', quota_exc)
+                report['quota_exceeded'] = True
+                report['errors'].append({
+                    'fixture_id': None,
+                    'error': f'API-Sports quota esaurita (season={season}, league={league}): {quota_exc}',
+                })
+                break
             report['fixtures_seen'] += len(fixtures)
 
             for fixture in fixtures:
@@ -513,10 +533,43 @@ def download_import_matches(
                     else:
                         repo_match.save(Match(**dict_match))
                         report['updated'] += 1
+                except ApiSportsQuotaExceededError as quota_exc:
+                    # BUGFIX 2026-09-06: PRIMA questa eccezione veniva
+                    # inghiottita dal blocco `except Exception` generico
+                    # sotto (ApiSportsQuotaExceededError e' una RuntimeError,
+                    # quindi la ereditava) - il loop CONTINUAVA a tentare
+                    # OGNI fixture rimanente (fino a centinaia, es. nella
+                    # finestra "prossimi 7 giorni" di "Aggiorna tutto"),
+                    # ognuna fallendo allo stesso identico modo, MA senza mai
+                    # impostare `quota_exceeded=True` (settato solo se
+                    # l'eccezione arriva da `get_fixtures` sopra): il job
+                    # restava "in esecuzione" per decine di minuti/ore
+                    # inutilmente E il banner "quota esaurita" in UI non
+                    # compariva mai. Ora ci fermiamo IMMEDIATAMENTE, qui,
+                    # come gia' avviene per l'eccezione sollevata da
+                    # `get_fixtures`.
+                    logging.error(
+                        '<<< API-Sports quota esaurita durante processing fixture %s, stop import: %s >>>',
+                        id_fix,
+                        quota_exc,
+                    )
+                    report['quota_exceeded'] = True
+                    report['errors'].append({
+                        'fixture_id': id_fix,
+                        'error': f'API-Sports quota esaurita (fixture={id_fix}): {quota_exc}',
+                    })
+                    break
                 except Exception as fixture_error:
                     report['failed'] += 1
                     report['errors'].append({'fixture_id': id_fix, 'error': str(fixture_error)})
                     continue
+
+            if report["quota_exceeded"]:
+                # Il `break` sopra esce solo dal loop `for fixture in
+                # fixtures` - usciamo anche da quello corrente `for league`,
+                # il loop `for season` lo ricontrollera' alla prossima
+                # iterazione (vedi cima del metodo).
+                break
 
     try:
         repo_match.save_all(list_matches)
@@ -535,6 +588,17 @@ def download_import_matches(
 
     if report['errors']:
         report['errors'] = report['errors'][:100]
+
+    # BUGFIX 2026-09-06: `repo_match` (MatchRepository/CrudRepository) usa
+    # ora una Session "scoped" per-thread tenuta APERTA per tutta la durata
+    # di questo job (vedi crud_repository.py - non piu' chiusa ad ogni
+    # singola query, per evitare centinaia di round-trip di rete verso il
+    # DB remoto). Va quindi ripulita esplicitamente qui, a fine job: i
+    # thread di APScheduler/FastAPI BackgroundTasks vengono RICICLATI per
+    # lavori successivi, senza questa `remove()` la prossima esecuzione
+    # sullo stesso thread riuserebbe (o troverebbe ancora "aperta") la
+    # sessione/transazione di QUESTO job.
+    SessionLocal.remove()
 
     return report
 
@@ -621,9 +685,28 @@ def calculate_mean(with_season: int = None, force_mean: bool = False, teams: lis
                                 def get_value(val, des_val=None):
                                     real_attr = getattr(s, val)
                                     if des_val:
-                                        return real_attr.get(des_val) if real_attr and real_attr.get(des_val) else 0
+                                        raw = real_attr.get(des_val) if real_attr else None
                                     else:
-                                        return real_attr or 0
+                                        raw = real_attr
+                                    # BUGFIX 2026-09-05: l'API Sports a volte restituisce valori
+                                    # numerici come stringa (es. "goals_prevented": "-0.45") senza
+                                    # il suffisso '%' che `get_attribute_statistics` sa gestire.
+                                    # Senza una coercizione robusta QUI (unico punto di accesso ai
+                                    # valori), `statistics.mean()` piu' sotto crasha con
+                                    # "can't convert type 'str' to numerator/denominator" non
+                                    # appena incontra uno di questi valori - mai piu' un campo
+                                    # "dimenticato" (come accaduto con 'goals_prevented', che a
+                                    # differenza di 'expected_goals' non aveva un float() esplicito).
+                                    if raw is None or raw == '':
+                                        return 0.0
+                                    if isinstance(raw, str):
+                                        # Dati legacy pre-esistenti a DB possono ancora avere il
+                                        # suffisso '%' non ripulito (es. "Ball Possession": "58%").
+                                        raw = raw.strip().rstrip('%')
+                                    try:
+                                        return float(raw)
+                                    except (TypeError, ValueError):
+                                        return 0.0
 
                                 for s in stat_prev:
                                     array_prev.append({
@@ -634,7 +717,7 @@ def calculate_mean(with_season: int = None, force_mean: bool = False, teams: lis
                                         'Shots insidebox': get_value('shots', 'Shots insidebox'),
                                         'Shots outsidebox': get_value('shots', 'Shots outsidebox'),
 
-                                        'expected_goals': float(get_value('generic_statistics', 'expected_goals')),
+                                        'expected_goals': get_value('generic_statistics', 'expected_goals'),
                                         # quanto la squadra avrebbe dovuto segnare.
                                         'goals_prevented': get_value('generic_statistics', 'goals_prevented'),
                                         # quanto il portiere ha inciso nel prevenire (o subire) gol rispetto alle attese.

@@ -2,6 +2,17 @@ export function todayIso() {
   return new Date().toISOString().slice(0, 10);
 }
 
+export function formatDateIt(iso) {
+  if (!iso) {
+    return "-";
+  }
+  const [y, m, d] = String(iso).split("-");
+  if (!y || !m || !d) {
+    return iso;
+  }
+  return `${d}/${m}/${y}`;
+}
+
 export function formatPercent(value) {
   const num = Number(value);
   if (Number.isNaN(num)) {

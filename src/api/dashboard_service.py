@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
+import json
 import os
 import re
 from typing import Any, Optional
@@ -16,6 +17,7 @@ from src.ml.baselines.bookmaker_baseline import build_fixture_baseline, get_mark
 from src.oracle.decision_engine.decision_policy import evaluate_decision_from_fair_odds_outcome
 from src.oracle.fair_odds.fair_odds_engine import build_fair_odds_outcome
 from src.repository.base.repository_db import SessionLocal
+from src.repository.prediction_ledger_repository import PredictionLedgerRepository
 from src.service_ia.config.app_config import load_app_config
 from src.service_ia.model.match import Match
 from src.service_ia.training.market_service.filter_market_service import FilterMarketService
@@ -49,6 +51,7 @@ class DashboardService:
         self.registry = ModelRegistry()
         self.filter_service = FilterMarketService()
         self.cfg = load_app_config()
+        self.ledger_repo = PredictionLedgerRepository()
         self._model_meta_cache: dict[str, dict[str, Any]] = {}
         self._model_cache: dict[str, Any] = {}
         self._prediction_cache: dict[str, dict[str, Any]] = {}
@@ -1057,6 +1060,73 @@ class DashboardService:
             "model_markets": model_markets,
             "live_preview": live_preview,
             "day_highlights": highlights,
+        }
+
+    _DATES_STATE_FILENAME = "dashboard_dates_state.json"
+
+    def _dates_state_path(self) -> str:
+        root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "best_models"))
+        os.makedirs(root, exist_ok=True)
+        return os.path.join(root, self._DATES_STATE_FILENAME)
+
+    def _first_seen_date(self, today: date) -> date:
+        """Data di "nascita" della select date accumulata (TopFilters):
+        persistita su file (volume `best_models/`, sopravvive ai rebuild
+        Docker) la PRIMA volta che questo endpoint viene chiamato, cosi' la
+        lista cresce di un giorno alla volta da quel momento in poi (richiesta
+        utente: "elenco di date dal giorno 1 ... che man mano viene
+        accumulato"), SENZA dipendere da un trigger esterno che popoli il
+        Prediction Ledger (usato comunque come fonte aggiuntiva in
+        `get_available_dates`: se contiene una data ancora piu' vecchia,
+        vince quella)."""
+        path = self._dates_state_path()
+        stored: Optional[date] = None
+        if os.path.exists(path):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    payload = json.load(f)
+                raw = payload.get("first_seen_date")
+                if raw:
+                    stored = date.fromisoformat(raw)
+            except Exception:
+                stored = None
+
+        if stored is None:
+            stored = today
+            try:
+                with open(path, "w", encoding="utf-8") as f:
+                    json.dump({"first_seen_date": stored.isoformat()}, f)
+            except Exception:
+                pass
+
+        return stored
+
+    def get_available_dates(self) -> dict[str, Any]:
+        """Elenco date selezionabili in UI (TopFilters): dal primo giorno in
+        cui questa funzionalita' e' stata usata (persistito su file, vedi
+        `_first_seen_date`) fino ad oggi, cosi' che la lista si accumuli
+        automaticamente giorno dopo giorno invece di un calendario libero
+        (richiesta esplicita utente: "elenco di date dal giorno 1 di
+        previsioni ad oggi che man mano viene accumulato"). Se il Prediction
+        Ledger contiene gia' una prediction salvata PRIMA di quella data,
+        vince quella data ancora piu' vecchia."""
+        today = datetime.now(timezone.utc).date()
+        start = self._first_seen_date(today)
+
+        earliest_dt = self.ledger_repo.get_earliest_created_date()
+        if earliest_dt and earliest_dt.date() < start:
+            start = earliest_dt.date()
+        if start > today:
+            start = today
+
+        span_days = (today - start).days
+        dates = [(start + timedelta(days=offset)).isoformat() for offset in range(span_days + 1)]
+        dates.reverse()  # oggi per primo: piu' utile in una select
+
+        return {
+            "dates": dates,
+            "first_date": dates[-1] if dates else today.isoformat(),
+            "last_date": dates[0] if dates else today.isoformat(),
         }
 
     def get_match_detail(

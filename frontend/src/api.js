@@ -37,6 +37,10 @@ export function getDashboardOverview(targetDate) {
   return request(`/dashboard/overview${query ? `?${query}` : ""}`);
 }
 
+export function getDashboardAvailableDates() {
+  return request("/dashboard/available-dates");
+}
+
 export function getDashboardLive({ targetDate, limit = 20, withPredictions = true, markets } = {}) {
   const params = new URLSearchParams();
   if (targetDate) {
@@ -153,6 +157,15 @@ export function triggerFutureSync(asyncRunOrPayload = true, payload = {}) {
   });
 }
 
+export function triggerDailyRefresh(asyncRunOrPayload = true, payload = {}) {
+  const body = normalizeJobBody(asyncRunOrPayload, payload);
+  return request("/jobs/daily-refresh", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
 export function triggerSettlement(asyncRunOrPayload = true, payload = {}) {
   const body = normalizeJobBody(asyncRunOrPayload, payload);
   return request("/jobs/settlement", {
@@ -227,6 +240,30 @@ export function getMonitoringAlerts({ market } = {}) {
   }
   const query = params.toString();
   return request(`/monitoring/alerts${query ? `?${query}` : ""}`);
+}
+
+export function getJobSettings() {
+  return request("/settings/jobs");
+}
+
+export function updateJobSettings(updates) {
+  return request("/settings/jobs", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ updates }),
+  });
+}
+
+export function getApiQuota() {
+  return request("/settings/quota");
+}
+
+export function refreshApiQuota() {
+  // A differenza di getApiQuota() (rilegge solo la cache locale), questa
+  // interroga DAVVERO API-Sports (endpoint /status) - vedi
+  // `POST /settings/quota/refresh` in src/api/main.py. Usata SOLO dal
+  // click esplicito sul bottone "Aggiorna" di Impostazioni.
+  return request("/settings/quota/refresh", { method: "POST" });
 }
 
 export { API_BASE_URL };
