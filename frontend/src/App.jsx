@@ -2,7 +2,6 @@
 import {
   API_BASE_URL,
   getApiQuota,
-  getDataQuality,
   getDashboardAvailableDates,
   getDashboardDay,
   getDashboardLive,
@@ -19,6 +18,7 @@ import {
   predict,
   refreshApiQuota,
   triggerDailyRefresh,
+  triggerDataQualityReport,
   triggerFutureSync,
   triggerImport,
   triggerSettlement,
@@ -210,11 +210,19 @@ export default function App() {
     loadDashboardData("filter", { forceRefresh: true });
   }, [loadDashboardData]);
   const loadDataQuality = useCallback(async ({ topN = 20, seasons, leagues } = {}) => {
+    // Bottone "Aggiorna report": passa dal job "data_quality_report" (stessa
+    // funzione del job schedulato omonimo, loggato in storico job - vedi
+    // POST /jobs/data-quality-report) invece di una semplice GET, cosi'
+    // anche l'esecuzione manuale risulta tracciata come le altre pagine
+    // operative. Sincrono (async_run: false): il report calcolato torna
+    // direttamente in `details`, nessuna seconda chiamata necessaria.
     setQualityLoading(true);
     setQualityError("");
     try {
-      const payload = await getDataQuality({ topN, seasons, leagues });
+      const data = await triggerDataQualityReport({ async_run: false, top_n: topN, seasons, leagues });
+      const payload = data?.details || null;
       setQualityReport(payload);
+      refreshJobs().catch(() => {});
       return payload;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -223,7 +231,7 @@ export default function App() {
     } finally {
       setQualityLoading(false);
     }
-  }, []);
+  }, [refreshJobs]);
   const loadBetslip = useCallback(
     async (overrides = {}) => {
       setBetslipLoading(true);

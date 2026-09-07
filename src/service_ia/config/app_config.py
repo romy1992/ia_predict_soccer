@@ -106,6 +106,13 @@ class AppConfig:
     api_sports_daily_limit: int
     database_url: str
     database_schema: str
+    # Job "Aggiorna report Data Quality" (pagina Data Quality): ricalcola
+    # periodicamente il report (coverage/anomalie/distribuzione) e lo logga
+    # come job - stessa funzione (`run_data_quality_report`) usata dal
+    # bottone manuale "Aggiorna report". Con default fine di riga (invece
+    # che posizionale come gli altri campi) nessun costrutto `AppConfig(...)`
+    # gia' esistente (test compresi) si rompe se non lo valorizza esplicitamente.
+    data_quality_interval_minutes: int = 60
 
 
 def load_app_config() -> AppConfig:
@@ -129,6 +136,7 @@ def load_app_config() -> AppConfig:
     live_sync_interval_seconds = _int_env("LIVE_SYNC_INTERVAL_SECONDS", default=90)
     live_cache_ttl_seconds = _int_env("LIVE_CACHE_TTL_SECONDS", default=20)
     api_sports_daily_limit = _int_env("API_SPORTS_DAILY_LIMIT", default=7500)
+    data_quality_interval_minutes = _int_env("DATA_QUALITY_INTERVAL_MINUTES", default=60)
     database_url = os.environ.get("DATABASE_URL", DEFAULT_DATABASE_URL).strip()
     database_schema = os.environ.get("DATABASE_SCHEMA", DEFAULT_DATABASE_SCHEMA).strip() or DEFAULT_DATABASE_SCHEMA
 
@@ -149,5 +157,6 @@ def load_app_config() -> AppConfig:
         api_sports_daily_limit=api_sports_daily_limit,
         database_url=database_url,
         database_schema=database_schema,
+        data_quality_interval_minutes=data_quality_interval_minutes,
     )
 

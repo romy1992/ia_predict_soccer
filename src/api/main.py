@@ -26,6 +26,7 @@ from src.api.schemas import (
     DashboardOverviewResponse,
     HealthResponse,
     JobDailyRefreshRequest,
+    JobDataQualityReportRequest,
     JobFutureSyncRequest,
     JobImportRequest,
     JobLiveSyncRequest,
@@ -81,6 +82,7 @@ from src.jobs.job_settings import (
 )
 from src.jobs.scheduler import (
     run_daily_refresh,
+    run_data_quality_report,
     run_manual_future_sync,
     run_manual_import,
     run_manual_retrain,
@@ -763,6 +765,36 @@ def model_promotion_history(market: str, limit: int = 100) -> PromotionHistoryRe
     registry = ModelRegistry()
     events = registry.list_promotion_events(market=market, limit=limit)
     return PromotionHistoryResponse(market=market, events=events)
+
+
+@app.post("/jobs/data-quality-report", response_model=JobResponse)
+def trigger_data_quality_report(payload: JobDataQualityReportRequest, background_tasks: BackgroundTasks) -> JobResponse:
+    """Bottone "Aggiorna report" della pagina Data Quality: ricalcola il
+    report (stessa funzione del job schedulato omonimo, vedi
+    `run_data_quality_report`) e lo logga in job history. Non chiama alcun
+    provider esterno: mai coinvolto dall'auto-pausa per quota API-Sports."""
+    params = {
+        "top_n": payload.top_n,
+        "seasons": payload.seasons,
+        "leagues": payload.leagues,
+    }
+    if payload.async_run:
+        row = JobHistory().queue_job(job_type="data_quality_report", params=params)
+        background_tasks.add_task(
+            run_data_quality_report,
+            top_n=payload.top_n,
+            seasons=payload.seasons,
+            leagues=payload.leagues,
+            job_id=row["job_id"],
+        )
+        return JobResponse(queued=True, message="Data quality report job queued", details={"job_id": row["job_id"]})
+
+    report = run_data_quality_report(
+        top_n=payload.top_n,
+        seasons=payload.seasons,
+        leagues=payload.leagues,
+    )
+    return JobResponse(queued=False, message="Data quality report job completed", details=report)
 
 
 @app.get("/data/quality", response_model=DataQualityResponse)

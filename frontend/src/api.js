@@ -195,6 +195,21 @@ export function triggerRetrain(asyncRunOrPayload = true, payload = {}) {
   });
 }
 
+export function triggerDataQualityReport(asyncRunOrPayload = true, payload = {}) {
+  // Bottone "Aggiorna report" della pagina Data Quality: a differenza di
+  // getDataQuality() (semplice GET), questa passa dal job "data_quality_report"
+  // (loggato in storico job, stessa funzione del job schedulato omonimo -
+  // vedi POST /jobs/data-quality-report in src/api/main.py). In modalita'
+  // sincrona (async_run: false, uso di default lato App.jsx) la risposta
+  // contiene gia' il report calcolato in `details`.
+  const body = normalizeJobBody(asyncRunOrPayload, payload);
+  return request("/jobs/data-quality-report", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
 export function predict(market, fixtureId) {
   return request(`/predict/${market}`, {
     method: "POST",

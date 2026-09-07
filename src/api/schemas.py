@@ -83,6 +83,19 @@ class JobDailyRefreshRequest(BaseModel):
     async_run: bool = True
 
 
+class JobDataQualityReportRequest(BaseModel):
+    """Bottone "Aggiorna report" della pagina Data Quality: ricalcola il
+    report (coverage odds/anomalie/distribuzione) e lo registra come job -
+    stessa funzione (`run_data_quality_report`) usata dal job schedulato
+    omonimo (vedi `src/jobs/scheduler.py`). Non chiama alcun provider
+    esterno (solo dati gia' a DB)."""
+
+    top_n: int = 20
+    seasons: Optional[list[int]] = None
+    leagues: Optional[list[int]] = None
+    async_run: bool = True
+
+
 class JobSettlementRequest(BaseModel):
     from_date: Optional[str] = None
     to_date: Optional[str] = None
@@ -453,3 +466,4 @@ for _name, _obj in list(globals().items()):
     if isinstance(_obj, type) and issubclass(_obj, BaseModel) and _obj is not BaseModel:
         _obj.model_rebuild(force=True)
 del _name, _obj
+

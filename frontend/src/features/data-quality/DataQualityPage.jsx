@@ -58,6 +58,17 @@ export default function DataQualityPage({ report, isLoading, error, onLoadReport
           <h3>Data Quality Dashboard</h3>
           <button className="btn-primary" onClick={handleLoad} disabled={isLoading}>Aggiorna report</button>
         </div>
+        <p className="muted">
+          Ricalcola il report tramite il job <strong>"Aggiorna report Data Quality"</strong> (schedulabile/
+          disattivabile in <strong>Impostazioni</strong>, di default ogni 60 minuti) - nessuna chiamata API-Sports,
+          lavora solo sui dati gia' a DB.
+          {report?.job_id && (
+            <>
+              {" "}Ultima esecuzione: job <code>{report.job_id}</code>
+              {typeof report.duration_seconds === "number" && ` in ${report.duration_seconds.toFixed(2)}s`}.
+            </>
+          )}
+        </p>
 
         <div className="inline-form">
           <label>

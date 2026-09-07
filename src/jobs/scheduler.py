@@ -11,8 +11,9 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
 from src.data.live.live_sync_job import run_manual_live_sync
+from src.data.quality_report_service import DataQualityService
 from src.jobs.job_history import JobHistory
-from src.jobs.job_settings import is_job_enabled, sync_job_settings_with_quota
+from src.jobs.job_settings import is_job_enabled
 from src.service_ia.config.app_config import AppConfig, load_app_config
 from src.service_ia.pre_processing.download_match_service import calculate_mean, download_import_matches
 from src.service_ia.pre_processing.settlement_service import SettlementService
@@ -330,6 +331,49 @@ def run_manual_refresh_for_next_round() -> None:
     run_manual_future_sync(days_ahead=7, seasons=cfg.seasons, leagues=cfg.leagues)
 
 
+def run_data_quality_report(
+    top_n: int = 20,
+    seasons: Optional[list[int]] = None,
+    leagues: Optional[list[int]] = None,
+    job_id: Optional[str] = None,
+) -> dict:
+    """Ricalcola il report Data Quality (coverage odds/anomalie/distribuzione
+    - vedi `DataQualityService.build_report`) e lo logga come job (job_type
+    "data_quality_report"), sia per il bottone "Aggiorna report" della
+    pagina Data Quality sia per il job schedulato omonimo (`IntervalTrigger`,
+    vedi `build_scheduler`) - stesso principio "una sola funzione, riusata
+    da manuale e schedulato" gia' applicato a import/settlement/retrain/
+    future_sync. Non chiama alcun provider esterno (SOLO dati gia' a DB),
+    quindi mai coinvolto dall'auto-pausa per quota API-Sports esaurita."""
+    history = JobHistory()
+    params = {"top_n": top_n, "seasons": seasons, "leagues": leagues}
+    if job_id:
+        history.mark_running(job_id=job_id, params=params)
+    else:
+        started = history.create_job(
+            job_type="data_quality_report", status="running", params=params, started_at=JobHistory._now_iso()
+        )
+        job_id = started["job_id"]
+
+    start = time.perf_counter()
+    try:
+        report = DataQualityService().build_report(top_n=top_n, seasons=seasons, leagues=leagues)
+        report["duration_seconds"] = time.perf_counter() - start
+        history.mark_success(job_id=job_id, summary=report)
+        report["job_id"] = job_id
+        return report
+    except Exception as exc:
+        history.mark_failed(
+            job_id=job_id,
+            error={
+                "message": str(exc),
+                "duration_seconds": time.perf_counter() - start,
+                "params": params,
+            },
+        )
+        raise
+
+
 def _add_job(
     scheduler: BlockingScheduler,
     func,
@@ -365,14 +409,7 @@ def _run_if_enabled(job_id: str, func, **kwargs) -> Optional[dict]:
     """Esegue `func` SOLO se il job e' abilitato in `job_settings.json`
     (pagina Impostazioni), controllato ad OGNI tick e non solo alla
     registrazione: un toggle da frontend ha quindi effetto immediato,
-    senza richiedere il restart del container `scheduler`.
-
-    Prima del check enabled/disabled, sincronizza l'auto-pausa per quota
-    esaurita (`sync_job_settings_with_quota`, mai un'eccezione propagata):
-    se la quota API-Sports e' al 100% (check autoritativo di oggi) TUTTI i
-    job vengono disattivati fino al reset di domani, ripristinando poi
-    esattamente lo stato precedente - vedi `src/jobs/job_settings.py`."""
-    sync_job_settings_with_quota()
+    senza richiedere il restart del container `scheduler`."""
     if not is_job_enabled(job_id):
         logging.info("Job '%s' disabilitato da Impostazioni: skip esecuzione.", job_id)
         return None
@@ -398,6 +435,12 @@ def build_scheduler(cfg: Optional[AppConfig] = None) -> BlockingScheduler:
       `cfg.settlement_interval_minutes` minuti): riconcilia le partite
       concluse per il settlement (BET-06/dashboard), indipendente dal
       training.
+    - `data_quality_report` (`IntervalTrigger` ogni
+      `cfg.data_quality_interval_minutes` minuti, default 60): ricalcola il
+      report Data Quality (coverage/anomalie/distribuzione) e lo logga -
+      STESSA funzione (`run_data_quality_report`) invocata dal bottone
+      "Aggiorna report" della pagina Data Quality. Nessuna chiamata al
+      provider esterno (solo dati gia' a DB).
     - `data_future_sync` (giornaliero, `CronTrigger`): importa le fixture
       future in una finestra di N giorni — non richiede la frequenza dei
       due job precedenti (le partite future non cambiano stato spesso).
@@ -440,6 +483,13 @@ def build_scheduler(cfg: Optional[AppConfig] = None) -> BlockingScheduler:
         trigger=IntervalTrigger(minutes=cfg.settlement_interval_minutes),
         job_id="data_settlement",
         misfire_grace_time=max(60, cfg.settlement_interval_minutes * 60),
+    )
+    _add_job(
+        scheduler,
+        functools.partial(_run_if_enabled, "data_quality_report", run_data_quality_report),
+        trigger=IntervalTrigger(minutes=cfg.data_quality_interval_minutes),
+        job_id="data_quality_report",
+        misfire_grace_time=max(60, cfg.data_quality_interval_minutes * 60),
     )
     _add_job(
         scheduler,
@@ -488,11 +538,13 @@ def start_scheduler() -> None:
 
     logging.info(
         "Scheduler started: data_sync_today ogni %d min, data_settlement ogni %d min, "
+        "data_quality_report ogni %d min, "
         "data_future_sync alle %02d:%02d, data_daily_refresh (ieri+%dgg, come 'Aggiorna tutto') "
         "alle %02d:%02d, ml_training (indipendente) alle %02d:%02d, "
         "data_sync_live (LIVE-01) ogni %d sec",
         cfg.data_sync_interval_minutes,
         cfg.settlement_interval_minutes,
+        cfg.data_quality_interval_minutes,
         cfg.future_sync_hour,
         cfg.future_sync_minute,
         cfg.daily_refresh_days_ahead,
@@ -507,3 +559,8 @@ def start_scheduler() -> None:
 
 if __name__ == "__main__":
     start_scheduler()
+
+
+
+
+
