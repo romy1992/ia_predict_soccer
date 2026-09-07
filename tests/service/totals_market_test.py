@@ -10,6 +10,7 @@ from src.ml.markets.totals.totals_market import (
     THRESHOLD_LABELS,
     THRESHOLDS,
     TotalsBenchmarkReport,
+    _save_winning_model,
     benchmark_totals_approaches,
     build_totals_evaluation_frame,
     build_totals_frame_from_records,
@@ -219,6 +220,21 @@ class TestBenchmarkTotalsApproaches(unittest.TestCase):
                 set(report.threshold_metrics[label].keys()), {"binary_independent", "hierarchical", "goal_distribution"}
             )
 
+    def test_best_approach_by_threshold_matches_highest_selection_score_per_threshold(self):
+        """Campo ADDITIVO (task Under/Over): non deve alterare `best_approach`
+        aggregato ne' le probabilita' finali, deve solo riportare, PER
+        CIASCUNA soglia, l'approccio col selection_score piu' alto in
+        quella soglia specifica (puo' differire dal vincitore aggregato)."""
+        frame, feature_columns, cv_splits = self._prepared_frame()
+        report = benchmark_totals_approaches(frame=frame, feature_columns=feature_columns, cv_splits=cv_splits)
+
+        self.assertEqual(set(report.best_approach_by_threshold.keys()), set(THRESHOLD_LABELS))
+        for label in THRESHOLD_LABELS:
+            approaches = report.threshold_metrics[label]
+            expected_winner = max(approaches.items(), key=lambda kv: kv[1]["selection_score"])[0]
+            self.assertEqual(report.best_approach_by_threshold[label], expected_winner)
+            self.assertIn(report.best_approach_by_threshold[label], {"binary_independent", "hierarchical", "goal_distribution"})
+
     def test_final_probabilities_are_always_monotonic_across_thresholds(self):
         """Acceptance criteria: P(O1.5)>=P(O2.5)>=P(O3.5)>=P(O4.5), SEMPRE,
         indipendentemente da quale approccio ha vinto il confronto."""
@@ -254,12 +270,51 @@ class TestRunTotalsBenchmark(unittest.TestCase):
         self.assertEqual(
             set(result.details["approach_aggregate_scores"].keys()), {"binary_independent", "hierarchical", "goal_distribution"}
         )
+        self.assertEqual(set(result.details["best_approach_by_threshold"].keys()), set(THRESHOLD_LABELS))
         self.assertIsNone(result.details["run"])  # save_model=False -> nessuna registrazione
 
     def test_empty_matches_are_skipped_without_raising(self):
         result = run_totals_benchmark(matches=[], save_model=False)
         self.assertEqual(result.status, "skipped_no_data")
         self.assertEqual(result.rows, 0)
+
+    def test_registered_metrics_expose_standard_keys_for_promotion_gate(self):
+        """Fase 4 (task Under/Over): le metriche registrate devono includere
+        le chiavi STANDARD gia' cercate da `promotion_policy._resolve_metric`
+        (`selection_score`/`log_loss`/`brier`/`ece`/`auc`/`sample_size`),
+        altrimenti `evaluate_metrics_gate` fallirebbe sempre per
+        'sample_size non disponibile' - PRIMA di questa estensione l'unica
+        chiave salvata era 'approach_aggregate_score' (non riconosciuta dal
+        gate). Usa `_save_winning_model` direttamente con un report fittizio
+        (`best_approach='hierarchical'`, deterministico) per non dipendere
+        da quale approccio vince per caso su dati sintetici casuali."""
+        matches = _synthetic_matches(n=280)
+        frame, feature_columns = build_totals_evaluation_frame(matches)
+        sample_metrics = {"log_loss": 0.6, "brier": 0.2, "ece": 0.05, "auc": 0.7, "f1_weighted": 0.65, "selection_score": 0.55}
+        fake_report = TotalsBenchmarkReport(
+            threshold_metrics={label: {"hierarchical": dict(sample_metrics)} for label in THRESHOLD_LABELS},
+            approach_aggregate_scores={"hierarchical": 0.55, "binary_independent": 0.5, "goal_distribution": 0.4},
+            best_approach="hierarchical",
+            monotonicity_violations_before_projection={"hierarchical": 0, "binary_independent": 0, "goal_distribution": 0},
+            best_approach_by_threshold={label: "hierarchical" for label in THRESHOLD_LABELS},
+        )
+
+        with mock.patch("src.ml.markets.totals.totals_market.ModelRegistry") as registry_cls, mock.patch(
+            "src.ml.markets.totals.totals_market.joblib.dump"
+        ), mock.patch("src.ml.markets.totals.totals_market.os.makedirs"):
+            registry_instance = registry_cls.return_value
+            registry_instance.register.return_value = {"run_id": "totals_test", "stage": "candidate"}
+
+            run_metadata = _save_winning_model(frame=frame, feature_columns=feature_columns, report=fake_report, thresholds=THRESHOLDS)
+
+        self.assertEqual(run_metadata["stage"], "candidate")
+        _, register_kwargs = registry_instance.register.call_args
+        metrics = register_kwargs["metrics"]
+        for key in ("selection_score", "log_loss", "brier", "ece", "f1_weighted", "rows", "sample_size"):
+            self.assertIn(key, metrics)
+        self.assertEqual(metrics["rows"], len(frame))
+        self.assertEqual(metrics["selection_score"], 0.55)
+        self.assertIn("best_approach_by_threshold", register_kwargs["extra"])
 
 
 class TestRunTotalsBenchmarkFromDb(unittest.TestCase):

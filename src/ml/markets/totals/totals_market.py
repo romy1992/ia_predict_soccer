@@ -340,7 +340,16 @@ def _hierarchical_oof(
 class TotalsBenchmarkReport:
     """Report comparativo (acceptance criteria): metriche per ciascuna
     soglia/approccio, punteggio aggregato per approccio, il migliore
-    selezionato e le probabilita' finali (SEMPRE proiettate monotone)."""
+    selezionato e le probabilita' finali (SEMPRE proiettate monotone).
+
+    `best_approach_by_threshold` (campo ADDITIVO, non tocca la selezione
+    del vincitore GLOBALE ne' la proiezione monotona sotto): oltre al
+    vincitore aggregato sulle 4 soglie (`best_approach`, INVARIATO - resta
+    l'unico usato per decidere cosa salvare nel registry), espone anche
+    quale approccio avrebbe il `selection_score` piu' alto PER CIASCUNA
+    soglia singolarmente. Serve a rispondere alla domanda "hierarchical
+    perde sistematicamente contro binary_independent su qualche soglia
+    specifica?" senza dover rieseguire il benchmark isolando le soglie."""
 
     threshold_metrics: dict[str, dict[str, dict[str, Any]]]
     approach_aggregate_scores: dict[str, float]
@@ -348,6 +357,7 @@ class TotalsBenchmarkReport:
     monotonicity_violations_before_projection: dict[str, int]
     final_probabilities: dict[str, np.ndarray] = field(default_factory=dict)
     evaluated_index: list[int] = field(default_factory=list)
+    best_approach_by_threshold: dict[str, str] = field(default_factory=dict)
 
 
 def _count_monotonicity_violations(probs_by_threshold: dict[str, np.ndarray], thresholds: tuple[float, ...]) -> int:
@@ -415,6 +425,15 @@ def benchmark_totals_approaches(
     }
     best_approach = max(approach_aggregate_scores.items(), key=lambda kv: kv[1])[0]
 
+    # Vincitore per-soglia (ADDITIVO, cfr. docstring `TotalsBenchmarkReport`):
+    # NON influenza `best_approach`/`final_probabilities` sotto, che restano
+    # calcolati SOLO sull'aggregato delle 4 soglie come gia' validato.
+    best_approach_by_threshold = {
+        label: max(approaches.items(), key=lambda kv: kv[1]["selection_score"])[0]
+        for label, approaches in threshold_metrics.items()
+        if approaches
+    }
+
     winning_raw = {label: np.asarray(raw_by_approach[best_approach][label], dtype=float)[oof_index] for label in THRESHOLD_LABELS}
     final_probabilities = enforce_monotonic_over_probabilities(winning_raw, thresholds=thresholds)
 
@@ -425,6 +444,7 @@ def benchmark_totals_approaches(
         monotonicity_violations_before_projection=monotonicity_violations,
         final_probabilities=final_probabilities,
         evaluated_index=oof_index,
+        best_approach_by_threshold=best_approach_by_threshold,
     )
 
 
@@ -462,6 +482,31 @@ def _fit_final_hierarchical(frame: pd.DataFrame, feature_columns: list[str]) -> 
     return model
 
 
+def _aggregate_metrics_for_winning_approach(report: TotalsBenchmarkReport, rows: int) -> dict[str, Any]:
+    """Metriche aggregate (media sulle 4 soglie) del solo approccio vincente,
+    con le chiavi STANDARD gia' cercate da `promotion_policy._resolve_metric`
+    (`selection_score`/`log_loss`/`brier`/`ece`/`auc`/`sample_size`) - PRIMA
+    l'unica metrica salvata era `approach_aggregate_score` (chiave non
+    riconosciuta dal gate, che quindi falliva SEMPRE per assenza di
+    `sample_size`): nessuna logica di selezione/monotonicita' cambiata qui,
+    solo le metriche del vincitore gia' calcolato vengono ESPOSTE in modo
+    piu' completo (Fase 4 del task Under/Over: "selection_score, log_loss,
+    brier, ece, auc, f1_weighted... rows")."""
+    per_threshold = [report.threshold_metrics[label][report.best_approach] for label in THRESHOLD_LABELS]
+    aucs = [m["auc"] for m in per_threshold if m.get("auc") is not None]
+    return {
+        "approach_aggregate_score": report.approach_aggregate_scores[report.best_approach],
+        "selection_score": report.approach_aggregate_scores[report.best_approach],
+        "log_loss": float(np.mean([m["log_loss"] for m in per_threshold])),
+        "brier": float(np.mean([m["brier"] for m in per_threshold])),
+        "ece": float(np.mean([m["ece"] for m in per_threshold])),
+        "auc": float(np.mean(aucs)) if aucs else None,
+        "f1_weighted": float(np.mean([m["f1_weighted"] for m in per_threshold])),
+        "rows": int(rows),
+        "sample_size": int(rows),
+    }
+
+
 def _save_winning_model(
     frame: pd.DataFrame,
     feature_columns: list[str],
@@ -492,10 +537,11 @@ def _save_winning_model(
         market=MARKET_NAME,
         model_name=report.best_approach,
         feature_names=feature_columns,
-        metrics={"approach_aggregate_score": report.approach_aggregate_scores[report.best_approach]},
+        metrics=_aggregate_metrics_for_winning_approach(report=report, rows=len(frame)),
         extra={
             "thresholds": list(thresholds),
             "threshold_metrics": report.threshold_metrics,
+            "best_approach_by_threshold": report.best_approach_by_threshold,
             "monotonicity_violations_before_projection": report.monotonicity_violations_before_projection,
         },
         stage="candidate",
@@ -546,6 +592,7 @@ def run_totals_benchmark(
         details={
             "threshold_metrics": report.threshold_metrics,
             "approach_aggregate_scores": report.approach_aggregate_scores,
+            "best_approach_by_threshold": report.best_approach_by_threshold,
             "monotonicity_violations_before_projection": report.monotonicity_violations_before_projection,
             "run": run_metadata,
         },

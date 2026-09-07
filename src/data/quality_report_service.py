@@ -4,6 +4,7 @@ from collections import Counter
 from datetime import datetime, timezone
 from typing import Any, Optional
 
+import pandas as pd
 from sqlalchemy import text
 
 from src.repository.base.repository_db import SessionLocal
@@ -21,6 +22,16 @@ LEGACY_ODDS_MARKETS = [
     "cards",
     "dc",
 ]
+
+# FASE 0 (task Under/Over totals): stesse 4 soglie di `src/ml/markets/totals/totals_market.py`
+# (`THRESHOLDS`), duplicata qui SOLO come costante di modulo (nessuna logica di
+# filtro/training duplicata: `build_under_over_threshold_report` sotto riusa
+# sempre `FilterMarketService.build_dataset` + `expanding_window_splits`).
+UNDER_OVER_THRESHOLDS: tuple[float, ...] = (1.5, 2.5, 3.5, 4.5)
+
+
+def _under_over_market_key(threshold: float) -> str:
+    return f"under_over_{str(float(threshold)).replace('.', '_')}"
 
 
 def _parse_iso_datetime(value: Optional[str]) -> Optional[datetime]:
@@ -242,5 +253,214 @@ class DataQualityService:
             },
         }
         return report
+
+    # ------------------------------------------------------------------
+    # FASE 0 (task Under/Over 1.5/2.5/3.5/4.5): copertura dati REALE per
+    # soglia, propedeutica al training - NESSUNA logica di filtro/training
+    # nuova, riusa sempre `FilterMarketService.build_dataset` (stesso
+    # identico dataset che poi consuma `train_multi_market.train_market`)
+    # ed `expanding_window_splits` (stessa CV walk-forward di
+    # `train_multi_market.py`/`totals_market.py`).
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _match_team_statistics(match) -> tuple[Optional[Any], Optional[Any]]:
+        stats = match.statistics or []
+        if len(stats) < 2:
+            return None, None
+        stat_home = next((s for s in stats if s.statistics_team_id == match.id_team_home), None)
+        stat_away = next((s for s in stats if s.statistics_team_id == match.id_team_away), None)
+        return stat_home, stat_away
+
+    @classmethod
+    def _has_complete_statistics(cls, match) -> bool:
+        stat_home, stat_away = cls._match_team_statistics(match)
+        if not stat_home or not stat_away:
+            return False
+        return stat_home.score_ft is not None and stat_away.score_ft is not None
+
+    @staticmethod
+    def _has_mean_statistics(match) -> bool:
+        mean_stats = match.mean_statistics
+        if not isinstance(mean_stats, list) or len(mean_stats) < 2:
+            return False
+        mean_home = next((m for m in mean_stats if m.get("id_team") == match.id_team_home), None)
+        mean_away = next((m for m in mean_stats if m.get("id_team") == match.id_team_away), None)
+        return bool(mean_home and mean_away)
+
+    @staticmethod
+    def _has_odds_for_market(match, market: str) -> bool:
+        odds_rows = match.odds or []
+        if not odds_rows:
+            return False
+        payload = (odds_rows[0].to_dict() or {}).get(market)
+        return isinstance(payload, dict) and bool(payload)
+
+    def build_under_over_threshold_report(
+        self,
+        seasons: Optional[list[int]] = None,
+        leagues: Optional[list[int]] = None,
+        thresholds: tuple[float, ...] = UNDER_OVER_THRESHOLDS,
+        top_n: int = 40,
+        min_train_rows: int = 30,
+        min_valid_rows: int = 10,
+        n_splits: int = 5,
+        matches: Optional[list] = None,
+    ) -> dict[str, Any]:
+        """Report Fase 0 (obbligatorio prima di addestrare, vedi task):
+        per OGNI soglia under/over, quante fixture FT hanno odds valide PER
+        QUELLA soglia, statistics/mean_statistics complete, distribuzione
+        stagione/lega, sbilanciamento classi (over/under) e - soprattutto -
+        quante RIGHE SONO REALMENTE UTILIZZABILI per il training (STESSA
+        identica funzione `FilterMarketService._build_row` usata da
+        `FilterMarketService.build_dataset`/`train_multi_market.train_market`,
+        nessun filtro reinventato qui) e se il minimo per la CV temporale
+        espandente e' raggiunto (STESSA soglia `len(cv_splits) < 2` gia'
+        applicata da `train_multi_market._filter_valid_splits`/`train_market`).
+
+        `matches` (opzionale): lista di ORM `Match` GIA' caricata dal
+        chiamante (es. una sola query pesante condivisa con `build_report`
+        in uno script di analisi) - evita di ripetere N volte la stessa
+        query costosa (statistics/odds via `lazy=selectin` su tutte le
+        fixture) SOLO per questo report aggiuntivo. Se `None` (default),
+        comportamento invariato: `self.match_repo.search_all()`.
+        """
+        from src.ml.validation.temporal_split import expanding_window_splits
+        from src.service_ia.training.market_service.filter_market_service import FilterMarketService
+        from src.service_ia.utility.utils import convert_orm_match_to_dict
+
+        source_matches = matches if matches is not None else self.match_repo.search_all()
+        filtered_matches = self._filter_matches(source_matches, seasons=seasons, leagues=leagues)
+        matches_ft = [m for m in filtered_matches if (m.status or "").upper() == "FT"]
+        fixtures_ft_total = len(matches_ft)
+        # Un'UNICA conversione a dict riusata per TUTTE le soglie sotto
+        # (stesso formato consumato da `FilterMarketService._build_row`),
+        # invece di richiamare `build_dataset` (che rifarebbe una query DB
+        # completa) una volta per soglia.
+        match_dicts_ft = convert_orm_match_to_dict(matches_ft)
+
+        fixtures_with_complete_statistics = sum(1 for m in matches_ft if self._has_complete_statistics(m))
+        fixtures_with_mean_statistics = sum(1 for m in matches_ft if self._has_mean_statistics(m))
+
+        market_service = FilterMarketService()
+        per_threshold: dict[str, Any] = {}
+        fixture_ids_by_threshold: dict[str, set[int]] = {}
+
+        for threshold in thresholds:
+            market = _under_over_market_key(threshold)
+
+            fixtures_with_odds_for_market = sum(1 for m in matches_ft if self._has_odds_for_market(m, market))
+
+            # Stessa identica funzione di riga usata da `build_dataset` (nessuna
+            # logica di filtro duplicata), applicata pero' sui dict GIA' in
+            # memoria invece di rifare una query DB per ciascuna soglia.
+            built_rows = []
+            for match_dict in match_dicts_ft:
+                if leagues and match_dict.get("current_league") not in leagues:
+                    continue
+                row = market_service._build_row(match=match_dict, market=market, with_target=True)
+                if row:
+                    built_rows.append(row)
+
+            df = (
+                pd.DataFrame(built_rows).replace([float("inf"), float("-inf")], pd.NA).fillna(0)
+                if built_rows
+                else pd.DataFrame()
+            )
+
+            rows = int(len(df))
+            fixture_ids_by_threshold[market] = set(df["id_fixture"].astype(int).tolist()) if rows else set()
+
+            class_balance: dict[str, int] = {"under_0": 0, "over_1": 0}
+            positive_class_ratio_over: Optional[float] = None
+            by_season: list[dict[str, Any]] = []
+            by_league: list[dict[str, Any]] = []
+            cv_folds_available = 0
+            min_train_size: Optional[int] = None
+            min_valid_size: Optional[int] = None
+
+            if rows:
+                y = df["y"].astype(int)
+                counts = y.value_counts().to_dict()
+                class_balance = {"under_0": int(counts.get(0, 0)), "over_1": int(counts.get(1, 0))}
+                positive_class_ratio_over = round(float(y.mean()), 6)
+
+                if "season" in df.columns:
+                    season_counts = df["season"].value_counts(dropna=False).sort_index()
+                    by_season = [
+                        {"season": (int(k) if pd.notna(k) else None), "count": int(v)}
+                        for k, v in season_counts.items()
+                    ][:top_n]
+                if "league" in df.columns:
+                    league_counts = df["league"].value_counts(dropna=False).sort_values(ascending=False)
+                    by_league = [
+                        {"league": (int(k) if pd.notna(k) else None), "count": int(v)}
+                        for k, v in league_counts.items()
+                    ][:top_n]
+
+                df_time = df.copy()
+                if "prediction_at" in df_time.columns:
+                    df_time["prediction_at"] = pd.to_datetime(df_time["prediction_at"], utc=True, errors="coerce")
+                    df_time = df_time.dropna(subset=["prediction_at"]).sort_values(by=["prediction_at", "id_fixture"]).reset_index(drop=True)
+                    min_train_size = max(min_train_rows, int(len(df_time) * 0.45))
+                    min_valid_size = max(min_valid_rows, int(len(df_time) * 0.1))
+                    cv_folds_available = len(
+                        expanding_window_splits(
+                            frame=df_time,
+                            time_col="prediction_at",
+                            n_splits=n_splits,
+                            min_train_size=min_train_size,
+                            min_valid_size=min_valid_size,
+                        )
+                    )
+
+            per_threshold[market] = {
+                "threshold": threshold,
+                "fixtures_ft_total": fixtures_ft_total,
+                "fixtures_with_odds_for_market": fixtures_with_odds_for_market,
+                "odds_coverage_ratio": round(fixtures_with_odds_for_market / max(1, fixtures_ft_total), 6),
+                "fixtures_with_complete_statistics": fixtures_with_complete_statistics,
+                "fixtures_with_mean_statistics": fixtures_with_mean_statistics,
+                "usable_rows_for_training": rows,
+                "class_balance": class_balance,
+                "positive_class_ratio_over": positive_class_ratio_over,
+                "distribution_by_season": by_season,
+                "distribution_by_league": by_league,
+                "cv_temporal": {
+                    "strategy": "expanding_window",
+                    "n_splits_requested": n_splits,
+                    "min_train_size": min_train_size,
+                    "min_valid_size": min_valid_size,
+                    "folds_available": cv_folds_available,
+                    # Stessa condizione di `train_multi_market._filter_valid_splits`
+                    # combinata con l'uso che ne fa `train_market` (< 2 fold -> skip).
+                    "meets_minimum_for_training": cv_folds_available >= 2,
+                },
+            }
+
+        non_empty_sets = [s for s in fixture_ids_by_threshold.values()]
+        fixtures_with_all_thresholds = set.intersection(*non_empty_sets) if non_empty_sets and all(non_empty_sets) else set()
+
+        return {
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "filters": {"seasons": seasons or [], "leagues": leagues or []},
+            "fixtures_ft_total": fixtures_ft_total,
+            "fixtures_with_complete_statistics": fixtures_with_complete_statistics,
+            "fixtures_with_mean_statistics": fixtures_with_mean_statistics,
+            "per_threshold": per_threshold,
+            "cross_threshold": {
+                "fixtures_with_all_four_thresholds_odds_available": len(fixtures_with_all_thresholds),
+                "ratio_over_fixtures_ft_total": round(len(fixtures_with_all_thresholds) / max(1, fixtures_ft_total), 6),
+                "note": (
+                    "Intersezione delle fixture che hanno ODDS valide per TUTTE le soglie "
+                    "richieste (oltre a statistics/mean_statistics complete). NON e' un "
+                    "vincolo per l'approccio 'hierarchical'/'goal_distribution' di "
+                    "totals_market.py (che usa le odds del solo reference_market "
+                    "'under_over_2_5' per tutte le soglie, mentre il target reale deriva "
+                    "sempre da total_goals): e' invece il vincolo rilevante per un "
+                    "confronto 'binary_independent' che usasse feature odds specifiche "
+                    "per soglia (vedi train_market('under_over_X') isolato)."
+                ),
+            },
+        }
 
 
