@@ -628,7 +628,9 @@ def calculate_mean(with_season: int = None, force_mean: bool = False, teams: lis
     Calcola le medie stagionali di ogni squadra prima del match corrente o in maniera puntuale/massiva
     :param with_season: int -> se valorizzata, calcola solo la stagione indicata
     :param force_mean: forza il calcolo della media ANCHE per match che hanno già la media persistita
-    :param teams : Un array di id teams # TODO trovato un BUG che se nel caso fosse specificato un teams, andrebbe a sovrascrivere le medie degli avversari con cui ha giocato
+    :param teams: Un array di id teams -> se valorizzato, il ricalcolo resta limitato ESATTAMENTE
+        a queste squadre (bug fix 2026-09-07: prima veniva esteso anche agli avversari incontrati,
+        sovrascrivendone la media con un calcolo parziale, vedi commento piu' sotto)
     :return: Persist in update massive (bulk)
     """
     columns_mean = ['Shots on Goal', 'Shots off Goal', 'Total Shots', 'Blocked Shots', 'Shots insidebox',
@@ -656,6 +658,22 @@ def calculate_mean(with_season: int = None, force_mean: bool = False, teams: lis
     id_teams_home = [match.id_team_home for match in all_match if pd.notna(match.id_team_home)]
     id_teams_away = [match.id_team_away for match in all_match if pd.notna(match.id_team_away)]
     id_teams = set(list(id_teams_home) + list(id_teams_away))
+    if teams:
+        # Bug fix 2026-09-07 (era il TODO sopra): il filtro OR usato per
+        # costruire `all_match` cattura le partite di OGNI squadra che ha
+        # incontrato una squadra in `teams` (sia come home che away), quindi
+        # `id_teams` finiva per includere anche gli AVVERSARI non richiesti.
+        # Per una squadra esplicitamente in `teams`, `all_match` contiene
+        # GIA' tutte le sue partite stagionali (ogni sua partita ha
+        # home=team O away=team, catturata dal filtro OR sopra) - ma per un
+        # avversario aggiunto solo perche' ha giocato CONTRO una squadra in
+        # `teams`, `all_match` contiene SOLO le partite contro quelle
+        # squadre, non l'intero storico stagionale. Ricalcolare la sua
+        # media su questo sottoinsieme parziale la sovrascriveva
+        # (`force_mean`/prima media) con un valore SBAGLIATO. Fix: quando
+        # `teams` e' specificato, il ricalcolo resta limitato ESATTAMENTE
+        # alle squadre richieste.
+        id_teams = id_teams & set(teams)
     list_obj = []  # Update in maniera massiva con bulk_update_mappings
     for season in seasons:
         logging.info(f'<<< Start season {season} >>>')

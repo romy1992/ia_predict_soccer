@@ -241,12 +241,27 @@ class CrudRepository:
                     else:
                         conditions.append(col == v)
 
-        with self.session as session:
-            try:
-                return session.query(self.entity).filter(*conditions).all()
-            except Exception as e:
-                logging.error(str(e))
-                raise
+        # Bug fix 2026-09-07: usava ancora `with self.session as session:`,
+        # il vecchio pattern gia' rimosso da TUTTI gli altri metodi di questa
+        # classe (vedi commenti su `save`/`filter_by` sopra, bug fix
+        # 2026-09-06) perche' chiude la Session "scoped" condivisa del thread
+        # corrente a fine chiamata. Essendo `search_filter` il metodo usato
+        # da OGNI dataset di training (`FilterMarketService._search_matches`,
+        # `totals_market.py::run_totals_benchmark_from_db`, tutti i
+        # market_*.py) ed eseguito ripetutamente nello stesso thread/job,
+        # chiuderlo qui esponeva allo stesso rischio gia' diagnosticato per
+        # `save`/`filter_by`: query successive sullo stesso thread possono
+        # trovarsi con la Session scoped gia' chiusa ("This Session's
+        # transaction has been rolled back / Session is closed"), oltre a
+        # forzare una riconnessione di rete al DB remoto ad ogni chiamata.
+        # Cleanup resta esplicito a fine job (`SessionLocal.remove()`), MAI
+        # qui dentro - stesso principio ovunque in questo file.
+        session = self.session
+        try:
+            return session.query(self.entity).filter(*conditions).all()
+        except Exception as e:
+            logging.error(str(e))
+            raise
 
     def massive_update_bulk(self, list_obj: list):
         """

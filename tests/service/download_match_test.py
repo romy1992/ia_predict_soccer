@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import patch
 
-from src.service_ia.model.match import Match
+from src.service_ia.model.match import Match, Statistics
 from src.service_ia.pre_processing.api_sports_provider import ApiSportsQuotaExceededError
 from src.service_ia.pre_processing.download_match_service import calculate_mean, download_import_matches
 
@@ -243,6 +243,50 @@ class TestDownloadMatch(unittest.TestCase):
 
         mock_search_filter.assert_called()
         mock_update_bulk.assert_called()
+
+    @patch("src.service_ia.pre_processing.download_match_service.repo_match.massive_update_bulk")
+    @patch("src.service_ia.pre_processing.download_match_service.repo_match.search_filter")
+    def test_calculate_mean_with_teams_does_not_recompute_opponent_mean(self, mock_search_filter, mock_update_bulk):
+        """Bug fix 2026-09-07 (era un TODO esplicito nel codice): con
+        `teams=[10]`, il filtro OR usato per popolare `all_match` include
+        anche le partite dell'avversario 20 (andata/ritorno contro la 10).
+        PRIMA del fix, 20 finiva comunque in `id_teams` e la sua media
+        veniva ricalcolata usando SOLO le partite contro la 10 (sottoinsieme
+        parziale, mai lo storico stagionale reale di 20) - sovrascrivendo un
+        valore sbagliato. Con `teams` specificato il ricalcolo deve restare
+        limitato ESATTAMENTE alle squadre richieste: per il match di
+        ritorno, `mean_statistics` deve contenere SOLO l'aggiornamento della
+        10 (un dict singolo), MAI una lista con dentro anche la 20."""
+        match_1 = Match(
+            id_match_fk="m1", id_fixture=1, id_team_home=10, id_team_away=20,
+            name_home="A", name_away="B", date_match="2026-01-01T12:00:00+00:00",
+            season=2026, status="FT",
+        )
+        match_1.statistics = [
+            Statistics(id_statistics_fk="s1", statistics_team_id=10),
+            Statistics(id_statistics_fk="s2", statistics_team_id=20),
+        ]
+
+        match_2 = Match(
+            id_match_fk="m2", id_fixture=2, id_team_home=20, id_team_away=10,
+            name_home="B", name_away="A", date_match="2026-02-01T12:00:00+00:00",
+            season=2026, status="FT",
+        )
+        match_2.statistics = [
+            Statistics(id_statistics_fk="s3", statistics_team_id=20),
+            Statistics(id_statistics_fk="s4", statistics_team_id=10),
+        ]
+
+        mock_search_filter.return_value = [match_1, match_2]
+
+        calculate_mean(with_season=2026, force_mean=True, teams=[10])
+
+        list_obj = mock_update_bulk.call_args[0][0]
+        entry_m2 = next(e for e in list_obj if e["id_match_fk"] == "m2")
+        mean_stats = entry_m2["mean_statistics"]
+
+        self.assertIsInstance(mean_stats, dict)  # MAI una lista (che indicherebbe il ricalcolo anche di 20)
+        self.assertEqual(mean_stats["id_team"], 10)
 
 
 class FakeProviderQuotaExceededOnOdds(FakeProvider):

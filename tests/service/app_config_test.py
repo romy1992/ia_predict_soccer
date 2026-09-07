@@ -16,6 +16,7 @@ _SCHEDULING_ENV_KEYS = [
     "DAILY_REFRESH_HOUR",
     "DAILY_REFRESH_MINUTE",
     "DAILY_REFRESH_DAYS_AHEAD",
+    "DATA_QUALITY_INTERVAL_MINUTES",
 ]
 
 
@@ -43,6 +44,7 @@ class TestLoadAppConfigScheduling(unittest.TestCase):
         self.assertEqual(cfg.daily_refresh_hour, 5)
         self.assertEqual(cfg.daily_refresh_minute, 0)
         self.assertEqual(cfg.daily_refresh_days_ahead, 7)
+        self.assertEqual(cfg.data_quality_interval_minutes, 60)
 
     def test_training_hour_explicit_override(self):
         cfg = self._run_with_env({"TRAINING_HOUR": "5", "TRAINING_MINUTE": "15"})
@@ -87,6 +89,13 @@ class TestLoadAppConfigScheduling(unittest.TestCase):
     def test_invalid_value_falls_back_to_default(self):
         cfg = self._run_with_env({"DATA_SYNC_INTERVAL_MINUTES": "not-a-number"})
         self.assertEqual(cfg.data_sync_interval_minutes, 30)
+
+    def test_data_quality_interval_override(self):
+        """Job "Aggiorna report Data Quality": intervallo configurabile via
+        env, indipendente dagli altri data job (nessuna chiamata API-Sports,
+        mai coinvolto dall'auto-pausa quota)."""
+        cfg = self._run_with_env({"DATA_QUALITY_INTERVAL_MINUTES": "15"})
+        self.assertEqual(cfg.data_quality_interval_minutes, 15)
 
     def test_training_and_data_sync_are_independent_fields(self):
         # Cambiare l'orario di training non deve toccare l'intervallo dei

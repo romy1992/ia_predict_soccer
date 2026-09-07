@@ -37,6 +37,7 @@ def _cfg(**overrides) -> AppConfig:
         api_sports_daily_limit=7500,
         database_url="sqlite://",
         database_schema="public",
+        data_quality_interval_minutes=60,
     )
     base.update(overrides)
     return AppConfig(**base)
@@ -62,6 +63,7 @@ class TestBuildSchedulerJobsSeparation(unittest.TestCase):
             {
                 "data_sync_today",
                 "data_settlement",
+                "data_quality_report",
                 "data_future_sync",
                 "data_daily_refresh",
                 "ml_training",
@@ -71,7 +73,7 @@ class TestBuildSchedulerJobsSeparation(unittest.TestCase):
 
     def test_build_scheduler_uses_default_config_when_none_given(self):
         sched = scheduler_module.build_scheduler()
-        self.assertEqual(len(sched.get_jobs()), 6)
+        self.assertEqual(len(sched.get_jobs()), 7)
 
 
 class TestMaxInstancesAndCoalesce(unittest.TestCase):
@@ -81,7 +83,7 @@ class TestMaxInstancesAndCoalesce(unittest.TestCase):
     def test_every_job_has_max_instances_one_and_coalesce_true(self):
         sched = scheduler_module.build_scheduler(cfg=_cfg())
         jobs = sched.get_jobs()
-        self.assertEqual(len(jobs), 6)
+        self.assertEqual(len(jobs), 7)
         for job in jobs:
             self.assertEqual(job.max_instances, 1, f"{job.id} deve avere max_instances=1")
             self.assertTrue(job.coalesce, f"{job.id} deve avere coalesce=True")
@@ -97,6 +99,12 @@ class TestTriggerTypesPerJob(unittest.TestCase):
         self.assertIsInstance(jobs_by_id["data_settlement"].trigger, IntervalTrigger)
         self.assertEqual(jobs_by_id["data_sync_today"].trigger.interval.total_seconds(), 15 * 60)
         self.assertEqual(jobs_by_id["data_settlement"].trigger.interval.total_seconds(), 45 * 60)
+
+    def test_data_quality_report_uses_interval_trigger(self):
+        sched = scheduler_module.build_scheduler(cfg=_cfg(data_quality_interval_minutes=25))
+        quality_job = sched.get_job("data_quality_report")
+        self.assertIsInstance(quality_job.trigger, IntervalTrigger)
+        self.assertEqual(quality_job.trigger.interval.total_seconds(), 25 * 60)
 
     def test_future_sync_and_training_use_cron_trigger(self):
         sched = scheduler_module.build_scheduler(cfg=_cfg(future_sync_hour=6, training_hour=2))
@@ -145,6 +153,12 @@ class TestJobTargetsAreCorrectAndIndependent(unittest.TestCase):
         settlement_job = sched.get_job("data_settlement")
         self.assertIs(_target_func(settlement_job), scheduler_module.run_manual_settlement)
         self.assertIsNot(_target_func(settlement_job), scheduler_module.run_manual_retrain)
+
+    def test_data_quality_report_job_targets_run_data_quality_report_never_retrain(self):
+        sched = scheduler_module.build_scheduler(cfg=_cfg())
+        quality_job = sched.get_job("data_quality_report")
+        self.assertIs(_target_func(quality_job), scheduler_module.run_data_quality_report)
+        self.assertIsNot(_target_func(quality_job), scheduler_module.run_manual_retrain)
 
     def test_future_sync_job_targets_run_manual_future_sync(self):
         sched = scheduler_module.build_scheduler(cfg=_cfg())

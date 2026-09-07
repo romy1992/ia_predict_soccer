@@ -81,6 +81,17 @@ JOB_DEFINITIONS: dict[str, dict[str, Any]] = {
         "default_enabled": False,
         "calls_api_sports": True,
     },
+    "data_quality_report": {
+        "label": "Aggiorna report Data Quality",
+        "description": (
+            "Ricalcola periodicamente il report di qualita' dati (coverage odds, anomalie, "
+            "duplicati, distribuzione) e lo registra nello storico job - stessa funzione "
+            "del bottone 'Aggiorna report' della pagina Data Quality. Lavora solo su dati "
+            "gia' a DB: non chiama API-Sports."
+        ),
+        "default_enabled": True,
+        "calls_api_sports": False,
+    },
 }
 
 # Sottoinsieme di `JOB_DEFINITIONS` che consuma DAVVERO quota API-Sports -
