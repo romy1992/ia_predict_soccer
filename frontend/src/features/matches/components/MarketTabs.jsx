@@ -23,4 +23,3 @@ export default function MarketTabs({ markets, value, onChange }) {
     </div>
   );
 }
-

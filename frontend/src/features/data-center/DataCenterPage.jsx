@@ -24,6 +24,7 @@ export default function DataCenterPage({
   onRefreshJobs,
   opsMessage,
   health,
+  quotaExhausted,
 }) {
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
@@ -132,6 +133,13 @@ export default function DataCenterPage({
           <input type="checkbox" checked={asyncRun} onChange={(e) => onChangeAsyncRun(e.target.checked)} />
           <span>Esegui azioni sotto in background (async)</span>
         </label>
+        {quotaExhausted && (
+          <div className="error-box">
+            ⚠️ Quota API-Sports al 100% per oggi: "Import storico", "Aggiorna oggi" e "Sync future" sono disabilitati
+            (chiamano il provider esterno) fino al reset di mezzanotte UTC. "Settlement finali" resta disponibile
+            (lavora solo sui dati gia' a DB, nessuna chiamata API-Sports).
+          </div>
+        )}
         {localError && <div className="error-box">Errore: {localError}</div>}
         {opsMessage && <pre className="code-block">{opsMessage}</pre>}
       </section>
@@ -187,7 +195,7 @@ export default function DataCenterPage({
           </div>
 
           <div className="inline-form" style={{ marginTop: 10 }}>
-            <button className="btn-primary" disabled={isSubmitting} onClick={handleHistoricalImport}>
+            <button className="btn-primary" disabled={isSubmitting || quotaExhausted} onClick={handleHistoricalImport}>
               {isSubmitting ? (<><span className="spinner spinner-dark" />In corso...</>) : "Import storico"}
             </button>
             <button className="btn-secondary" disabled={isSubmitting} onClick={handleSettlement}>
@@ -210,7 +218,7 @@ export default function DataCenterPage({
               Target date
               <input type="date" value={targetDate} onChange={(e) => setTargetDate(e.target.value)} />
             </label>
-            <button className="btn-primary" disabled={isSubmitting} onClick={handleTodayUpdate}>
+            <button className="btn-primary" disabled={isSubmitting || quotaExhausted} onClick={handleTodayUpdate}>
               {isSubmitting ? (<><span className="spinner" />In corso...</>) : "Aggiorna oggi"}
             </button>
           </div>
@@ -220,7 +228,7 @@ export default function DataCenterPage({
               Days ahead
               <input value={daysAhead} onChange={(e) => setDaysAhead(e.target.value)} />
             </label>
-            <button className="btn-primary" disabled={isSubmitting} onClick={handleFutureSync}>
+            <button className="btn-primary" disabled={isSubmitting || quotaExhausted} onClick={handleFutureSync}>
               {isSubmitting ? (<><span className="spinner" />In corso...</>) : "Sync future"}
             </button>
           </div>

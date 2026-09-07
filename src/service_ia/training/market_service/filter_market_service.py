@@ -217,21 +217,59 @@ class FilterMarketService:
         df = pd.DataFrame(rows).replace([np.inf, -np.inf], np.nan).fillna(0)
         return df
 
-    def build_prediction_frame(self, market: str, fixture_id: int) -> Optional[pd.DataFrame]:
-        if market not in self.SUPPORTED_MARKETS:
-            raise ValueError(f"Mercato non supportato: {market}")
-
+    def _fetch_match_dict(self, fixture_id: int) -> Optional[dict]:
         match = self.match_repo.filter_by(dict_search={"id_fixture": fixture_id}).first()
         if not match:
             return None
+        return convert_orm_match_to_dict([match])[0]
 
-        match_dict = convert_orm_match_to_dict([match])[0]
-        row = self._build_row(match=match_dict, market=market, with_target=False)
-        if not row:
-            return None
+    def build_prediction_frames_from_match(self, match, markets: list[str]) -> dict[str, pd.DataFrame]:
+        """Come `build_prediction_frame` ma per PIU' mercati sulla STESSA
+        fixture GIA' caricata (`match`: ORM `Match` o dict gia' convertito),
+        SENZA alcuna query: `_build_row` e' puro calcolo in-memory (nessun
+        accesso a `self.match_repo`/DB qui sotto).
 
-        df = pd.DataFrame([row]).replace([np.inf, -np.inf], np.nan).fillna(0)
-        return df
+        Fix performance (cambio giorno lento in Dashboard): il chiamante puo'
+        riusare un `Match` gia' caricato in BATCH altrove (es.
+        `DashboardService._fetch_matches`, una query SELECT...IN unica per
+        l'intera finestra di date, con `statistics`/`odds` gia' "lazy=selectin")
+        invece di rifare una query dedicata per fixture - vedi
+        `build_prediction_frames`/`build_prediction_frame` sotto per il
+        percorso "serve ancora una query" (fixture non gia' in mano)."""
+        frames: dict[str, pd.DataFrame] = {}
+        if not markets:
+            return frames
+
+        match_dict = match if isinstance(match, dict) else convert_orm_match_to_dict([match])[0]
+        for market in markets:
+            if market not in self.SUPPORTED_MARKETS:
+                continue
+            row = self._build_row(match=match_dict, market=market, with_target=False)
+            if not row:
+                continue
+            frames[market] = pd.DataFrame([row]).replace([np.inf, -np.inf], np.nan).fillna(0)
+        return frames
+
+    def build_prediction_frames(self, fixture_id: int, markets: list[str]) -> dict[str, pd.DataFrame]:
+        """Come `build_prediction_frame` ma per PIU' mercati in un colpo
+        solo: la query Match (+ relazioni statistics/odds) viene eseguita
+        UNA VOLTA SOLA e riusata in memoria per costruire la riga di
+        ciascun mercato, invece di ripetere le stesse query per OGNI
+        mercato (fix performance: con le 9 SUPPORTED_MARKETS, il vecchio
+        `build_prediction_frame` chiamato in loop da
+        `DashboardService._predict_fixture` faceva 9x le query per singola
+        fixture - causa principale della lentezza al cambio giorno in
+        Dashboard, con centinaia di round-trip DB per un giorno con decine
+        di fixture)."""
+        match_dict = self._fetch_match_dict(fixture_id)
+        if not match_dict:
+            return {}
+        return self.build_prediction_frames_from_match(match_dict, markets)
+
+    def build_prediction_frame(self, market: str, fixture_id: int) -> Optional[pd.DataFrame]:
+        if market not in self.SUPPORTED_MARKETS:
+            raise ValueError(f"Mercato non supportato: {market}")
+        return self.build_prediction_frames(fixture_id=fixture_id, markets=[market]).get(market)
 
 
 

@@ -1,6 +1,7 @@
 import unittest
 import uuid
 from datetime import date
+from unittest import mock
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -26,12 +27,12 @@ class TestDashboardService(unittest.TestCase):
     def test_get_day_matches_from_api_feed(self):
         service = DashboardService()
         service.registry.list_markets = lambda: ["h2h"]
-        service._fetch_api_day_fixtures = lambda target_date: [
+        service._fetch_api_day_fixtures = lambda target_date, force_refresh=False: [
             self._fixture(1001, "2026-09-01", "NS", "Inter", "Milan"),
             self._fixture(1002, "2026-09-01", "1H", "Roma", "Lazio"),
         ]
         service._fetch_matches = lambda target_date=None, day_margin=1: []
-        service._predict_fixture = lambda fixture_id, markets: {
+        service._predict_fixture = lambda fixture_id, markets, db_match=None: {
             "h2h": {
                 "prediction": 1,
                 "probability": 0.72,
@@ -58,7 +59,7 @@ class TestDashboardService(unittest.TestCase):
             self._fixture(2001, "2099-09-01", "1H", "Napoli", "Atalanta"),
             self._fixture(2002, "2099-09-01", "NS", "Juventus", "Bologna"),
         ]
-        service._fetch_api_day_fixtures = lambda target_date: []
+        service._fetch_api_day_fixtures = lambda target_date, force_refresh=False: []
         service._fetch_matches = lambda target_date=None, day_margin=1: []
 
         payload = service.get_live_matches(target_date=date(2099, 9, 1), limit=50)
@@ -114,7 +115,7 @@ class TestDashboardService(unittest.TestCase):
                 }
             ],
         }
-        service._predict_fixture = lambda fixture_id, markets: {
+        service._predict_fixture = lambda fixture_id, markets, db_match=None: {
             "under_over_2_5": {
                 "prediction": 1,
                 "probability": 0.72,
@@ -151,7 +152,7 @@ class TestDashboardService(unittest.TestCase):
         senza alcuna fetch odds aggiuntiva verso l'API esterna."""
         service = DashboardService()
         service.registry.list_markets = lambda: ["h2h"]
-        service._fetch_api_day_fixtures = lambda target_date: []
+        service._fetch_api_day_fixtures = lambda target_date, force_refresh=False: []
 
         match = Match(
             id_match_fk=str(uuid.uuid4()),
@@ -163,7 +164,7 @@ class TestDashboardService(unittest.TestCase):
             title_league="Serie A",
         )
         service._fetch_matches = lambda target_date=None, day_margin=1: [match]
-        service._predict_fixture = lambda fixture_id, markets: {
+        service._predict_fixture = lambda fixture_id, markets, db_match=None: {
             "h2h": {"prediction": 1, "probability": 0.75, "model_name": "logistic", "run_id": "run-x"}
         }
         service._aggregate_odds_from_db = lambda m: {
@@ -190,11 +191,11 @@ class TestDashboardService(unittest.TestCase):
         quota API-Sports su centinaia di righe) - mai un dato inventato."""
         service = DashboardService()
         service.registry.list_markets = lambda: ["h2h"]
-        service._fetch_api_day_fixtures = lambda target_date: [
+        service._fetch_api_day_fixtures = lambda target_date, force_refresh=False: [
             self._fixture(1001, "2026-09-01", "NS", "Inter", "Milan"),
         ]
         service._fetch_matches = lambda target_date=None, day_margin=1: []
-        service._predict_fixture = lambda fixture_id, markets: {
+        service._predict_fixture = lambda fixture_id, markets, db_match=None: {
             "h2h": {"prediction": 1, "probability": 0.72, "model_name": "logistic", "run_id": "run-test"}
         }
 
@@ -202,6 +203,292 @@ class TestDashboardService(unittest.TestCase):
 
         self.assertEqual(payload.rows[0]["decision_cards"], [])
         self.assertIsNone(payload.rows[0]["best_decision"])
+
+    def test_predict_fixture_reuses_db_match_without_extra_query(self):
+        """Fix performance (cambio giorno lento): quando `db_match` (Match
+        ORM gia' caricato in BATCH da `_fetch_matches`) e' disponibile,
+        `_predict_fixture` deve usare `build_prediction_frames_from_match`
+        (ZERO query aggiuntive), MAI `build_prediction_frames` (che
+        rifarebbe una query dedicata per la fixture)."""
+        service = DashboardService.__new__(DashboardService)
+        service._prediction_cache = {}
+        service._model_meta_cache = {}
+        service._model_cache = {}
+
+        class _FakeFilterService:
+            def __init__(self):
+                self.from_match_calls = 0
+                self.query_calls = 0
+
+            def build_prediction_frames_from_match(self, match, markets):
+                self.from_match_calls += 1
+                return {}
+
+            def build_prediction_frames(self, fixture_id, markets):
+                self.query_calls += 1
+                return {}
+
+        service.filter_service = _FakeFilterService()
+        service._latest_model_for_market = lambda market: None
+
+        service._predict_fixture(fixture_id=123, markets=["h2h"], db_match=object())
+
+        self.assertEqual(service.filter_service.from_match_calls, 1)
+        self.assertEqual(service.filter_service.query_calls, 0)
+
+    def test_predict_fixture_without_db_match_falls_back_to_query(self):
+        """Fixture non ancora nel DB locale (solo dal feed API): resta il
+        vecchio percorso "una query" (comunque gia' consolidata tra tutti i
+        mercati richiesti, vedi filter_market_service_test.py)."""
+        service = DashboardService.__new__(DashboardService)
+        service._prediction_cache = {}
+        service._model_meta_cache = {}
+        service._model_cache = {}
+
+        class _FakeFilterService:
+            def __init__(self):
+                self.from_match_calls = 0
+                self.query_calls = 0
+
+            def build_prediction_frames_from_match(self, match, markets):
+                self.from_match_calls += 1
+                return {}
+
+            def build_prediction_frames(self, fixture_id, markets):
+                self.query_calls += 1
+                return {}
+
+        service.filter_service = _FakeFilterService()
+        service._latest_model_for_market = lambda market: None
+
+        service._predict_fixture(fixture_id=123, markets=["h2h"])
+
+        self.assertEqual(service.filter_service.from_match_calls, 0)
+        self.assertEqual(service.filter_service.query_calls, 1)
+
+    def test_get_overview_never_computes_predictions(self):
+        """Fix performance: `get_overview` (usato dal frontend SOLO per i
+        counts/badge di riepilogo, MAI per i valori di predizione - nessun
+        componente legge `day_highlights`/`live_preview`/predictions) non
+        deve piu' scatenare alcun calcolo ML/DB per le predizioni - prima
+        duplicava ESATTAMENTE lo stesso lavoro gia' fatto da `/dashboard/day`
+        (stessa data), chiamato in parallelo dal frontend ad ogni cambio
+        giorno."""
+        service = DashboardService()
+        service.registry.list_markets = lambda: ["h2h"]
+        service._fetch_api_day_fixtures = lambda target_date, force_refresh=False: [
+            self._fixture(1001, "2099-09-01", "NS", "Inter", "Milan"),
+        ]
+        service._fetch_matches = lambda target_date=None, day_margin=1: []
+
+        def _boom(*args, **kwargs):
+            raise AssertionError("_predict_fixture NON deve essere chiamato da get_overview")
+
+        service._predict_fixture = _boom
+
+        overview = service.get_overview(target_date=date(2099, 9, 1))
+
+        self.assertEqual(overview["counts"]["total"], 1)
+        self.assertEqual(overview["counts"]["to_play"], 1)
+        self.assertEqual(overview["counts"]["with_prediction"], 0)
+
+    def test_get_day_matches_skips_api_when_db_already_synced_for_that_date(self):
+        """Fix quota API-Sports (2026-09-07): il DB locale e' sincronizzato
+        quotidianamente dai job schedulati (`data_daily_refresh`,
+        `data_sync_today`, `future_sync`) per la finestra ieri -> oggi+N
+        giorni, su TUTTI i campionati censiti. Se il DB ha GIA' almeno una
+        riga per `target_date`, NON deve piu' scattare alcuna fetch verso il
+        provider esterno (prima: sempre chiamata, fino a 18 richieste HTTP
+        per cambio data, una per campionato configurato)."""
+        service = DashboardService()
+        service.registry.list_markets = lambda: ["h2h"]
+
+        def _boom(target_date, force_refresh=False):
+            raise AssertionError("_fetch_api_day_fixtures NON deve essere chiamato: il DB ha gia' dati per la data")
+
+        service._fetch_api_day_fixtures = _boom
+
+        match = Match(
+            id_match_fk=str(uuid.uuid4()),
+            id_fixture=5001,
+            date_match="2026-09-01T18:00:00+00:00",
+            status="NS",
+            name_home="Inter",
+            name_away="Milan",
+            title_league="Serie A",
+        )
+        service._fetch_matches = lambda target_date=None, day_margin=1: [match]
+        service._predict_fixture = lambda fixture_id, markets, db_match=None: {}
+
+        payload = service.get_day_matches(target_date=date(2026, 9, 1), limit=50, with_predictions=True)
+
+        self.assertEqual(payload.returned, 1)
+        self.assertEqual(payload.rows[0]["source"], "db")
+        self.assertEqual(payload.rows[0]["home"], "Inter")
+
+    def test_get_day_matches_falls_back_to_api_when_db_empty_for_that_date(self):
+        """Data NON ancora sincronizzata (DB vuoto per quella finestra, es.
+        troppo lontana nel futuro o job non ancora eseguito): l'API esterna
+        resta un fallback, cosi' la Dashboard non mostra mai "vuoto" per un
+        semplice ritardo di sync."""
+        service = DashboardService()
+        service.registry.list_markets = lambda: ["h2h"]
+        call_count = {"n": 0}
+
+        def _counting_fetch(target_date, force_refresh=False):
+            call_count["n"] += 1
+            return [self._fixture(1001, "2026-09-01", "NS", "Inter", "Milan")]
+
+        service._fetch_api_day_fixtures = _counting_fetch
+        service._fetch_matches = lambda target_date=None, day_margin=1: []
+        service._predict_fixture = lambda fixture_id, markets, db_match=None: {}
+
+        payload = service.get_day_matches(target_date=date(2026, 9, 1), limit=50, with_predictions=True)
+
+        self.assertEqual(call_count["n"], 1)
+        self.assertEqual(payload.returned, 1)
+        self.assertEqual(payload.rows[0]["source"], "api_sports")
+
+    def test_get_day_matches_falls_back_to_api_when_db_has_only_other_dates(self):
+        """Il DB ha righe nella finestra +-1gg (margine di `_fetch_matches`)
+        ma NESSUNA esattamente in `target_date`: deve comunque scattare il
+        fallback API (`db_has_target_date` valuta la data ESATTA, non la
+        finestra allargata)."""
+        service = DashboardService()
+        service.registry.list_markets = lambda: ["h2h"]
+        call_count = {"n": 0}
+
+        def _counting_fetch(target_date, force_refresh=False):
+            call_count["n"] += 1
+            return []
+
+        service._fetch_api_day_fixtures = _counting_fetch
+
+        other_day_match = Match(
+            id_match_fk=str(uuid.uuid4()),
+            id_fixture=6001,
+            date_match="2026-08-31T18:00:00+00:00",  # giorno precedente, non target_date
+            status="FT",
+        )
+        service._fetch_matches = lambda target_date=None, day_margin=1: [other_day_match]
+        service._predict_fixture = lambda fixture_id, markets, db_match=None: {}
+
+        service.get_day_matches(target_date=date(2026, 9, 1), limit=50, with_predictions=True)
+
+        self.assertEqual(call_count["n"], 1)
+
+    def test_get_day_matches_calls_api_for_future_date_even_if_db_has_data(self):
+        """Le partite FUTURE restano diverse dalle storiche: anche se il DB
+        ha gia' la fixture (sync quotidiano, quindi potenzialmente non piu'
+        fresco di 24h), le quote possono ancora muoversi e la data/orario
+        puo' essere spostato - l'API resta la fonte primaria (protetta
+        comunque da cache TTL 60s e dal guard quota-esaurita, non introduce
+        uno spreco ulteriore), a differenza delle date STORICHE (concluse,
+        mai piu' soggette a cambiamento) dove il DB e' definitivo."""
+        service = DashboardService()
+        service.registry.list_markets = lambda: ["h2h"]
+        call_count = {"n": 0}
+
+        def _counting_fetch(target_date, force_refresh=False):
+            call_count["n"] += 1
+            return []
+
+        service._fetch_api_day_fixtures = _counting_fetch
+
+        future_match = Match(
+            id_match_fk=str(uuid.uuid4()),
+            id_fixture=7001,
+            date_match="2099-09-01T18:00:00+00:00",  # ben nel futuro rispetto a "oggi"
+            status="NS",
+        )
+        service._fetch_matches = lambda target_date=None, day_margin=1: [future_match]
+        service._predict_fixture = lambda fixture_id, markets, db_match=None: {}
+
+        service.get_day_matches(target_date=date(2099, 9, 1), limit=50, with_predictions=True)
+
+        self.assertEqual(call_count["n"], 1)
+
+    def test_get_day_matches_calls_api_for_today_even_if_db_has_data(self):
+        """Oggi (partite potenzialmente live/in corso o non ancora
+        iniziate) NON e' trattato come storico: l'API resta la fonte
+        primaria anche se il DB ha gia' la fixture per la data odierna."""
+        service = DashboardService()
+        service.registry.list_markets = lambda: ["h2h"]
+        call_count = {"n": 0}
+
+        def _counting_fetch(target_date, force_refresh=False):
+            call_count["n"] += 1
+            return []
+
+        service._fetch_api_day_fixtures = _counting_fetch
+
+        today = dashboard_service_module.datetime.now(dashboard_service_module.timezone.utc).date()
+        today_match = Match(
+            id_match_fk=str(uuid.uuid4()),
+            id_fixture=7002,
+            date_match=f"{today.isoformat()}T18:00:00+00:00",
+            status="NS",
+        )
+        service._fetch_matches = lambda target_date=None, day_margin=1: [today_match]
+        service._predict_fixture = lambda fixture_id, markets, db_match=None: {}
+
+        service.get_day_matches(target_date=today, limit=50, with_predictions=True)
+
+        self.assertEqual(call_count["n"], 1)
+
+    def test_get_day_matches_force_refresh_bypasses_historical_skip(self):
+        """Bottone "Forza aggiornamento": anche per una data STORICA gia'
+        completamente sincronizzata a DB, `force_refresh=True` deve
+        comunque richiamare il provider esterno (caso eccezionale: dato
+        importato errato, correzione tardiva del provider)."""
+        service = DashboardService()
+        service.registry.list_markets = lambda: ["h2h"]
+        call_count = {"n": 0}
+
+        def _counting_fetch(target_date, force_refresh=False):
+            call_count["n"] += 1
+            self.assertTrue(force_refresh)
+            return []
+
+        service._fetch_api_day_fixtures = _counting_fetch
+
+        historical_match = Match(
+            id_match_fk=str(uuid.uuid4()),
+            id_fixture=8001,
+            date_match="2026-09-01T18:00:00+00:00",  # storica rispetto a "oggi" (2026-09-07)
+            status="FT",
+        )
+        service._fetch_matches = lambda target_date=None, day_margin=1: [historical_match]
+        service._predict_fixture = lambda fixture_id, markets, db_match=None: {}
+
+        service.get_day_matches(
+            target_date=date(2026, 9, 1), limit=50, with_predictions=True, force_refresh=True
+        )
+
+        self.assertEqual(call_count["n"], 1)
+
+    def test_get_day_matches_force_refresh_still_blocked_when_quota_exhausted(self):
+        """`force_refresh` bypassa SOLO lo skip DB-first/la cache, MAI il
+        guard "quota esaurita" (`is_quota_exhausted_today`, verificato
+        dentro `_fetch_api_day_fixtures` REALE, non mockata qui): nessun
+        bottone puo' forzare una chiamata quando la quota e' al 100%."""
+        service = DashboardService()
+        service.cfg = type("Cfg", (), {"leagues": [135], "seasons": [2026]})()
+        service.registry.list_markets = lambda: ["h2h"]
+        service._fetch_matches = lambda target_date=None, day_margin=1: []
+        service._predict_fixture = lambda fixture_id, markets, db_match=None: {}
+        DashboardService._api_cache = {}
+
+        with mock.patch.object(
+            dashboard_service_module, "is_quota_exhausted_today", return_value=True
+        ), mock.patch.object(dashboard_service_module, "base_api_statistics") as mocked_call:
+            payload = service.get_day_matches(
+                target_date=date(2026, 9, 1), limit=50, with_predictions=True, force_refresh=True
+            )
+
+        mocked_call.assert_not_called()
+        self.assertEqual(payload.returned, 0)
+        DashboardService._api_cache = {}
 
 
 class TestFetchMatchesDateFilter(unittest.TestCase):
@@ -259,6 +546,91 @@ class TestFetchMatchesDateFilter(unittest.TestCase):
             dashboard_service_module.SessionLocal = original_session_local
 
         self.assertEqual(rows, [])
+
+
+class TestQuotaExhaustedGuard(unittest.TestCase):
+    """Fix (2026-09-07): quando la quota API-Sports e' gia' segnalata
+    esaurita OGGI (check autoritativo `is_quota_exhausted_today`), NESSUNA
+    delle funzioni di fetch diretto verso il provider esterno deve tentare
+    la chiamata HTTP - protegge ogni punto di ingresso (polling frontend
+    ogni 60s, job schedulati, richieste manuali) in un colpo solo, a
+    prescindere da chi chiama questi metodi."""
+
+    def setUp(self):
+        self.service = DashboardService.__new__(DashboardService)
+        self.service.cfg = type("Cfg", (), {"leagues": [135, 140], "seasons": [2026]})()
+        # `_api_cache` e' un attributo di CLASSE condiviso tra istanze/test:
+        # azzerato esplicitamente per non trovare una cache-hit "vecchia"
+        # lasciata da un altro test e non esercitare davvero la guardia.
+        DashboardService._api_cache = {}
+
+    def tearDown(self):
+        DashboardService._api_cache = {}
+
+    def test_fetch_api_day_fixtures_skips_call_when_quota_exhausted(self):
+        with mock.patch.object(dashboard_service_module, "is_quota_exhausted_today", return_value=True), mock.patch.object(
+            dashboard_service_module, "base_api_statistics"
+        ) as mocked_call:
+            result = self.service._fetch_api_day_fixtures(date(2026, 9, 7))
+
+        mocked_call.assert_not_called()
+        self.assertEqual(result, [])
+
+    def test_fetch_api_live_fixtures_skips_call_when_quota_exhausted(self):
+        with mock.patch.object(dashboard_service_module, "is_quota_exhausted_today", return_value=True), mock.patch.object(
+            dashboard_service_module, "base_api_statistics"
+        ) as mocked_call:
+            result = self.service._fetch_api_live_fixtures()
+
+        mocked_call.assert_not_called()
+        self.assertEqual(result, [])
+
+    def test_fetch_api_fixture_detail_skips_call_when_quota_exhausted(self):
+        with mock.patch.object(dashboard_service_module, "is_quota_exhausted_today", return_value=True), mock.patch.object(
+            dashboard_service_module, "base_api_statistics"
+        ) as mocked_call:
+            result = self.service._fetch_api_fixture_detail(999)
+
+        mocked_call.assert_not_called()
+        self.assertIsNone(result)
+
+    def test_fetch_api_events_skips_call_when_quota_exhausted(self):
+        with mock.patch.object(dashboard_service_module, "is_quota_exhausted_today", return_value=True), mock.patch.object(
+            dashboard_service_module, "base_api_statistics"
+        ) as mocked_call:
+            result = self.service._fetch_api_events(999)
+
+        mocked_call.assert_not_called()
+        self.assertEqual(result, [])
+
+    def test_fetch_api_odds_skips_call_when_quota_exhausted(self):
+        with mock.patch.object(dashboard_service_module, "is_quota_exhausted_today", return_value=True), mock.patch.object(
+            dashboard_service_module, "base_api_statistics"
+        ) as mocked_call:
+            result = self.service._fetch_api_odds(999)
+
+        mocked_call.assert_not_called()
+        self.assertIsNone(result)
+
+    def test_fetch_api_day_fixtures_still_calls_when_quota_not_exhausted(self):
+        """Regressione: la guardia non deve bloccare il normale
+        funzionamento quando la quota NON e' esaurita."""
+        with mock.patch.object(dashboard_service_module, "is_quota_exhausted_today", return_value=False), mock.patch.object(
+            dashboard_service_module, "base_api_statistics", return_value=[{"fixture": {"id": 1}}]
+        ) as mocked_call:
+            result = self.service._fetch_api_day_fixtures(date(2026, 9, 7))
+
+        self.assertTrue(mocked_call.called)
+        # 2 campionati configurati, stesso fixture id=1 in entrambi -> dedup a 1.
+        self.assertEqual(len(result), 1)
+
+    def test_fetch_api_live_fixtures_still_calls_when_quota_not_exhausted(self):
+        with mock.patch.object(dashboard_service_module, "is_quota_exhausted_today", return_value=False), mock.patch.object(
+            dashboard_service_module, "base_api_statistics", return_value=[]
+        ) as mocked_call:
+            self.service._fetch_api_live_fixtures()
+
+        self.assertTrue(mocked_call.called)
 
 
 if __name__ == "__main__":

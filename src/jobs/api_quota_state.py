@@ -135,4 +135,31 @@ def get_quota_snapshot() -> Optional[dict[str, Any]]:
     return state or None
 
 
+def is_quota_exhausted_today(snapshot: Optional[dict[str, Any]] = None) -> bool:
+    """True SOLO se l'ultimo check AUTORITATIVO (`status_error_message`,
+    popolato esclusivamente da un vero errore di quota GIORNALIERA - vedi
+    `record_status_snapshot`/`ApiSportsProvider._mark_quota_exhausted`, MAI
+    dalla sola stima passiva `daily_remaining` dimostrata inaffidabile da
+    sola) e' riferito alla giornata UTC CORRENTE: la quota si resetta a
+    mezzanotte UTC, quindi uno snapshot "esaurita" di ieri non e' piu' un
+    segnale valido oggi (senza questo controllo di data, un `error_message`
+    rimasto in cache mostrerebbe un falso allarme anche dopo il reset).
 
+    Usata per l'auto-pausa dei job schedulati quando la quota e' al 100%
+    (vedi `src/jobs/job_settings.py::sync_job_settings_with_quota`) e, lato
+    frontend, per disabilitare i bottoni che richiamano il provider esterno
+    (vedi `ApiQuotaResponse.daily_used_percentage`/`src/api/main.py`)."""
+    state = snapshot if snapshot is not None else get_quota_snapshot()
+    if not state:
+        return False
+    error_message = state.get("status_error_message")
+    updated_at = state.get("status_updated_at")
+    if not error_message or not updated_at:
+        return False
+    try:
+        dt = datetime.fromisoformat(updated_at)
+    except ValueError:
+        return False
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc).date() == datetime.now(timezone.utc).date()

@@ -30,7 +30,7 @@ import AppRouter from "./features/layout/AppRouter";
 import Sidebar from "./features/layout/Sidebar";
 import TopFilters from "./features/layout/TopFilters";
 import MatchDetailPanel from "./features/matches/components/MatchDetailPanel";
-import { todayIso } from "./features/shared/formatters";
+import { filterRowByMarket, todayIso } from "./features/shared/formatters";
 export default function App() {
   const [activePage, setActivePage] = useState("dashboard");
   const [selectedDate, setSelectedDate] = useState(todayIso());
@@ -71,6 +71,8 @@ export default function App() {
   const [jobSettingsLoading, setJobSettingsLoading] = useState(false);
   const [jobSettingsError, setJobSettingsError] = useState("");
   const [jobSettingsSavingId, setJobSettingsSavingId] = useState(null);
+  const [quotaPaused, setQuotaPaused] = useState(false);
+  const [quotaPausedSince, setQuotaPausedSince] = useState(null);
   const [apiQuota, setApiQuota] = useState(null);
   const [apiQuotaLoading, setApiQuotaLoading] = useState(false);
   const [apiQuotaError, setApiQuotaError] = useState("");
@@ -88,7 +90,27 @@ export default function App() {
     return [selectedMarket];
   }, [selectedMarket]);
   const safeRows = dayData?.rows || [];
+  // Filtro client-side (fase + mercato) sui dati GIA' scaricati da
+  // `loadDashboardData` (che ora richiede sempre tutte le fasi/mercati in
+  // un colpo solo): cambiare tab in Dashboard e' quindi istantaneo, nessuna
+  // nuova richiesta al backend ne' ricalcolo delle predizioni ML.
+  const dashboardDayData = useMemo(() => {
+    const rows = dayData?.rows || [];
+    const phaseRows = phaseFilter === "all" ? rows : rows.filter((row) => row.phase === phaseFilter);
+    const marketRows =
+      selectedMarket === "all" ? phaseRows : phaseRows.map((row) => filterRowByMarket(row, selectedMarket));
+    return { ...dayData, rows: marketRows, returned: marketRows.length };
+  }, [dayData, phaseFilter, selectedMarket]);
   const showMatchFilters = ["dashboard", "predictions"].includes(activePage);
+  // Segnale globale (non solo pagina Impostazioni) per disabilitare TUTTI i
+  // bottoni che richiamano il provider esterno API-Sports quando la quota
+  // giornaliera e' al 100% - stessa percentuale mostrata in Impostazioni
+  // (`apiQuota.daily_used_percentage`, che sia "live" o "estimated": qui
+  // conta cosa e' VISIBILE all'utente, non solo il check autoritativo usato
+  // lato backend per l'auto-pausa dei job schedulati). Un click su un
+  // bottone disabilitato fallirebbe comunque lato server con
+  // "quota_exceeded": disabilitarlo qui evita solo l'attesa inutile.
+  const isQuotaExhausted = Boolean(apiQuota?.available && (apiQuota?.daily_used_percentage ?? 0) >= 100);
   const refreshJobs = useCallback(async (options = {}) => {
     const rows = await getJobs(80, options);
     setJobsRows(rows?.rows || []);
@@ -100,12 +122,18 @@ export default function App() {
     return rows?.rows || [];
   }, []);
   const loadMetaData = useCallback(async () => {
-    const [healthData, marketsData, jobsData, predData, datesData] = await Promise.all([
+    const [healthData, marketsData, jobsData, predData, datesData, quotaData] = await Promise.all([
       getHealth(),
       getMarkets(),
       getJobs(80),
       getPredictions(80),
       getDashboardAvailableDates(),
+      // Fetch quota GLOBALE (non solo mentre la pagina Impostazioni e'
+      // aperta): serve a `isQuotaExhausted` sopra per disabilitare i
+      // bottoni ovunque. Rilegge solo la cache locale (nessuna chiamata
+      // reale consumata) - se fallisce non deve bloccare il resto del
+      // caricamento iniziale.
+      getApiQuota().catch(() => null),
     ]);
     setHealth({ ...healthData, apiBaseUrl: API_BASE_URL });
     const apiMarkets = marketsData?.markets || [];
@@ -117,9 +145,12 @@ export default function App() {
     setPredictionRows(predData?.rows || []);
     const dates = datesData?.dates || [];
     setAvailableDates(dates.length > 0 ? dates : [todayIso()]);
+    if (quotaData) {
+      setApiQuota(quotaData);
+    }
   }, []);
   const loadDashboardData = useCallback(
-    async (mode = "full") => {
+    async (mode = "full", { forceRefresh = false } = {}) => {
       if (mode === "full") {
         setIsLoading(true);
       } else if (mode === "filter") {
@@ -127,22 +158,30 @@ export default function App() {
       }
       setError("");
       try {
-        const phase = phaseFilter === "all" ? undefined : phaseFilter;
+        // NIENTE piu' `phase`/`markets` qui: si scarica SEMPRE il giorno
+        // intero con TUTTE le fasi e TUTTI i mercati (una sola volta per
+        // data/ricerca) - i tab Fase/Mercato filtrano poi istantaneamente
+        // in memoria (vedi `dashboardDayData` sotto), senza rifare la
+        // fetch/ricalcolare le predizioni ML ad ogni click sul tab.
         const [overviewData, livePayload, dayPayload] = await Promise.all([
           getDashboardOverview(selectedDate),
           getDashboardLive({
             targetDate: selectedDate,
             limit: 30,
-            withPredictions: true,
-            markets: marketsQuery,
+            // La preview "Partite in diretta" non mostra previsioni/badge:
+            // nessun bisogno di calcolarle qui (risparmio lato backend).
+            withPredictions: false,
           }),
           getDashboardDay({
             targetDate: selectedDate,
             limit: 400,
             withPredictions: true,
-            markets: marketsQuery,
-            phase,
             search: searchFilter || undefined,
+            // Bottone "Forza aggiornamento" (TopFilters): per i rari casi in
+            // cui serve ri-sincronizzare a mano anche una data storica gia'
+            // a DB (es. correzione tardiva quote/risultato dal provider) -
+            // vedi `DashboardService.get_day_matches::force_refresh`.
+            forceRefresh,
           }),
         ]);
         setOverview(overviewData);
@@ -160,8 +199,16 @@ export default function App() {
         }
       }
     },
-    [selectedDate, marketsQuery, phaseFilter, searchFilter]
+    [selectedDate, searchFilter]
   );
+  // Bottone "Forza aggiornamento" (TopFilters): richiama il provider
+  // esterno anche per una data storica gia' sincronizzata a DB (skip
+  // DB-first bypassato SOLO qui, mai il guard "quota esaurita" - vedi
+  // `is_quota_exhausted_today` in `dashboard_service.py`). Disabilitato a
+  // quota esaurita come tutti gli altri bottoni che chiamano API-Sports.
+  const handleForceRefreshDay = useCallback(() => {
+    loadDashboardData("filter", { forceRefresh: true });
+  }, [loadDashboardData]);
   const loadDataQuality = useCallback(async ({ topN = 20, seasons, leagues } = {}) => {
     setQualityLoading(true);
     setQualityError("");
@@ -302,6 +349,8 @@ export default function App() {
     try {
       const payload = await getJobSettings();
       setJobSettingsRows(payload?.jobs || []);
+      setQuotaPaused(Boolean(payload?.quota_paused));
+      setQuotaPausedSince(payload?.quota_paused_since || null);
       return payload;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -321,6 +370,8 @@ export default function App() {
       try {
         const payload = await updateJobSettings({ [jobId]: enabled });
         setJobSettingsRows(payload?.jobs || []);
+        setQuotaPaused(Boolean(payload?.quota_paused));
+        setQuotaPausedSince(payload?.quota_paused_since || null);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         setJobSettingsError(message);
@@ -416,24 +467,43 @@ export default function App() {
     // corso..." sul bottone Sidebar al semplice reload della pagina (quello
     // deve partire SOLO se l'utente clicca esplicitamente - richiesto
     // 2026-09-05). NON dipendere da `loadEverything` (la sua reference
-    // cambia ad ogni cambio di phaseFilter/selectedMarket/selectedDate/
-    // searchFilter tramite loadDashboardData) altrimenti ogni click su un
-    // tab/filtro rilancerebbe l'intero refresh pesante (bug "Aggiornamento
-    // in corso" ad ogni cambio tab).
+    // cambia ad ogni cambio di selectedDate/searchFilter tramite
+    // loadDashboardData) altrimenti ogni cambio data/ricerca rilancerebbe
+    // l'intero refresh pesante. phaseFilter/selectedMarket NON toccano piu'
+    // `loadDashboardData` (filtrati client-side, vedi `dashboardDayData`).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   useEffect(() => {
     const timer = setInterval(() => {
-      loadDashboardData("silent");
-      if (selectedFixtureId) {
-        loadMatchDetail(selectedFixtureId, true);
+      // Fix (2026-09-07): se la quota e' gia' segnalata esaurita, richiamare
+      // l'intera dashboard ogni 60s non serve a nulla (il backend rifiuta
+      // comunque le fetch esterne, vedi `is_quota_exhausted_today` in
+      // `dashboard_service.py`) - continua SOLO a rileggere `apiQuota`
+      // (cache locale, nessuna chiamata reale) per accorgersi del reset
+      // appena avviene, senza sprecare un giro di rete/query DB a vuoto.
+      if (!isQuotaExhausted) {
+        loadDashboardData("silent");
+        if (selectedFixtureId) {
+          loadMatchDetail(selectedFixtureId, true);
+        }
       }
+      // Tiene fresco `apiQuota` (e quindi `isQuotaExhausted`) ANCHE quando
+      // l'utente non e' sulla pagina Impostazioni - es. se la quota si
+      // esaurisce mentre si naviga altrove, i bottoni si disabilitano
+      // entro 60s senza dover aprire Impostazioni. Sempre solo cache
+      // locale, nessuna chiamata reale consumata da questo polling.
+      getApiQuota().then(setApiQuota).catch(() => {});
     }, 60000);
     return () => clearInterval(timer);
-  }, [loadDashboardData, loadMatchDetail, selectedFixtureId]);
+  }, [isQuotaExhausted, loadDashboardData, loadMatchDetail, selectedFixtureId]);
   useEffect(() => {
+    // Ricarica dal backend SOLO quando cambiano data o testo di ricerca
+    // (esplicito click "Cerca") - NON piu' su phaseFilter/selectedMarket,
+    // che ora filtrano istantaneamente in memoria i dati gia' scaricati
+    // (vedi `dashboardDayData` sotto): cambiare tab non deve mai piu'
+    // rifare un giro di rete che ricalcola le predizioni ML da capo.
     loadDashboardData("filter");
-  }, [selectedDate, selectedMarket, phaseFilter, searchFilter, loadDashboardData]);
+  }, [selectedDate, searchFilter, loadDashboardData]);
   useEffect(() => {
     if (!selectedFixtureId) {
       return;
@@ -540,7 +610,7 @@ export default function App() {
     dashboard: {
       overview,
       liveData,
-      dayData,
+      dayData: dashboardDayData,
       onOpenMatch: openMatchDetail,
       onOpenOracleDetail: openOracleDetail,
       selectedFixtureId,
@@ -577,6 +647,7 @@ export default function App() {
       health,
       jobsRows,
       onRefreshJobs: refreshJobs,
+      quotaExhausted: isQuotaExhausted,
     },
     mlLab: {
       asyncRun,
@@ -587,6 +658,7 @@ export default function App() {
       health,
       jobsRows,
       onRefreshJobs: refreshJobs,
+      quotaExhausted: isQuotaExhausted,
     },
     dataQuality: {
       report: qualityReport,
@@ -624,6 +696,8 @@ export default function App() {
       quotaLoading: apiQuotaLoading,
       quotaError: apiQuotaError,
       onRefreshQuota: refreshApiQuotaLive,
+      quotaPaused,
+      quotaPausedSince,
     },
   };
   return (
@@ -636,7 +710,9 @@ export default function App() {
         healthStatus={health.status}
         isRefreshing={fullRefreshRunning || isLoading}
         refreshJobRow={fullRefreshJobRow}
+        quotaExhausted={isQuotaExhausted}
       />
+
       <main className="content">
         {showMatchFilters && (
           <TopFilters
@@ -649,6 +725,8 @@ export default function App() {
             searchInput={searchInput}
             onChangeSearchInput={setSearchInput}
             onApplySearch={() => setSearchFilter(searchInput.trim())}
+            onForceRefresh={handleForceRefreshDay}
+            forceRefreshDisabled={isQuotaExhausted || isFilterLoading || isLoading}
           />
         )}
         {error && <div className="error-box">Errore: {error}</div>}

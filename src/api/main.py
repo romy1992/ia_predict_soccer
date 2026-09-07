@@ -73,7 +73,12 @@ from src.data.live.live_sync_job import run_manual_live_sync
 from src.repository.live_data_repository import LiveDataRepository
 from src.jobs.api_quota_state import get_quota_snapshot
 from src.jobs.job_history import JobHistory
-from src.jobs.job_settings import list_job_definitions, update_job_settings
+from src.jobs.job_settings import (
+    get_quota_pause_state,
+    list_job_definitions,
+    sync_job_settings_with_quota,
+    update_job_settings,
+)
 from src.jobs.scheduler import (
     run_daily_refresh,
     run_manual_future_sync,
@@ -260,7 +265,11 @@ def dashboard_day(
     markets: Optional[str] = None,
     phase: Optional[str] = None,
     search: Optional[str] = None,
+    force_refresh: bool = False,
 ) -> DashboardDayResponse:
+    """`force_refresh=true` (bottone "Forza aggiornamento" in Dashboard):
+    bypassa lo skip DB-first per date storiche gia' sincronizzate (mai il
+    guard quota-esaurita, vedi `DashboardService.get_day_matches`)."""
     selected_markets = [item.strip() for item in markets.split(",")] if markets else None
     service = DashboardService()
     payload = service.get_day_matches(
@@ -270,6 +279,7 @@ def dashboard_day(
         markets=selected_markets,
         phase=phase,
         search_text=search,
+        force_refresh=force_refresh,
     )
     return DashboardDayResponse(**payload.__dict__)
 
@@ -948,8 +958,21 @@ def monitoring_alerts(market: Optional[str] = None) -> MonitoringAlertsResponse:
 def get_settings_jobs() -> JobSettingsResponse:
     """Pagina Impostazioni: stato enabled/disabled corrente di ciascun job
     schedulato (`src/jobs/scheduler.py`), letto da `job_settings.json`
-    (file condiviso tra i container `api` e `scheduler`)."""
-    return JobSettingsResponse(jobs=list_job_definitions())
+    (file condiviso tra i container `api` e `scheduler`).
+
+    Prima della lettura sincronizza l'auto-pausa per quota esaurita
+    (`sync_job_settings_with_quota`, idempotente): se la quota API-Sports
+    e' al 100% oggi, tutti i job risultano qui gia' disabilitati e
+    `quota_paused=True` - il container `scheduler` fa la STESSA verifica
+    autonomamente ad ogni tick, quindi il risultato e' coerente anche se
+    nessuno apre mai questa pagina."""
+    sync_job_settings_with_quota()
+    pause_state = get_quota_pause_state()
+    return JobSettingsResponse(
+        jobs=list_job_definitions(),
+        quota_paused=bool(pause_state.get("paused_date")),
+        quota_paused_since=pause_state.get("paused_date"),
+    )
 
 
 @app.post("/settings/jobs", response_model=JobSettingsResponse)
@@ -957,12 +980,27 @@ def post_settings_jobs(payload: JobSettingsUpdateRequest) -> JobSettingsResponse
     """Aggiorna (merge parziale) i flag enabled/disabled dei job. Il
     container `scheduler` verifica questo stato PRIMA di ogni esecuzione
     (non solo all'avvio), quindi il toggle ha effetto immediato senza
-    restart di nessun container."""
+    restart di nessun container.
+
+    Se la quota e' esaurita oggi, l'auto-pausa (`sync_job_settings_with_quota`,
+    chiamata anche qui SUBITO DOPO l'update) corregge di nuovo a
+    disabilitato un eventuale toggle manuale sui SOLI job che chiamano
+    API-Sports (`data_daily_refresh`/`data_sync_today`/`data_future_sync`/
+    `data_sync_live`): la risposta di questa chiamata riflette gia' il
+    valore corretto (mai "acceso" per un solo istante). `data_settlement`/
+    `ml_training` non sono mai toccati dall'auto-pausa (non chiamano il
+    provider esterno) e un loro toggle ha sempre effetto reale."""
     try:
         update_job_settings(payload.updates)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return JobSettingsResponse(jobs=list_job_definitions())
+    sync_job_settings_with_quota()
+    pause_state = get_quota_pause_state()
+    return JobSettingsResponse(
+        jobs=list_job_definitions(),
+        quota_paused=bool(pause_state.get("paused_date")),
+        quota_paused_since=pause_state.get("paused_date"),
+    )
 
 
 def _is_today_utc(iso_ts: Optional[str]) -> bool:
