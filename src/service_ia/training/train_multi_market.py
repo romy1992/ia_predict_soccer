@@ -212,7 +212,7 @@ def _model_space(selection_method: str, feature_count: int) -> dict[str, tuple[P
                     (
                         "model",
                         RandomForestClassifier(
-                            n_estimators=500,
+                            n_estimators=200,
                             random_state=42,
                             n_jobs=-1,
                             class_weight="balanced",
@@ -222,9 +222,16 @@ def _model_space(selection_method: str, feature_count: int) -> dict[str, tuple[P
             ),
             {
                 **selector_grid_rf,
-                "model__max_depth": [None, 8, 16, 24],
-                "model__min_samples_split": [2, 5, 10],
-                "model__min_samples_leaf": [1, 2, 4],
+                # Griglia alleggerita (era n_estimators=500 fisso x max_depth
+                # 4 valori x min_samples_split 3 x min_samples_leaf 3 = 36
+                # combinazioni x selector_k x 5 fold): su dataset con 13+
+                # stagioni storiche mandava il processo in MemoryError prima
+                # di completare (nessun modello mai salvato). Ora
+                # n_estimators=200 (fisso, sopra) x 2x2x2=8 combinazioni,
+                # ~11x meno lavoro totale, stessa logica di selezione.
+                "model__max_depth": [8, 16],
+                "model__min_samples_split": [2, 10],
+                "model__min_samples_leaf": [1, 4],
             },
         ),
     }
@@ -379,7 +386,18 @@ def train_market(
             stack_method="predict_proba",
             passthrough=True,
             n_jobs=-1,
-            cv=cv_splits,
+            # cv intero (non `cv_splits`, il walk-forward esterno): l'interno
+            # di StackingClassifier rigenera le meta-feature OOF con questo cv
+            # su QUALSIASI X gli venga passato in fit() - qui sotto sia
+            # l'intero X, sia sottoinsiemi piu' piccoli (cross_val_score con
+            # cv=cv_splits chiama stacking.fit() su ogni train_idx, e
+            # temporal_oof_probabilities/CalibrationService fanno lo stesso
+            # per ciascun fold). `cv_splits` referenzia posizioni del dataset
+            # COMPLETO: riusato come cv interno su un sottoinsieme piu'
+            # piccolo produce split che non partizionano piu' i dati passati
+            # ("cross_val_predict only works for partitions", ValueError
+            # sistematico - MAI stato eseguito con successo finora).
+            cv=5,
         )
         with parallel_backend("threading", n_jobs=-1):
             stacking_score = cross_val_score(stacking, X, y, scoring=scorer, cv=cv_splits, n_jobs=-1).mean()
