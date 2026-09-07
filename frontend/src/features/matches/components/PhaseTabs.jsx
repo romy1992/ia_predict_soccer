@@ -21,4 +21,3 @@ export default function PhaseTabs({ phases, value, onChange }) {
     </div>
   );
 }
-

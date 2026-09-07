@@ -7,6 +7,7 @@ export default function OpsPage({
   health,
   jobsRows,
   onRefreshJobs,
+  quotaExhausted,
 }) {
   return (
     <section className="stack">
@@ -23,11 +24,18 @@ export default function OpsPage({
             />
             <span>Esegui async</span>
           </label>
-          <button className="btn-primary" onClick={onImport}>Import giornaliero</button>
+          <button className="btn-primary" onClick={onImport} disabled={quotaExhausted}>Import giornaliero</button>
           <button className="btn-primary" onClick={onRetrain}>Retrain mercati</button>
         </div>
+        {quotaExhausted && (
+          <div className="error-box">
+            ⚠️ Quota API-Sports al 100% per oggi: "Import giornaliero" disabilitato (chiama il provider esterno) fino
+            al reset di mezzanotte UTC. "Retrain mercati" resta disponibile (lavora solo sui dati gia' a DB).
+          </div>
+        )}
         {opsMessage && <pre className="code-block">{opsMessage}</pre>}
       </section>
+
 
       <section className="panel">
         <div className="panel-header">

@@ -140,3 +140,27 @@ export function severityClass(severity) {
   return "value-play";
 }
 
+/**
+ * Filtra una riga (dayData.rows) per un singolo mercato SENZA una nuova
+ * fetch al backend: la riga arriva gia' con le predizioni di TUTTI i
+ * mercati (vedi `App.jsx::loadDashboardData`, che scarica sempre
+ * fase+mercato "Tutti" una sola volta per data/ricerca) - il cambio tab
+ * Mercato/Fase deve quindi essere istantaneo, solo un filtro locale sugli
+ * oggetti gia' in memoria (`predictions`/`decision_cards`), mai un nuovo
+ * giro di rete che ricalcola le predizioni ML per centinaia di fixture.
+ */
+export function filterRowByMarket(row, market) {
+  if (!market || market === "all") {
+    return row;
+  }
+  const predictions = row.predictions || {};
+  const filteredPredictions = predictions[market] ? { [market]: predictions[market] } : {};
+  const decisionCards = (row.decision_cards || []).filter((card) => card.market === market);
+  return {
+    ...row,
+    predictions: filteredPredictions,
+    decision_cards: decisionCards,
+    best_decision: decisionCards[0] || null,
+  };
+}
+

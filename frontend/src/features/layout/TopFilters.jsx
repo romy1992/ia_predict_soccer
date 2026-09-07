@@ -10,6 +10,8 @@ export default function TopFilters({
   searchInput,
   onChangeSearchInput,
   onApplySearch,
+  onForceRefresh,
+  forceRefreshDisabled,
 }) {
   const dateOptions = availableDates && availableDates.length > 0 ? availableDates : [selectedDate];
 
@@ -55,6 +57,14 @@ export default function TopFilters({
         </label>
 
         <button className="btn-secondary" onClick={onApplySearch}>Cerca</button>
+        <button
+          className="btn-secondary"
+          onClick={onForceRefresh}
+          disabled={forceRefreshDisabled}
+          title="Casi eccezionali: ri-forza la sincronizzazione con il provider esterno anche per date gia' presenti a DB (es. correzione tardiva di quote/risultato)"
+        >
+           Forza aggiornamento
+        </button>
       </div>
     </header>
   );

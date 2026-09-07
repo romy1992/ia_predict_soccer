@@ -12,7 +12,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 
 from src.data.live.live_sync_job import run_manual_live_sync
 from src.jobs.job_history import JobHistory
-from src.jobs.job_settings import is_job_enabled
+from src.jobs.job_settings import is_job_enabled, sync_job_settings_with_quota
 from src.service_ia.config.app_config import AppConfig, load_app_config
 from src.service_ia.pre_processing.download_match_service import calculate_mean, download_import_matches
 from src.service_ia.pre_processing.settlement_service import SettlementService
@@ -365,7 +365,14 @@ def _run_if_enabled(job_id: str, func, **kwargs) -> Optional[dict]:
     """Esegue `func` SOLO se il job e' abilitato in `job_settings.json`
     (pagina Impostazioni), controllato ad OGNI tick e non solo alla
     registrazione: un toggle da frontend ha quindi effetto immediato,
-    senza richiedere il restart del container `scheduler`."""
+    senza richiedere il restart del container `scheduler`.
+
+    Prima del check enabled/disabled, sincronizza l'auto-pausa per quota
+    esaurita (`sync_job_settings_with_quota`, mai un'eccezione propagata):
+    se la quota API-Sports e' al 100% (check autoritativo di oggi) TUTTI i
+    job vengono disattivati fino al reset di domani, ripristinando poi
+    esattamente lo stato precedente - vedi `src/jobs/job_settings.py`."""
+    sync_job_settings_with_quota()
     if not is_job_enabled(job_id):
         logging.info("Job '%s' disabilitato da Impostazioni: skip esecuzione.", job_id)
         return None
@@ -500,8 +507,3 @@ def start_scheduler() -> None:
 
 if __name__ == "__main__":
     start_scheduler()
-
-
-
-
-

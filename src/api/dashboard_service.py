@@ -14,6 +14,7 @@ from sqlalchemy.exc import OperationalError, ProgrammingError
 from sqlalchemy.orm import selectinload
 
 from src.ml.baselines.bookmaker_baseline import build_fixture_baseline, get_market_outcome_baseline
+from src.jobs.api_quota_state import is_quota_exhausted_today
 from src.oracle.decision_engine.decision_policy import evaluate_decision_from_fair_odds_outcome
 from src.oracle.fair_odds.fair_odds_engine import build_fair_odds_outcome
 from src.repository.base.repository_db import SessionLocal
@@ -148,11 +149,23 @@ class DashboardService:
         lower_or_equal = [s for s in seasons if s <= target_date.year]
         return max(lower_or_equal) if lower_or_equal else max(seasons)
 
-    def _fetch_api_day_fixtures(self, target_date: date) -> list[dict[str, Any]]:
+    def _fetch_api_day_fixtures(self, target_date: date, force_refresh: bool = False) -> list[dict[str, Any]]:
         cache_key = f"day:{target_date.isoformat()}"
-        cached = self._cache_get(cache_key)
-        if cached is not None:
-            return cached
+        if not force_refresh:
+            cached = self._cache_get(cache_key)
+            if cached is not None:
+                return cached
+        # Fix (2026-09-07): con la quota GIA' segnalata esaurita OGGI (check
+        # autoritativo, mai la sola stima passiva - vedi
+        # `is_quota_exhausted_today`), non ha senso tentare comunque la
+        # chiamata: fallirebbe e basta, sprecando tempo/rete e rischiando
+        # ulteriori penalita' dal provider. Protegge OGNI punto di ingresso
+        # (polling frontend ogni 60s, job schedulati, richieste manuali,
+        # incluso il bottone "Forza aggiornamento" - `force_refresh` bypassa
+        # SOLO la cache/lo skip DB-first, MAI questo guard) in un colpo
+        # solo, indipendentemente da chi chiama questo metodo.
+        if is_quota_exhausted_today():
+            return []
 
         season = self._season_for_date(target_date)
         fixtures: list[dict[str, Any]] = []
@@ -176,6 +189,8 @@ class DashboardService:
         cached = self._cache_get(cache_key)
         if cached is not None:
             return cached
+        if is_quota_exhausted_today():
+            return []
 
         fixtures: list[dict[str, Any]] = []
         for league in self.cfg.leagues or []:
@@ -195,6 +210,8 @@ class DashboardService:
         cached = self._cache_get(cache_key)
         if cached is not None:
             return cached
+        if is_quota_exhausted_today():
+            return None
 
         try:
             payload = base_api_statistics(path="fixtures", params={"id": fixture_id})
@@ -210,6 +227,8 @@ class DashboardService:
         cached = self._cache_get(cache_key)
         if cached is not None:
             return cached
+        if is_quota_exhausted_today():
+            return []
 
         try:
             payload = base_api_statistics(path="fixtures/events", params={"fixture": fixture_id})
@@ -225,6 +244,8 @@ class DashboardService:
         cached = self._cache_get(cache_key)
         if cached is not None:
             return cached
+        if is_quota_exhausted_today():
+            return None
 
         try:
             payload = base_api_statistics(path="odds", params={"fixture": fixture_id})
@@ -720,7 +741,7 @@ class DashboardService:
         }
 
         if with_predictions and markets:
-            predictions = self._predict_fixture(fixture_id=fixture_id, markets=markets)
+            predictions = self._predict_fixture(fixture_id=fixture_id, markets=markets, db_match=db_match)
             row["predictions"] = predictions
             row["decision_cards"], row["best_decision"] = self._decisions_for_row(
                 row=row, predictions=predictions, db_match=db_match
@@ -757,7 +778,9 @@ class DashboardService:
             self._model_cache[model_path] = joblib.load(model_path)
         return self._model_cache[model_path]
 
-    def _predict_fixture(self, fixture_id: int, markets: list[str]) -> dict[str, Any]:
+    def _predict_fixture(
+        self, fixture_id: int, markets: list[str], db_match: Optional[Match] = None
+    ) -> dict[str, Any]:
         if not markets:
             return {}
 
@@ -765,6 +788,18 @@ class DashboardService:
         cached = self._prediction_cache.get(cache_key)
         if cached is not None:
             return cached
+
+        # Fix performance (cambio giorno lento): UNA query Match condivisa
+        # tra TUTTI i mercati (`build_prediction_frames`), invece di una
+        # query per mercato come faceva il vecchio `build_prediction_frame`
+        # chiamato in loop qui sotto. Se il chiamante ha GIA' un `Match` ORM
+        # caricato in batch (`db_match`, vedi `_serialize_api_fixture`/
+        # `_serialize_match`, entrambe riusano `_fetch_matches` con
+        # selectinload su TUTTA la finestra di date), ZERO query aggiuntive.
+        if db_match is not None:
+            frames = self.filter_service.build_prediction_frames_from_match(db_match, markets)
+        else:
+            frames = self.filter_service.build_prediction_frames(fixture_id=fixture_id, markets=markets)
 
         payload: dict[str, Any] = {}
         for market in markets:
@@ -776,7 +811,7 @@ class DashboardService:
             if not model_path or not os.path.exists(model_path):
                 continue
 
-            frame = self.filter_service.build_prediction_frame(market=market, fixture_id=fixture_id)
+            frame = frames.get(market)
             if frame is None or frame.empty:
                 continue
 
@@ -829,7 +864,7 @@ class DashboardService:
         }
 
         if with_predictions and match.id_fixture:
-            predictions = self._predict_fixture(fixture_id=match.id_fixture, markets=markets)
+            predictions = self._predict_fixture(fixture_id=match.id_fixture, markets=markets, db_match=match)
             row["predictions"] = predictions
             # Riga gia' dal DB locale: `match.odds` e' gia' caricato via
             # `selectinload` dalla query unica di `_fetch_matches` (nessuna
@@ -903,6 +938,7 @@ class DashboardService:
         markets: Optional[list[str]] = None,
         phase: Optional[str] = None,
         search_text: Optional[str] = None,
+        force_refresh: bool = False,
     ) -> DashboardDayData:
         model_markets = self._normalize_market_request(markets) or self.registry.list_markets()
         rows: list[dict[str, Any]] = []
@@ -913,25 +949,59 @@ class DashboardService:
         # sia per le righe DB-only piu' sotto (nessuna query duplicata).
         db_by_fixture = self._db_matches_lookup(target_date)
 
-        for fixture in self._fetch_api_day_fixtures(target_date):
-            fixture_id = self._fixture_id_from_api(fixture)
-            row = self._serialize_api_fixture(
-                fixture,
-                with_predictions=with_predictions,
-                markets=model_markets,
-                db_match=db_by_fixture.get(fixture_id) if fixture_id is not None else None,
-            )
-            if not row:
-                continue
-            if row.get("date") and row.get("date") != target_date.isoformat():
-                continue
-            if phase and row["phase"] != phase:
-                continue
-            if not self._passes_search(row, search_text):
-                continue
+        # Fix quota API-Sports (2026-09-07): il DB locale viene sincronizzato
+        # quotidianamente (job "Aggiorna tutto"/`data_daily_refresh` +
+        # `data_sync_today`/`future_sync`, vedi
+        # `AppConfig.daily_refresh_days_ahead`) per la finestra ieri ->
+        # oggi+N giorni, su TUTTI i campionati censiti.
+        #
+        # Distinzione STORICHE vs OGGI/FUTURE (raffinata 2026-09-07): una
+        # partita gia' CONCLUSA (data < oggi UTC) ha risultato/quote ormai
+        # DEFINITIVI - se il DB ha gia' la fixture, il provider esterno non
+        # verra' MAI piu' interrogato per quella data (spreco di quota
+        # altrimenti evitabile). Una partita di OGGI o FUTURA invece puo'
+        # ancora subire cambi (quote in movimento, rinvio/spostamento data,
+        # nuove convocazioni) anche se il DB ha gia' un dato sincronizzato
+        # nelle ultime 24h dal job schedulato - qui l'API resta la fonte
+        # primaria, protetta comunque dalla cache TTL 60s
+        # (`_fetch_api_day_fixtures`) e dal guard "quota esaurita" (nessuno
+        # spreco quando i dati sono gia' freschi o la quota e' finita).
+        today_utc = datetime.now(timezone.utc).date()
+        is_historical_date = target_date < today_utc
 
-            rows.append(row)
-            seen_fixtures.add(row["fixture_id"])
+        db_has_target_date = any(
+            (dt := self._parse_datetime(match.date_match)) and dt.date() == target_date
+            for match in db_by_fixture.values()
+        )
+        # `force_refresh` (bottone "Forza aggiornamento" in Dashboard, per i
+        # rari casi in cui serve ri-sincronizzare a mano anche una data
+        # storica gia' a DB - es. dato importato errato, correzione tardiva
+        # del provider) bypassa lo skip DB-first e la cache TTL, MA MAI il
+        # guard "quota esaurita" in `_fetch_api_day_fixtures` (nessun
+        # bottone puo' forzare una chiamata quando la quota e' al 100%,
+        # stessa policy di tutti gli altri bottoni che chiamano API-Sports).
+        skip_api = not force_refresh and is_historical_date and db_has_target_date
+
+        if not skip_api:
+            for fixture in self._fetch_api_day_fixtures(target_date, force_refresh=force_refresh):
+                fixture_id = self._fixture_id_from_api(fixture)
+                row = self._serialize_api_fixture(
+                    fixture,
+                    with_predictions=with_predictions,
+                    markets=model_markets,
+                    db_match=db_by_fixture.get(fixture_id) if fixture_id is not None else None,
+                )
+                if not row:
+                    continue
+                if row.get("date") and row.get("date") != target_date.isoformat():
+                    continue
+                if phase and row["phase"] != phase:
+                    continue
+                if not self._passes_search(row, search_text):
+                    continue
+
+                rows.append(row)
+                seen_fixtures.add(row["fixture_id"])
 
         for match in db_by_fixture.values():
             dt_value = self._parse_datetime(match.date_match)
@@ -1025,7 +1095,17 @@ class DashboardService:
         }
 
     def get_overview(self, target_date: date) -> dict[str, Any]:
-        day = self.get_day_matches(target_date=target_date, limit=0, with_predictions=True)
+        # Fix performance (cambio giorno lento): il frontend (DashboardPage)
+        # usa SOLO `counts.total/live/to_play` e `model_markets.length` da
+        # questa risposta - MAI i valori delle predizioni dentro
+        # `day_highlights`/`live_preview`/`counts.with_prediction` (verificato
+        # su tutto il frontend). Prima con `with_predictions=True` questo
+        # endpoint ricalcolava le predizioni ML per OGNI fixture del giorno
+        # (limit=0, nessun limite) in aggiunta a `/dashboard/day`, chiamato in
+        # parallelo dallo stesso `loadDashboardData` - un secondo giro
+        # IDENTICO e completamente inutilizzato di query DB + inferenza
+        # modello per ogni cambio data/ricerca.
+        day = self.get_day_matches(target_date=target_date, limit=0, with_predictions=False)
 
         live_count = 0
         to_play_count = 0
@@ -1155,7 +1235,11 @@ class DashboardService:
                 "model_markets": model_markets,
             }
 
-        predictions = self._predict_fixture(fixture_id=fixture_id, markets=model_markets) if with_predictions else {}
+        predictions = (
+            self._predict_fixture(fixture_id=fixture_id, markets=model_markets, db_match=db_match)
+            if with_predictions
+            else {}
+        )
         fixture_row["predictions"] = predictions
 
         events = self._fetch_api_events(fixture_id)

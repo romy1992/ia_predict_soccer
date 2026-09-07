@@ -56,7 +56,15 @@ export function getDashboardLive({ targetDate, limit = 20, withPredictions = tru
   return request(`/dashboard/live?${params.toString()}`);
 }
 
-export function getDashboardDay({ targetDate, limit = 300, withPredictions = true, markets, phase, search } = {}) {
+export function getDashboardDay({
+  targetDate,
+  limit = 300,
+  withPredictions = true,
+  markets,
+  phase,
+  search,
+  forceRefresh = false,
+} = {}) {
   const params = new URLSearchParams();
   if (targetDate) {
     params.set("target_date", targetDate);
@@ -73,6 +81,9 @@ export function getDashboardDay({ targetDate, limit = 300, withPredictions = tru
   }
   if (search) {
     params.set("search", search);
+  }
+  if (forceRefresh) {
+    params.set("force_refresh", "true");
   }
   return request(`/dashboard/day?${params.toString()}`);
 }

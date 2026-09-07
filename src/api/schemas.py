@@ -109,10 +109,22 @@ class JobSettingRow(BaseModel):
     label: str
     description: str
     enabled: bool
+    # True per i job che chiamano DAVVERO il provider esterno API-Sports
+    # (quindi coinvolti dall'auto-pausa per quota esaurita - vedi
+    # `src/jobs/job_settings.py::QUOTA_SENSITIVE_JOB_IDS`): `data_settlement`
+    # e `ml_training` lavorano solo su dati gia' a DB e restano `False`.
+    calls_api_sports: bool = False
 
 
 class JobSettingsResponse(BaseModel):
     jobs: list[JobSettingRow]
+    # Auto-pausa per quota API-Sports esaurita (vedi
+    # `src/jobs/job_settings.py::sync_job_settings_with_quota`): quando
+    # `quota_paused=True` tutti i job risultano forzatamente disabilitati
+    # fino al reset della quota (`quota_paused_since`, data UTC ISO), poi
+    # ripristinati automaticamente allo stato precedente.
+    quota_paused: bool = False
+    quota_paused_since: Optional[str] = None
 
 
 class JobSettingsUpdateRequest(BaseModel):
@@ -441,11 +453,3 @@ for _name, _obj in list(globals().items()):
     if isinstance(_obj, type) and issubclass(_obj, BaseModel) and _obj is not BaseModel:
         _obj.model_rebuild(force=True)
 del _name, _obj
-
-
-
-
-
-
-
-

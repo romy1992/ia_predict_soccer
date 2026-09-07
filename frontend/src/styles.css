@@ -56,6 +56,11 @@ body {
   line-height: 1.4;
 }
 
+.sidebar-refresh-hint.quota-exhausted-hint {
+  color: #ffb4b4;
+  font-weight: 600;
+}
+
 .sidebar .job-status-banner {
   font-size: 12px;
   margin-top: 0;
@@ -137,6 +142,11 @@ button {
 
 button {
   cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 .btn-primary {
@@ -311,6 +321,18 @@ button {
   color: #2952c8;
   margin-left: 8px;
 }
+
+.quota-pill {
+  background: #fff1d6;
+  color: #8a5a00;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  margin-left: 8px;
+  vertical-align: middle;
+}
+
 
 .live-grid {
   display: grid;

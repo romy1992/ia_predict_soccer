@@ -37,6 +37,8 @@ export default function SettingsPage({
   quotaLoading,
   quotaError,
   onRefreshQuota,
+  quotaPaused,
+  quotaPausedSince,
 }) {
   const percentage = quota?.daily_used_percentage ?? null;
   const barWidth = Math.min(Math.max(percentage ?? 0, 0), 100);
@@ -107,13 +109,30 @@ export default function SettingsPage({
           scheduler.
         </p>
 
+        {quotaPaused && (
+          <div className="error-box">
+            ⏸️ I job che chiamano API-Sports (Aggiorna tutto/Sync oggi/Sync futuro/Sync live) sono stati messi
+            automaticamente in pausa il {quotaPausedSince || "oggi"}: la quota giornaliera risultava esaurita al 100%.
+            Riprenderanno da soli non appena la quota si resetta (mezzanotte UTC) - un toggle manuale su questi job
+            viene corretto di nuovo finche' la pausa e' attiva. Settlement e Retrain modelli non lavorano con
+            API-Sports: restano sempre disponibili.
+          </div>
+        )}
+
         {error && <div className="error-box">Errore: {error}</div>}
 
         <div className="settings-jobs-list">
           {jobs.map((job) => (
             <div className="settings-job-row" key={job.job_id}>
               <div className="settings-job-info">
-                <strong>{job.label}</strong>
+                <strong>
+                  {job.label}
+                  {job.calls_api_sports && (
+                    <span className="pill quota-pill" title="Chiama il provider esterno API-Sports">
+                      API-Sports
+                    </span>
+                  )}
+                </strong>
                 <small className="muted">{job.description}</small>
               </div>
               <label className="switch">
@@ -133,5 +152,4 @@ export default function SettingsPage({
     </section>
   );
 }
-
 

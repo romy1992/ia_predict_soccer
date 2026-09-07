@@ -52,6 +52,7 @@ export default function Sidebar({
   healthStatus,
   isRefreshing,
   refreshJobRow,
+  quotaExhausted,
 }) {
   return (
     <aside className="sidebar">
@@ -60,7 +61,7 @@ export default function Sidebar({
         <p>Live center + predizioni</p>
       </div>
 
-      <button className="btn-primary full" onClick={onRefreshAll} disabled={isRefreshing}>
+      <button className="btn-primary full" onClick={onRefreshAll} disabled={isRefreshing || quotaExhausted}>
         {isRefreshing ? (
           <>
             <span className="spinner" />
@@ -70,9 +71,16 @@ export default function Sidebar({
           "Aggiorna tutto"
         )}
       </button>
-      <small className="sidebar-refresh-hint">
-        Ieri (risultati+quote) + prossimi 7 giorni, tutti i campionati censiti.
-      </small>
+      {quotaExhausted && !isRefreshing ? (
+        <small className="sidebar-refresh-hint quota-exhausted-hint">
+          ⚠️ Quota API-Sports al 100%: riprova dopo il reset di mezzanotte UTC.
+        </small>
+      ) : (
+        <small className="sidebar-refresh-hint">
+          Ieri (risultati+quote) + prossimi 7 giorni, tutti i campionati censiti.
+        </small>
+      )}
+
       {isRefreshing && (
         <div className="progress-bar">
           <div className="progress-bar-fill" />
