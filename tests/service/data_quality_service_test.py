@@ -122,6 +122,99 @@ class TestDataQualityService(unittest.TestCase):
         self.assertEqual(report["source"]["filters"]["leagues"], [135])
 
 
+def _mean_stats(id_home: int, id_away: int) -> list[dict]:
+    return [
+        {"id_team": id_home, "Shots on Goal": 5},
+        {"id_team": id_away, "Shots on Goal": 3},
+    ]
+
+
+def _build_under_over_matches() -> list[Match]:
+    # match_all: FT, odds per TUTTE e 4 le soglie, total_goals=3 (over 1.5/2.5, under 3.5/4.5).
+    match_all = Match(
+        id_match_fk="u1", id_fixture=2001, id_team_home=10, id_team_away=20,
+        date_match="2026-01-01T18:00:00+00:00", current_league=135, season=2026, status="FT",
+    )
+    match_all.statistics = [Statistics(statistics_team_id=10, score_ft=2), Statistics(statistics_team_id=20, score_ft=1)]
+    match_all.mean_statistics = _mean_stats(10, 20)
+    match_all.odds = [Odds(
+        under_over_1_5={"over_bookA": "1.30"}, under_over_2_5={"over_bookA": "1.90"},
+        under_over_3_5={"over_bookA": "3.00"}, under_over_4_5={"over_bookA": "5.00"},
+    )]
+
+    # match_only_2_5: FT, odds SOLO per 2.5, total_goals=1 (under su tutte le soglie).
+    match_only_2_5 = Match(
+        id_match_fk="u2", id_fixture=2002, id_team_home=11, id_team_away=21,
+        date_match="2026-01-02T18:00:00+00:00", current_league=135, season=2026, status="FT",
+    )
+    match_only_2_5.statistics = [Statistics(statistics_team_id=11, score_ft=1), Statistics(statistics_team_id=21, score_ft=0)]
+    match_only_2_5.mean_statistics = _mean_stats(11, 21)
+    match_only_2_5.odds = [Odds(under_over_2_5={"over_bookA": "1.90"})]
+
+    # match_not_ft: NS, non deve contare in fixtures_ft_total.
+    match_not_ft = Match(
+        id_match_fk="u3", id_fixture=2003, id_team_home=12, id_team_away=22,
+        date_match="2026-01-03T18:00:00+00:00", current_league=135, season=2026, status="NS",
+    )
+    match_not_ft.statistics = []
+    match_not_ft.mean_statistics = None
+    match_not_ft.odds = [Odds(under_over_1_5={"over_bookA": "1.30"})]
+
+    # match_no_odds: FT ma senza NESSUNA quota -> escluso da tutte le soglie.
+    match_no_odds = Match(
+        id_match_fk="u4", id_fixture=2004, id_team_home=13, id_team_away=23,
+        date_match="2026-01-04T18:00:00+00:00", current_league=135, season=2026, status="FT",
+    )
+    match_no_odds.statistics = [Statistics(statistics_team_id=13, score_ft=1), Statistics(statistics_team_id=23, score_ft=1)]
+    match_no_odds.mean_statistics = _mean_stats(13, 23)
+    match_no_odds.odds = []
+
+    return [match_all, match_only_2_5, match_not_ft, match_no_odds]
+
+
+class TestBuildUnderOverThresholdReport(unittest.TestCase):
+    def test_reports_odds_coverage_and_usable_rows_per_threshold(self):
+        service = DataQualityService(
+            match_repo=FakeMatchRepo(_build_under_over_matches()),
+            snapshot_repo=FakeSnapshotRepo([]),
+        )
+
+        report = service.build_under_over_threshold_report(min_train_rows=1, min_valid_rows=1, n_splits=2)
+
+        self.assertEqual(report["fixtures_ft_total"], 3)  # match_not_ft escluso
+
+        over_1_5 = report["per_threshold"]["under_over_1_5"]
+        self.assertEqual(over_1_5["fixtures_with_odds_for_market"], 1)  # solo match_all
+        self.assertEqual(over_1_5["usable_rows_for_training"], 1)
+        self.assertEqual(over_1_5["class_balance"], {"under_0": 0, "over_1": 1})
+        self.assertEqual(over_1_5["positive_class_ratio_over"], 1.0)
+
+        over_2_5 = report["per_threshold"]["under_over_2_5"]
+        self.assertEqual(over_2_5["fixtures_with_odds_for_market"], 2)  # match_all + match_only_2_5
+        self.assertEqual(over_2_5["usable_rows_for_training"], 2)
+        self.assertEqual(over_2_5["class_balance"], {"under_0": 1, "over_1": 1})
+
+        over_4_5 = report["per_threshold"]["under_over_4_5"]
+        self.assertEqual(over_4_5["fixtures_with_odds_for_market"], 1)
+        self.assertEqual(over_4_5["class_balance"], {"under_0": 1, "over_1": 0})
+
+        # Solo match_all ha ODDS per TUTTE e 4 le soglie contemporaneamente.
+        self.assertEqual(report["cross_threshold"]["fixtures_with_all_four_thresholds_odds_available"], 1)
+
+    def test_accepts_preloaded_matches_without_extra_query(self):
+        """`matches` pre-caricato deve essere riusato COSI' COM'E' (nessuna
+        chiamata a `match_repo.search_all`, verificato forzando un repo che
+        solleverebbe se interrogato)."""
+
+        class ExplodingMatchRepo:
+            def search_all(self):
+                raise AssertionError("search_all non deve essere chiamato quando 'matches' e' gia' fornito")
+
+        service = DataQualityService(match_repo=ExplodingMatchRepo(), snapshot_repo=FakeSnapshotRepo([]))
+        report = service.build_under_over_threshold_report(matches=_build_under_over_matches())
+        self.assertEqual(report["fixtures_ft_total"], 3)
+
+
 if __name__ == "__main__":
     unittest.main()
 
