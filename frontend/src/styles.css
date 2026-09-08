@@ -651,6 +651,22 @@ th {
   color: #9b1414;
 }
 
+/* Segnale "Bet Over" (2026-09-08): INDIPENDENTE da .value-badge sopra -
+   puo' comparire anche quando il pick mostrato e' "Under" (vedi
+   over_signal_policy.py). Stessa palette verde di .value-play (segnale
+   positivo), ma badge distinto per non confonderlo con PLAY/BORDERLINE/NO
+   BET (logiche diverse, soglie diverse). */
+.bet-over-badge {
+  display: inline-block;
+  margin: 4px 0;
+  border-radius: 999px;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  background: #daf6e1;
+  color: #0d6630;
+}
+
 /* MATCH-01: badge decision compatto per la vista lista (Match Center),
    stessa palette colori di .value-play/.value-borderline/.value-no-bet
    ma layout a piu' righe come .prediction-chip (label + mercato + quota/edge). */

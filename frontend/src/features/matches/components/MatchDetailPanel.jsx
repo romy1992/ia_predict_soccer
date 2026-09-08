@@ -66,6 +66,14 @@ export default function MatchDetailPanel({
                     <span className={`value-badge ${valueClass(card.value_label)}`}>{card.value_label}</span>
                   </div>
                   <p className="decision-pick">{card.pick}</p>
+                  {card.bet_over_signal?.signal && (
+                    <span
+                      className="bet-over-badge"
+                      title={`Soglia orientata a precisione: P(Over) >= ${formatPercent(card.bet_over_signal.threshold)} (precisione attesa ${formatPercent(card.bet_over_signal.expected_precision)}, recall atteso ${formatPercent(card.bet_over_signal.expected_recall)}). Segnale indipendente dal pick sopra.`}
+                    >
+                      BET OVER
+                    </span>
+                  )}
                   <div className="decision-metrics">
                     <span>Conf.: {formatPercent(card.predicted_probability)}</span>
                     <span>Quota media: {formatOdd(card.odd)}</span>
