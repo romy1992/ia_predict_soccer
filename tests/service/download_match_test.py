@@ -3,7 +3,7 @@ from unittest.mock import patch
 
 from src.service_ia.model.match import Match, Statistics
 from src.service_ia.pre_processing.api_sports_provider import ApiSportsQuotaExceededError
-from src.service_ia.pre_processing.download_match_service import calculate_mean, download_import_matches
+from src.service_ia.pre_processing.download_match_service import calculate_mean, download_import_matches, map_odds
 
 
 class FakeProvider:
@@ -378,6 +378,47 @@ class TestDownloadImportMatchesQuotaExceededMidway(unittest.TestCase):
         # Una sola lega vista: fixtures_seen conta SOLO la prima lega (135),
         # la seconda (136) non viene nemmeno interrogata.
         self.assertEqual(report["fixtures_seen"], 1)
+
+
+class TestMapOddsGoalNoGoalBugfix(unittest.TestCase):
+    """BUGFIX 2026-09-08: `alternate_value` viene lowercased PRIMA del
+    confronto con 'Yes'/'Draw/away' (maiuscole) - il confronto era sempre
+    falso, quindi sia "Yes" che "No" di Both Teams Score finivano sulla
+    STESSA chiave 'no_goal_{bookmaker}', con la seconda occorrenza che
+    sovrascriveva silenziosamente la prima (dati persi, non solo
+    etichettati male)."""
+
+    def _fixture_bookmakers(self, bet_id: int, bet_name: str, values: list[dict]) -> list[dict]:
+        return [{"bookmakers": [{"name": "Bet365", "bets": [{"id": bet_id, "name": bet_name, "values": values}]}]}]
+
+    def test_goal_and_no_goal_odds_stored_under_distinct_keys(self):
+        fixture_bookmakers = self._fixture_bookmakers(
+            bet_id=8,
+            bet_name="Both Teams Score",
+            values=[{"value": "Yes", "odd": "1.75"}, {"value": "No", "odd": "2.05"}],
+        )
+        result = map_odds(match=None, id_fix=123, fixture_bookmakers=fixture_bookmakers)
+
+        gg_odds = result["goal_no_goal"]
+        # Nota: 'goal_'/'no_goal_' hanno gia' un underscore finale, +
+        # quello aggiunto da head_title = f'{alternate_value}_{name_book}'
+        # -> doppio underscore, comportamento preesistente e innocuo (non
+        # e' il bug qui sotto test), invariato da questo fix.
+        self.assertIn("goal__Bet365", gg_odds)
+        self.assertIn("no_goal__Bet365", gg_odds)
+        self.assertEqual(gg_odds["goal__Bet365"], "1.75")
+        self.assertEqual(gg_odds["no_goal__Bet365"], "2.05")
+
+    def test_double_chance_draw_away_labeled_correctly(self):
+        fixture_bookmakers = self._fixture_bookmakers(
+            bet_id=12,
+            bet_name="Double Chance",
+            values=[{"value": "Draw/Away", "odd": "1.40"}],
+        )
+        result = map_odds(match=None, id_fix=123, fixture_bookmakers=fixture_bookmakers)
+
+        self.assertIn("X2_Bet365", result["dc"])
+        self.assertEqual(result["dc"]["X2_Bet365"], "1.40")
 
 
 if __name__ == "__main__":
