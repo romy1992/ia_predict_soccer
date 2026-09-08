@@ -8,6 +8,8 @@ from typing import Any, Optional
 
 import joblib
 import pandas as pd
+from imblearn.over_sampling import SMOTE
+from imblearn.pipeline import Pipeline as ImbPipeline
 from joblib import parallel_backend
 from sklearn.ensemble import RandomForestClassifier, StackingClassifier, VotingClassifier
 from sklearn.feature_selection import RFE, SelectKBest
@@ -162,9 +164,11 @@ def _evaluate_estimator(
 def _model_space(selection_method: str, feature_count: int) -> dict[str, tuple[Pipeline, dict[str, list[Any]]]]:
     selector_logistic = FeatureSelectionService.build_selector(selection_method, feature_count)
     selector_rf = FeatureSelectionService.build_selector(selection_method, feature_count)
+    selector_rf_smote = FeatureSelectionService.build_selector(selection_method, feature_count)
 
     selector_grid_logistic: dict[str, list[Any]] = {}
     selector_grid_rf: dict[str, list[Any]] = {}
+    selector_grid_rf_smote: dict[str, list[Any]] = {}
 
     if isinstance(selector_logistic, SelectKBest):
         selector_grid_logistic = {
@@ -173,11 +177,17 @@ def _model_space(selection_method: str, feature_count: int) -> dict[str, tuple[P
         selector_grid_rf = {
             "selector__k": sorted(set([max(1, min(feature_count, value)) for value in [10, 20, 30]]))
         }
+        selector_grid_rf_smote = {
+            "selector__k": sorted(set([max(1, min(feature_count, value)) for value in [10, 20, 30]]))
+        }
     elif isinstance(selector_logistic, RFE):
         selector_grid_logistic = {
             "selector__n_features_to_select": sorted(set([max(1, min(feature_count, value)) for value in [8, 12, 20]]))
         }
         selector_grid_rf = {
+            "selector__n_features_to_select": sorted(set([max(1, min(feature_count, value)) for value in [8, 12, 20]]))
+        }
+        selector_grid_rf_smote = {
             "selector__n_features_to_select": sorted(set([max(1, min(feature_count, value)) for value in [8, 12, 20]]))
         }
 
@@ -229,6 +239,49 @@ def _model_space(selection_method: str, feature_count: int) -> dict[str, tuple[P
                 # di completare (nessun modello mai salvato). Ora
                 # n_estimators=200 (fisso, sopra) x 2x2x2=8 combinazioni,
                 # ~11x meno lavoro totale, stessa logica di selezione.
+                "model__max_depth": [8, 16],
+                "model__min_samples_split": [2, 10],
+                "model__min_samples_leaf": [1, 4],
+            },
+        ),
+        # Candidato aggiuntivo (richiesto esplicitamente dall'operatore,
+        # 2026-09-08): SMOTE al posto di class_weight="balanced" per lo
+        # sbilanciamento di classe. SMOTE esisteva gia' come dipendenza
+        # (imbalanced-learn) ma solo nel codice legacy pre-v2
+        # (src/service_ia/training/under_over/{inconsistent,consistent}/,
+        # non piu' importato da nulla), mai confrontato in QUESTA pipeline.
+        # Confronto controllato (scripts/analysis/test_smote_vs_class_weight.py,
+        # dati reali Under/Over): aiuta in proporzione a quanto il mercato e'
+        # sbilanciato - miglioramento netto su classi minoritarie sotto il
+        # 15-20% (selection_score +0.016, log_loss -5%, brier -6% su
+        # under_over_4_5, minoranza 13.5%), marginale o nullo su mercati
+        # gia' quasi bilanciati (under_over_2_5, ~47%/53%). Per questo NON
+        # sostituisce "random_forest" (class_weight="balanced"): e' un
+        # candidato IN PIU' che compete sullo stesso selection_score - vince
+        # solo dove aiuta davvero, invece di essere imposto ovunque.
+        # `imblearn.pipeline.Pipeline` (non quella sklearn usata sopra)
+        # applica SMOTE SOLO durante il fit del training fold di ciascun
+        # fold - MAI al validation fold - stessa garanzia anti-leakage gia'
+        # rispettata altrove nel progetto.
+        "random_forest_smote": (
+            ImbPipeline(
+                steps=[
+                    ("imputer", SimpleImputer(strategy="median")),
+                    ("selector", selector_rf_smote),
+                    ("smote", SMOTE(random_state=42)),
+                    (
+                        "model",
+                        RandomForestClassifier(
+                            n_estimators=200,
+                            random_state=42,
+                            n_jobs=-1,
+                            class_weight=None,
+                        ),
+                    ),
+                ]
+            ),
+            {
+                **selector_grid_rf_smote,
                 "model__max_depth": [8, 16],
                 "model__min_samples_split": [2, 10],
                 "model__min_samples_leaf": [1, 4],
