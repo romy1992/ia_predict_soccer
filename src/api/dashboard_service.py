@@ -16,6 +16,7 @@ from sqlalchemy.orm import selectinload
 from src.ml.baselines.bookmaker_baseline import build_fixture_baseline, get_market_outcome_baseline
 from src.jobs.api_quota_state import is_quota_exhausted_today
 from src.oracle.decision_engine.decision_policy import evaluate_decision_from_fair_odds_outcome
+from src.oracle.decision_engine.over_signal_policy import evaluate_over_signal
 from src.oracle.fair_odds.fair_odds_engine import build_fair_odds_outcome
 from src.repository.base.repository_db import SessionLocal
 from src.repository.prediction_ledger_repository import PredictionLedgerRepository
@@ -548,6 +549,20 @@ class DashboardService:
             )
             decision = evaluate_decision_from_fair_odds_outcome(fair_odds_outcome)
 
+            # Segnale "Bet Over" (richiesto esplicitamente dall'operatore,
+            # 2026-09-08): INDIPENDENTE dal pick sopra e da `decision` - non
+            # ne altera il valore, aggiunge solo un campo. Vedi
+            # `over_signal_policy.py` per il perche' non e' semplicemente
+            # `prediction == 1`. `class1_probability` e' gia' P(Over) per
+            # costruzione sui mercati under_over_* (classe 1 = over_X_5,
+            # vedi `DIRECT_MARKET_SPECS`), quindi nessuna trasformazione
+            # aggiuntiva necessaria qui.
+            bet_over_signal = (
+                evaluate_over_signal(market=market, p_over=class1_probability)
+                if market.startswith("under_over_")
+                else None
+            )
+
             cards.append(
                 {
                     "market": market,
@@ -557,6 +572,7 @@ class DashboardService:
                     "run_id": payload.get("run_id"),
                     "class_1_probability": class1_probability,
                     "predicted_probability": predicted_probability,
+                    "bet_over_signal": bet_over_signal,
                     "odd": odd,
                     "bookmaker_implied_raw": fair_odds_outcome.p_market_raw,
                     "bookmaker_fair_probability": fair_odds_outcome.p_market_fair,
