@@ -1,13 +1,26 @@
 # CURRENT TASK
 
 ## Task corrente
-**IN CORSO (bloccato su accesso rete, vedi sotto)**: addestrare modelli ML REALI (fit completo, non solo benchmark) per Under/Over 1.5/2.5/3.5/4.5 e ottenerli SALVATI/REGISTRATI come 'candidate' in `ModelRegistry` (`best_models/registry/index.jsonl`, oggi vuoto in questo ambiente). Dettaglio completo in `IMPLEMENTATION_LOG.md` (voce "Fix critici pipeline `train_market`" + "BLOCCO AMBIENTE", 2026-09-07).
+**COMPLETATO (2026-09-08)**: addestrati modelli ML REALI (fit completo, non solo benchmark) per Under/Over 1.5/2.5/3.5/4.5 e REGISTRATI come 'candidate' in `ModelRegistry` (`best_models/registry/index.jsonl`). Dettaglio completo in `IMPLEMENTATION_LOG.md` (voce "Training reale Under/Over 1.5/2.5/3.5/4.5", 2026-09-08).
 
-Fatto oggi (`src/service_ia/training/train_multi_market.py`): (1) griglia `RandomForestClassifier` alleggerita (`n_estimators` 500->200, combinazioni max_depth/min_samples_split/min_samples_leaf 36->8 per selector_k) per evitare il MemoryError che aveva bloccato il pilot; (2) **fix critico ulteriore, non nella lista iniziale**: `StackingClassifier(cv=cv_splits)` riusato dentro `cross_val_score`/`temporal_oof_probabilities`/`CalibrationService` su sottoinsiemi piu' piccoli di `X` causava sistematicamente `ValueError: cross_val_predict only works for partitions` — MAI stato eseguito con successo finora (non coperto dai test esistenti, che testano solo `_model_space` in isolamento). Fix: `cv=5` (intero). Validato end-to-end con dataset sintetico (720/720 test passati, Python 3.13 richiesto: `df_odds_service.py` usa una f-string valida solo da 3.12+).
+Fix propedeutici (`src/service_ia/training/train_multi_market.py`): (1) griglia `RandomForestClassifier` alleggerita (`n_estimators` 500->200, combinazioni max_depth/min_samples_split/min_samples_leaf 36->8 per selector_k) per evitare il MemoryError che aveva bloccato il pilot; (2) **fix critico ulteriore**: `StackingClassifier(cv=cv_splits)` riusato dentro `cross_val_score`/`temporal_oof_probabilities`/`CalibrationService` su sottoinsiemi piu' piccoli di `X` causava sistematicamente `ValueError: cross_val_predict only works for partitions` — MAI stato eseguito con successo finora. Fix: `cv=5` (intero).
 
-Nuovo script `scripts/analysis/phase3b_sequential_stacking_thresholds.py`: implementa e valida (anti-leakage esplicito, testato anche in negativo) l'idea "stacking sequenziale a cascata tra soglie" — pronto ma **non ancora eseguito su dati reali**.
+**Risultati reali (dataset da DB Railway, trasferito via export CSV - vedi sotto):**
 
-**BLOCCO**: questa sessione cloud (`anthropic_cloud`) non puo' raggiungere il Postgres remoto Railway (`sakura.proxy.rlwy.net:18862`, TCP diretto) - policy di rete conferma "raw-TCP databases" non instradabili, verificato con connect TCP diretto (timeout pulito, nessuna risposta). Nessuno dei passi che richiedono dati reali (train_market per soglia con salvataggio, phase3b su dati reali, verifica gate promozione su un run reale) e' stato eseguito qui. Serve un ambiente con accesso DB reale (es. sessione bridge sulla macchina locale dell'operatore, dove i log storici mostrano che il training gira gia').
+| Soglia | Champion | selection_score | rows |
+|---|---|---|---|
+| under_over_1_5 | random_forest | 0.7131 | 8349 |
+| under_over_2_5 | voting | 0.6727 | 15243 |
+| under_over_3_5 | random_forest | 0.6906 | 8335 |
+| under_over_4_5 | random_forest | 0.7820 | 8286 |
+
+Tutti e 4 registrati come `candidate`, gate di promozione (`evaluate_promotion`) verificato su ciascuno: tutte le metriche standard lette correttamente, `allowed=true` (nessuna production precedente per questi mercati, prima promozione consentita) - restano `candidate`, nessuna promozione automatica eseguita.
+
+`scripts/analysis/phase3b_sequential_stacking_thresholds.py` (idea "stacking sequenziale a cascata tra soglie", anti-leakage verificato esplicitamente anche in negativo) eseguito su dati reali: **SCARTATO** - delta selection_score vs baseline non-cascata sullo stesso sottoinsieme di righe: over_2_5 -0.0030, over_3_5 +0.0009, over_4_5 -0.0014, tutti sotto la soglia di adozione (0.01). Emerso anche un limite strutturale intrinseco: ogni livello di cascata consuma un fold aggiuntivo di dati per l'anti-leakage (n_eval_rows 7620 -> 6096 -> 4572 -> 3048). Risultato in `best_models/phase3b_sequential_stacking_thresholds_result.json`.
+
+**Come e' stato risolto il blocco di rete** (la sessione cloud `anthropic_cloud` non puo' raggiungere il Postgres remoto Railway via TCP diretto, confermato non aggirabile a nessun livello di network access - vedi doc ufficiale ambienti cloud): nuovo script `scripts/analysis/export_datasets_for_cloud_training.py`, da eseguire in un ambiente CON accesso DB reale (sessione bridge sulla macchina locale dell'operatore), esporta le feature GIA' ELABORATE (non i JSON grezzi, troppo pesanti) per le 4 soglie + il frame 'totals' in CSV compatti (`scripts/analysis/_export/`, ~52MB totali, non gitignored di proposito per poter essere trasferiti via git). `scripts/analysis/train_from_export.py`/`phase3b_from_export.py` eseguono la logica di produzione INVARIATA (`train_market()`/`run_sequential_cascade()`) sostituendo solo la sorgente dati (CSV invece di query DB dirette). I modelli addestrati (file `.pkl` + registry, gitignored) sono stati consegnati all'operatore per essere posizionati nel `best_models/` della sua macchina locale (dove gira l'app reale). I CSV di export sono stati rimossi dal repo dopo l'uso (workaround temporaneo, non uno strumento di produzione permanente).
+
+Nota: due tentativi precedenti di training diretto su una sessione bridge locale sono falliti per disconnessioni ripetute della sessione (macchina/rete dell'operatore, non un bug del codice) - da cui la scelta di spostare il training pesante in cloud e limitare la sessione bridge alla sola (breve) esportazione dati.
 
 ---
 
