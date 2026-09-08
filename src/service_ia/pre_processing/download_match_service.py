@@ -211,8 +211,16 @@ def map_odds(match, id_fix, fixture_bookmakers=None):
                     for value in filter_bet_name['values']:
                         alternate_value = str(value['value']).lower()
                         if alternate_value in ['yes', 'no']:
-                            alternate_value = 'goal_' if alternate_value == 'Yes' else 'no_goal_'
-                        elif alternate_value in ['home/draw', 'home/away', 'Draw/away']:
+                            # BUGFIX 2026-09-08: confrontava alternate_value (gia'
+                            # lowercased sopra) con 'Yes' (maiuscola) - sempre
+                            # falso, quindi sia "Yes" che "No" finivano SEMPRE su
+                            # 'no_goal_', con la seconda occorrenza (stessa chiave
+                            # f'{alternate_value}_{name_book}') che sovrascriveva
+                            # silenziosamente la prima: le quote goal_no_goal
+                            # salvate a DB avevano un solo lato (quello processato
+                            # per ultimo dall'API) per bookmaker, mai entrambi.
+                            alternate_value = 'goal_' if alternate_value == 'yes' else 'no_goal_'
+                        elif alternate_value in ['home/draw', 'home/away', 'draw/away']:
                             alternate_value = '1X' if alternate_value == 'home/draw' else '12' if alternate_value == 'home/away' else 'X2'
 
                         name_bet = switch_bet(bet=filter_bet_name['name'], alternate_bet=value['value'])
