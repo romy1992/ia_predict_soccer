@@ -40,6 +40,9 @@ SOCCER-00, SOCCER-01, SOCCER-02, DATA-01..08, ML-01..07, FE-01..03, EXP-01..05 (
 
 ## Prossimi in coda
 Nessuno pianificato nella roadmap operativa attuale. Possibili prossimi passi (da concordare, non ancora un task formale):
+- **Richiesto esplicitamente dall'operatore (2026-09-08, ricordare per quando i modelli Under/Over saranno pronti/promossi)**: portare la stessa vista "model diagnostics" (confusion matrix, ROC, precision/recall/F1 per classe — vedi il report pubblicato come Artifact il 2026-09-08, `scripts/analysis/evaluate_champions_detailed.py`) nel frontend web dell'app, non solo come report una tantum. Non ancora iniziato.
+- Trovare soglie di decisione ottimali per i 4 modelli Under/Over (default 0.5 non calibrato: 3 modelli su 4 non riconoscono quasi mai la classe minoritaria a quella soglia) - in corso 2026-09-08.
+- Verificare/applicare la coerenza monotona tra le 4 soglie (`enforce_monotonic_over_probabilities`, già esistente in `totals_market.py` ma non ancora applicata alle predizioni dei 4 candidate independent appena addestrati) - in corso 2026-09-08.
 - Promozione controllata (`ModelRegistry.promote_with_policy`) dei modelli `1x2_live` (LIVE-03) da `candidate` a `production` una volta raccolto un volume sufficiente di fixture concluse nel dataset live reale.
 - Esposizione API/frontend delle probabilità live aggiornate (oggi solo `src/ml/live/`, nessun endpoint dedicato).
 - Eventuale nuova roadmap di crescita (vedi `ROADMAP_CRESCITA_ML_DASHBOARD.md`, documento di contesto più datato, in gran parte già superato dalle 12 fasi completate).
