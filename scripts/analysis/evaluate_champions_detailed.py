@@ -106,10 +106,18 @@ def main() -> None:
     parser.add_argument("--export-dir", default=os.path.join("scripts", "analysis", "_export"))
     parser.add_argument("--models-dir", default="best_models")
     parser.add_argument("--output", default=os.path.join("best_models", "champions_detailed_metrics.json"))
+    parser.add_argument("--markets", default=",".join(MARKETS), help="Lista mercati separati da virgola")
+    parser.add_argument("--merge", action="store_true", help="Unisce ai risultati gia' presenti in --output invece di sovrascriverli")
     args = parser.parse_args()
 
+    markets = [m.strip() for m in args.markets.split(",") if m.strip()]
+
     results = {}
-    for market in MARKETS:
+    if args.merge and os.path.exists(args.output):
+        with open(args.output, "r", encoding="utf-8") as f:
+            results = json.load(f)
+
+    for market in markets:
         print(f"=== {market} ===", flush=True)
         result = evaluate_market(market=market, export_dir=args.export_dir, models_dir=args.models_dir)
         results[market] = result
