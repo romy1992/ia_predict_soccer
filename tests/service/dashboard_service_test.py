@@ -633,6 +633,56 @@ class TestQuotaExhaustedGuard(unittest.TestCase):
         self.assertTrue(mocked_call.called)
 
 
+class TestApplyMonotonicProjection(unittest.TestCase):
+    """Coerenza monotona tra le 4 soglie Under/Over collegata al serving
+    (2026-09-09, richiesto esplicitamente dall'operatore): P(Over1.5) >=
+    P(Over2.5) >= P(Over3.5) >= P(Over4.5) per la stessa fixture."""
+
+    def _payload(self, **overrides):
+        payload = {
+            "under_over_1_5": {"prediction": 1, "probability": 0.6, "model_name": "m", "run_id": "r1"},
+            "under_over_2_5": {"prediction": 1, "probability": 0.7, "model_name": "m", "run_id": "r2"},
+            "under_over_3_5": {"prediction": 0, "probability": 0.3, "model_name": "m", "run_id": "r3"},
+            "under_over_4_5": {"prediction": 0, "probability": 0.1, "model_name": "m", "run_id": "r4"},
+        }
+        payload.update(overrides)
+        return payload
+
+    def test_projects_violating_probabilities_to_monotone(self):
+        payload = self._payload()
+        DashboardService._apply_monotonic_projection(payload)
+
+        probs = [payload[m]["probability"] for m in
+                 ("under_over_1_5", "under_over_2_5", "under_over_3_5", "under_over_4_5")]
+        self.assertEqual(probs, sorted(probs, reverse=True))
+        # 2.5 (0.7) violava 1.5 (0.6): deve essere abbassata al minimo cumulativo.
+        self.assertEqual(payload["under_over_2_5"]["probability"], 0.6)
+
+    def test_prediction_recomputed_from_projected_probability(self):
+        payload = self._payload()
+        DashboardService._apply_monotonic_projection(payload)
+        # 2.5 proiettata a 0.6 (>=0.5): prediction resta 1, ma ricalcolata
+        # dalla probabilita' proiettata, non piu' quella grezza.
+        self.assertEqual(payload["under_over_2_5"]["prediction"], 1)
+
+    def test_already_monotone_payload_is_unchanged(self):
+        payload = self._payload(under_over_2_5={"prediction": 0, "probability": 0.5, "model_name": "m", "run_id": "r2"})
+        DashboardService._apply_monotonic_projection(payload)
+        self.assertEqual(payload["under_over_2_5"]["probability"], 0.5)
+
+    def test_skipped_when_a_threshold_is_missing(self):
+        payload = self._payload()
+        del payload["under_over_3_5"]
+        original_2_5 = dict(payload["under_over_2_5"])
+        DashboardService._apply_monotonic_projection(payload)
+        self.assertEqual(payload["under_over_2_5"], original_2_5)
+
+    def test_other_markets_untouched(self):
+        payload = self._payload(goal_no_goal={"prediction": 1, "probability": 0.55, "model_name": "m", "run_id": "r5"})
+        DashboardService._apply_monotonic_projection(payload)
+        self.assertEqual(payload["goal_no_goal"]["probability"], 0.55)
+
+
 if __name__ == "__main__":
     unittest.main()
 
