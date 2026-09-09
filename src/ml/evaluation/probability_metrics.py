@@ -4,6 +4,7 @@ from typing import Any, Optional
 
 import numpy as np
 import pandas as pd
+from joblib import parallel_backend
 from sklearn.base import clone
 from sklearn.metrics import brier_score_loss, log_loss, roc_auc_score
 
@@ -50,7 +51,13 @@ def temporal_oof_probabilities(
         X_valid = X.iloc[valid_idx]
         y_valid = y.iloc[valid_idx]
 
-        model.fit(X_train, y_train)
+        # backend "threading": evita di nidificare parallelismo a PROCESSI
+        # separati quando l'estimatore (es. Voting/Stacking di RandomForest,
+        # tutti con n_jobs=-1) viene fittato piu' volte per il calcolo OOF,
+        # che altrimenti satura CPU/memoria della macchina (stesso problema
+        # gia' risolto per GridSearchCV in train_multi_market.py).
+        with parallel_backend("threading", n_jobs=-1):
+            model.fit(X_train, y_train)
         if hasattr(model, "predict_proba"):
             proba = model.predict_proba(X_valid)
             p1 = _class1_probability(proba)
