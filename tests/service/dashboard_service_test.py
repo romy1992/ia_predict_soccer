@@ -624,6 +624,41 @@ class TestQuotaExhaustedGuard(unittest.TestCase):
         # 2 campionati configurati, stesso fixture id=1 in entrambi -> dedup a 1.
         self.assertEqual(len(result), 1)
 
+    def test_fetch_api_day_fixtures_league_fetch_is_parallel_and_order_preserved(self):
+        """Fix performance (2026-09-09): i campionati vengono interrogati in
+        parallelo (ThreadPoolExecutor), non piu' uno alla volta - qui si
+        verifica che TUTTI vengano comunque interrogati (nessuno saltato) e
+        che l'ordine del risultato aggregato resti deterministico (stesso
+        ordine di `cfg.leagues`, non l'ordine di completamento dei thread -
+        `executor.map` lo garantisce)."""
+        self.service.cfg = type("Cfg", (), {"leagues": [1, 2, 3, 4, 5], "seasons": [2026]})()
+
+        def fake_call(path, params):
+            return [{"fixture": {"id": params["league"]}}]
+
+        with mock.patch.object(dashboard_service_module, "is_quota_exhausted_today", return_value=False), mock.patch.object(
+            dashboard_service_module, "base_api_statistics", side_effect=fake_call
+        ) as mocked_call:
+            result = self.service._fetch_api_day_fixtures(date(2026, 9, 7))
+
+        self.assertEqual(mocked_call.call_count, 5)
+        self.assertEqual([r["fixture"]["id"] for r in result], [1, 2, 3, 4, 5])
+
+    def test_fetch_api_day_fixtures_one_league_failing_does_not_block_others(self):
+        self.service.cfg = type("Cfg", (), {"leagues": [1, 2, 3], "seasons": [2026]})()
+
+        def fake_call(path, params):
+            if params["league"] == 2:
+                raise RuntimeError("boom")
+            return [{"fixture": {"id": params["league"]}}]
+
+        with mock.patch.object(dashboard_service_module, "is_quota_exhausted_today", return_value=False), mock.patch.object(
+            dashboard_service_module, "base_api_statistics", side_effect=fake_call
+        ):
+            result = self.service._fetch_api_day_fixtures(date(2026, 9, 7))
+
+        self.assertEqual([r["fixture"]["id"] for r in result], [1, 3])
+
     def test_fetch_api_live_fixtures_still_calls_when_quota_not_exhausted(self):
         with mock.patch.object(dashboard_service_module, "is_quota_exhausted_today", return_value=False), mock.patch.object(
             dashboard_service_module, "base_api_statistics", return_value=[]
