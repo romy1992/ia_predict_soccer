@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Column, Integer, String, ForeignKey, JSON, Float, DateTime, Boolean
+from sqlalchemy import Column, Index, Integer, String, ForeignKey, JSON, Float, DateTime, Boolean
 from sqlalchemy.orm import declarative_base, relationship
 
 Base = declarative_base()
@@ -185,5 +185,51 @@ class PredictionLedger(Base):
                 payload[key] = payload[key].isoformat()
         return payload
 
+
+class MatchPredictionSnapshot(Base):
+    """Log APPEND-ONLY delle predizioni ML calcolate per fixture+mercato
+    (2026-09-09, richiesto esplicitamente dall'operatore: "salvare le
+    predizioni... anche perche' dobbiamo avere una banca dati da
+    accumulare"). Distinta da `PredictionLedger` (BET-06, sopra): quella
+    logga SOLO le decisioni di scommessa loggate esplicitamente (stake/EV/
+    settlement); questa logga OGNI predizione GREZZA calcolata dal modello
+    per OGNI mercato, usata sia come cache di serving (si legge l'ultima
+    riga per fixture+market, `MatchPredictionSnapshotRepository.get_latest`)
+    sia come storico di ricerca (come si e' mossa la stima del modello
+    prima del calcio d'inizio, man mano che quote/feature cambiavano).
+
+    Una riga NUOVA viene scritta SOLO quando `feature_fingerprint` (hash
+    delle feature usate dal modello per QUEL mercato) o `model_run_id`
+    cambiano rispetto all'ultima riga nota (`PredictionSnapshotService`) -
+    mai un refresh "vuoto" senza che nulla sia davvero cambiato. Per le
+    partite gia' concluse (status finale), la riga resta congelata per
+    sempre: rappresenta "cosa prediceva il modello a quel tempo", un valore
+    storico che non deve cambiare sotto i piedi nemmeno se in futuro viene
+    promosso un modello nuovo (scelta esplicita dell'operatore).
+    """
+
+    __tablename__ = 'match_prediction_snapshot'
+    __table_args__ = (
+        Index(
+            'ix_match_prediction_snapshot_fixture_market_computed',
+            'fixture_id', 'market', 'computed_at',
+        ),
+    )
+
+    id_snapshot = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    fixture_id = Column(Integer, nullable=False)
+    market = Column(String, nullable=False)
+    prediction = Column(Integer, nullable=False)
+    probability = Column(Float, nullable=False)
+    model_name = Column(String, nullable=True)
+    model_run_id = Column(String, nullable=True)
+    feature_fingerprint = Column(String, nullable=False)
+    computed_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+
+    def to_dict(self):
+        payload = {column.name: getattr(self, column.name) for column in self.__table__.columns}
+        if payload.get("computed_at") is not None:
+            payload["computed_at"] = payload["computed_at"].isoformat()
+        return payload
 
 
