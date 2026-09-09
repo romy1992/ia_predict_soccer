@@ -127,6 +127,16 @@ class JobSettingRow(BaseModel):
     # `src/jobs/job_settings.py::QUOTA_SENSITIVE_JOB_IDS`): `data_settlement`
     # e `ml_training` lavorano solo su dati gia' a DB e restano `False`.
     calls_api_sports: bool = False
+    # Orario/intervallo editabile (2026-09-09): `schedule_kind` distingue la
+    # FORMA dello `schedule` ("daily" -> {"hour","minute"}, "interval_minutes"
+    # -> {"interval_minutes"}, "interval_seconds" -> {"interval_seconds"}) -
+    # il frontend sceglie il controllo giusto (time picker vs number input)
+    # in base a questo campo. `schedule` e' il valore EFFETTIVO corrente
+    # (override salvato se presente, altrimenti il default da variabili
+    # d'ambiente) - vedi `src/jobs/job_settings.py::resolve_job_schedule`.
+    schedule_kind: str
+    schedule: dict[str, int]
+    schedule_is_default: bool = True
 
 
 class JobSettingsResponse(BaseModel):
@@ -142,6 +152,27 @@ class JobSettingsResponse(BaseModel):
 
 class JobSettingsUpdateRequest(BaseModel):
     updates: dict[str, bool] = Field(..., description="Mappa job_id -> enabled (aggiornamento parziale).")
+
+
+class JobScheduleUpdateRequest(BaseModel):
+    """Body di `PUT /settings/jobs/{job_id}/schedule`: le chiavi accettate
+    dipendono dallo `schedule_kind` del job (vedi `JobSettingRow`) - un job
+    "daily" richiede ESATTAMENTE `hour`+`minute`, "interval_minutes" solo
+    `interval_minutes`, "interval_seconds" solo `interval_seconds`. Validato
+    lato server (range sensati) da `job_settings.py::_validate_schedule` -
+    un set di chiavi sbagliato o un valore fuori range risulta in 400."""
+
+    hour: Optional[int] = None
+    minute: Optional[int] = None
+    interval_minutes: Optional[int] = None
+    interval_seconds: Optional[int] = None
+
+
+class JobScheduleResponse(BaseModel):
+    job_id: str
+    schedule_kind: str
+    schedule: dict[str, int]
+    schedule_is_default: bool
 
 
 class ApiQuotaResponse(BaseModel):

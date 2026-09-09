@@ -973,6 +973,53 @@ th {
   cursor: not-allowed;
 }
 
+/* Impostazioni: editor orario/intervallo inline per job (2026-09-09) */
+.settings-job-schedule {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.settings-job-schedule input[type="time"],
+.settings-job-schedule input[type="number"] {
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid #c7cfe0;
+  font-size: 14px;
+  background: #ffffff;
+}
+
+.settings-job-schedule-interval {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.settings-job-schedule-interval input[type="number"] {
+  width: 80px;
+}
+
+.btn-link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: #2f4f90;
+  font-size: 12px;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.btn-link:disabled {
+  color: #8a93a8;
+  cursor: not-allowed;
+}
+
+.error-text {
+  color: #b3261e;
+}
+
 
 
 
