@@ -4,6 +4,9 @@ frontend/node_modules/
 frontend/dist/
 logs/
 /best_models/
+# dump di backup del DB (pg_dump, prima delle migration - vedi comando in
+# docs/soccer_oracle_v2_detailed) - mai versionati, possono contenere dati reali
+/backups/
 # log di output di test run manuali (non vanno versionati)
 *.log
 
