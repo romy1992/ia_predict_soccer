@@ -113,6 +113,16 @@ class AppConfig:
     # che posizionale come gli altri campi) nessun costrutto `AppConfig(...)`
     # gia' esistente (test compresi) si rompe se non lo valorizza esplicitamente.
     data_quality_interval_minutes: int = 60
+    # Job "Aggiorna predizioni salvate" (2026-09-09, banca dati predizioni
+    # richiesta dall'operatore): ricalcola in BACKGROUND le predizioni delle
+    # fixture NS nella finestra oggi->oggi+N giorni la cui fingerprint di
+    # feature e' cambiata da ultimo calcolo (`PredictionSnapshotService`),
+    # cosi' che la Dashboard, quando aperta, legga quasi sempre una riga
+    # gia' calcolata (zero inferenza ML nel percorso della richiesta
+    # utente). Intervallo moderato di default: le quote non richiedono una
+    # freschezza al minuto per questo scopo (la Dashboard resta comunque
+    # protetta dalla cache/finestra oraria API gia' esistenti).
+    prediction_snapshot_interval_minutes: int = 30
 
 
 def load_app_config() -> AppConfig:
@@ -137,6 +147,7 @@ def load_app_config() -> AppConfig:
     live_cache_ttl_seconds = _int_env("LIVE_CACHE_TTL_SECONDS", default=20)
     api_sports_daily_limit = _int_env("API_SPORTS_DAILY_LIMIT", default=7500)
     data_quality_interval_minutes = _int_env("DATA_QUALITY_INTERVAL_MINUTES", default=60)
+    prediction_snapshot_interval_minutes = _int_env("PREDICTION_SNAPSHOT_INTERVAL_MINUTES", default=30)
     database_url = os.environ.get("DATABASE_URL", DEFAULT_DATABASE_URL).strip()
     database_schema = os.environ.get("DATABASE_SCHEMA", DEFAULT_DATABASE_SCHEMA).strip() or DEFAULT_DATABASE_SCHEMA
 
@@ -158,5 +169,6 @@ def load_app_config() -> AppConfig:
         database_url=database_url,
         database_schema=database_schema,
         data_quality_interval_minutes=data_quality_interval_minutes,
+        prediction_snapshot_interval_minutes=prediction_snapshot_interval_minutes,
     )
 
