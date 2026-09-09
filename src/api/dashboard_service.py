@@ -14,6 +14,7 @@ from sqlalchemy.exc import OperationalError, ProgrammingError
 from sqlalchemy.orm import selectinload
 
 from src.ml.baselines.bookmaker_baseline import build_fixture_baseline, get_market_outcome_baseline
+from src.ml.markets.totals.totals_market import enforce_monotonic_over_probabilities
 from src.jobs.api_quota_state import is_quota_exhausted_today
 from src.oracle.decision_engine.decision_policy import evaluate_decision_from_fair_odds_outcome
 from src.oracle.decision_engine.over_signal_policy import evaluate_over_signal
@@ -34,6 +35,13 @@ LIVE_STATUSES = {"1H", "HT", "2H", "ET", "BT", "P", "LIVE", "INT"}
 # da `_build_decision_cards` — nessuna nuova logica di decisione, solo una
 # selezione tra righe gia' pronte.
 _DECISION_LABEL_PRIORITY = {"PLAY": 0, "BORDERLINE": 1, "NO BET": 2}
+
+# Coerenza monotona tra le 4 soglie Under/Over (2026-09-09, collegata al
+# serving su richiesta esplicita dell'operatore dopo la verifica offline di
+# questa sessione: violazioni pre-proiezione solo 0.3% sui champion reali,
+# effetto sul selection_score sempre leggermente positivo o nullo, mai
+# negativo - vedi `apply_monotonic_to_champions.py`). Vedi `_apply_monotonic_projection`.
+UNDER_OVER_MARKETS = ["under_over_1_5", "under_over_2_5", "under_over_3_5", "under_over_4_5"]
 
 
 @dataclass
@@ -852,8 +860,34 @@ class DashboardService:
                 "run_id": model_meta.get("run_id"),
             }
 
+        self._apply_monotonic_projection(payload)
         self._prediction_cache[cache_key] = payload
         return payload
+
+    @staticmethod
+    def _apply_monotonic_projection(payload: dict[str, Any]) -> None:
+        """Impone P(Over1.5)>=P(Over2.5)>=P(Over3.5)>=P(Over4.5) sulle
+        predizioni delle 4 soglie Under/Over per la STESSA fixture
+        (`enforce_monotonic_over_probabilities`, gia' validata offline in
+        questa sessione: nessun costo, piccolo beneficio). Applicata SOLO
+        se tutte e 4 le soglie hanno gia' una predizione in `payload` (mai
+        una proiezione parziale) - modifica `payload` in place, sia
+        `probability` sia `prediction` (ricalcolato sulla probabilita'
+        proiettata, non piu' quella grezza)."""
+        if not all(market in payload for market in UNDER_OVER_MARKETS):
+            return
+
+        probabilities_by_threshold = {
+            market.replace("under_over_", "over_"): np.array([payload[market]["probability"]])
+            for market in UNDER_OVER_MARKETS
+        }
+        projected = enforce_monotonic_over_probabilities(probabilities_by_threshold)
+
+        for market in UNDER_OVER_MARKETS:
+            label = market.replace("under_over_", "over_")
+            p = float(projected[label][0])
+            payload[market]["probability"] = p
+            payload[market]["prediction"] = int(p >= 0.5)
 
     def _serialize_match(self, match: Match, with_predictions: bool, markets: list[str]) -> dict[str, Any]:
         dt_value = self._parse_datetime(match.date_match)
