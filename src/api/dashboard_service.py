@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 import json
@@ -56,6 +57,15 @@ class DashboardDayData:
 class DashboardService:
     _api_cache: dict[str, tuple[datetime, Any]] = {}
     _api_cache_ttl_seconds = 60
+    # Fix performance (2026-09-09): _fetch_api_day_fixtures interrogava i
+    # campionati configurati (18 di default, APP_LEAGUES) UNO ALLA VOLTA -
+    # con quote/timeout/retry di rete per ciascuno, il tempo totale scalava
+    # linearmente col numero di campionati (osservato: risposta molto lenta
+    # ogni volta che la cache 60s scade, tipicamente sulla data odierna).
+    # Un pool limitato (non illimitato, per non bombardare l'API-Sports e
+    # restare dentro ai rate limit del provider) taglia il tempo totale a
+    # circa quello della chiamata piu' lenta invece che alla somma di tutte.
+    _LEAGUE_FETCH_MAX_WORKERS = 6
 
     def __init__(self):
         self.registry = ModelRegistry()
@@ -177,17 +187,23 @@ class DashboardService:
             return []
 
         season = self._season_for_date(target_date)
-        fixtures: list[dict[str, Any]] = []
-        for league in self.cfg.leagues or []:
+        leagues = self.cfg.leagues or []
+
+        def _fetch_one_league(league: int) -> list[dict[str, Any]]:
             try:
-                payload = base_api_statistics(
+                return base_api_statistics(
                     path="fixtures",
                     params={"date": target_date.isoformat(), "league": league, "season": season},
-                )
+                ) or []
             except Exception:
-                payload = []
-            if payload:
-                fixtures.extend(payload)
+                return []
+
+        fixtures: list[dict[str, Any]] = []
+        if leagues:
+            with ThreadPoolExecutor(max_workers=min(self._LEAGUE_FETCH_MAX_WORKERS, len(leagues))) as executor:
+                for payload in executor.map(_fetch_one_league, leagues):
+                    if payload:
+                        fixtures.extend(payload)
 
         deduped = self._dedupe_api_fixtures(fixtures)
         self._cache_set(cache_key, deduped)
