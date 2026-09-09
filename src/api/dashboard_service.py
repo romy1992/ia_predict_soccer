@@ -9,7 +9,6 @@ import re
 from typing import Any, Optional
 from zoneinfo import ZoneInfo
 
-import joblib
 import numpy as np
 from dateutil.parser import isoparse
 from sqlalchemy.exc import OperationalError, ProgrammingError
@@ -17,6 +16,7 @@ from sqlalchemy.orm import selectinload
 
 from src.ml.baselines.bookmaker_baseline import build_fixture_baseline, get_market_outcome_baseline
 from src.ml.markets.totals.totals_market import enforce_monotonic_over_probabilities
+from src.ml.serving.prediction_snapshot_service import PredictionSnapshotService
 from src.jobs.api_quota_state import is_quota_exhausted_today
 from src.oracle.decision_engine.decision_policy import evaluate_decision_from_fair_odds_outcome
 from src.oracle.decision_engine.over_signal_policy import evaluate_over_signal
@@ -87,11 +87,9 @@ class DashboardService:
 
     def __init__(self):
         self.registry = ModelRegistry()
-        self.filter_service = FilterMarketService()
         self.cfg = load_app_config()
         self.ledger_repo = PredictionLedgerRepository()
-        self._model_meta_cache: dict[str, dict[str, Any]] = {}
-        self._model_cache: dict[str, Any] = {}
+        self._snapshot_service = PredictionSnapshotService()
         self._prediction_cache: dict[str, dict[str, Any]] = {}
 
     @staticmethod
@@ -834,7 +832,9 @@ class DashboardService:
         }
 
         if with_predictions and markets:
-            predictions = self._predict_fixture(fixture_id=fixture_id, markets=markets, db_match=db_match)
+            predictions = self._predict_fixture(
+                fixture_id=fixture_id, markets=markets, db_match=db_match, status=status
+            )
             row["predictions"] = predictions
             row["decision_cards"], row["best_decision"] = self._decisions_for_row(
                 row=row, predictions=predictions, db_match=db_match
@@ -842,38 +842,22 @@ class DashboardService:
 
         return row
 
-    @staticmethod
-    def _extract_probability(model: Any, X) -> tuple[int, float]:
-        if hasattr(model, "predict_proba"):
-            probs = model.predict_proba(X)
-            first = np.asarray(probs[0], dtype=float)
-            if first.size >= 2:
-                p1 = float(first[-1])
-                return int(p1 >= 0.5), p1
-            if first.size == 1:
-                p1 = float(first[0])
-                return int(p1 >= 0.5), p1
-
-        pred_raw = model.predict(X)
-        pred = int(np.asarray(pred_raw).ravel()[0])
-        return pred, float(pred)
-
-    def _latest_model_for_market(self, market: str) -> Optional[dict[str, Any]]:
-        if market not in self._model_meta_cache:
-            self._model_meta_cache[market] = (
-                self.registry.get_production(market=market) or self.registry.get_latest(market=market) or {}
-            )
-        model = self._model_meta_cache[market]
-        return model or None
-
-    def _load_model(self, model_path: str):
-        if model_path not in self._model_cache:
-            self._model_cache[model_path] = joblib.load(model_path)
-        return self._model_cache[model_path]
-
     def _predict_fixture(
-        self, fixture_id: int, markets: list[str], db_match: Optional[Match] = None
+        self,
+        fixture_id: int,
+        markets: list[str],
+        db_match: Optional[Match] = None,
+        status: Optional[str] = None,
     ) -> dict[str, Any]:
+        """Delega la risoluzione della predizione grezza per mercato a
+        `PredictionSnapshotService` (2026-09-09: cache persistita su DB,
+        `match_prediction_snapshot` - riusa una riga gia' calcolata quando
+        possibile invece di ricaricare il modello e rifare l'inferenza ad
+        ogni richiesta), poi applica la proiezione di coerenza monotona
+        (sempre, sul payload GREZZO risolto - MAI persistita: e' una
+        combinazione tra mercati diversi, non una proprieta' del singolo
+        modello, va ricalcolata ad ogni lettura mantenendo la cache
+        semplice "un mercato alla volta")."""
         if not markets:
             return {}
 
@@ -882,52 +866,9 @@ class DashboardService:
         if cached is not None:
             return cached
 
-        # Fix performance (cambio giorno lento): UNA query Match condivisa
-        # tra TUTTI i mercati (`build_prediction_frames`), invece di una
-        # query per mercato come faceva il vecchio `build_prediction_frame`
-        # chiamato in loop qui sotto. Se il chiamante ha GIA' un `Match` ORM
-        # caricato in batch (`db_match`, vedi `_serialize_api_fixture`/
-        # `_serialize_match`, entrambe riusano `_fetch_matches` con
-        # selectinload su TUTTA la finestra di date), ZERO query aggiuntive.
-        if db_match is not None:
-            frames = self.filter_service.build_prediction_frames_from_match(db_match, markets)
-        else:
-            frames = self.filter_service.build_prediction_frames(fixture_id=fixture_id, markets=markets)
-
-        payload: dict[str, Any] = {}
-        for market in markets:
-            model_meta = self._latest_model_for_market(market)
-            if not model_meta:
-                continue
-
-            model_path = model_meta.get("model_path")
-            if not model_path or not os.path.exists(model_path):
-                continue
-
-            frame = frames.get(market)
-            if frame is None or frame.empty:
-                continue
-
-            X = frame.drop(columns=["market", "id_fixture", "season", "league", "prediction_at"], errors="ignore")
-            selected_features = model_meta.get("feature_names") or []
-            if selected_features:
-                for feature_name in selected_features:
-                    if feature_name not in X.columns:
-                        X[feature_name] = 0.0
-                X = X[selected_features]
-
-            try:
-                model = self._load_model(model_path)
-                prediction, probability = self._extract_probability(model=model, X=X)
-            except Exception:
-                continue
-
-            payload[market] = {
-                "prediction": int(prediction),
-                "probability": float(probability),
-                "model_name": model_meta.get("model_name"),
-                "run_id": model_meta.get("run_id"),
-            }
+        payload = self._snapshot_service.resolve_predictions(
+            fixture_id=fixture_id, markets=markets, db_match=db_match, status=status
+        )
 
         self._apply_monotonic_projection(payload)
         self._prediction_cache[cache_key] = payload
@@ -983,7 +924,9 @@ class DashboardService:
         }
 
         if with_predictions and match.id_fixture:
-            predictions = self._predict_fixture(fixture_id=match.id_fixture, markets=markets, db_match=match)
+            predictions = self._predict_fixture(
+                fixture_id=match.id_fixture, markets=markets, db_match=match, status=match.status
+            )
             row["predictions"] = predictions
             # Riga gia' dal DB locale: `match.odds` e' gia' caricato via
             # `selectinload` dalla query unica di `_fetch_matches` (nessuna
@@ -1355,7 +1298,9 @@ class DashboardService:
             }
 
         predictions = (
-            self._predict_fixture(fixture_id=fixture_id, markets=model_markets, db_match=db_match)
+            self._predict_fixture(
+                fixture_id=fixture_id, markets=model_markets, db_match=db_match, status=fixture_row.get("status")
+            )
             if with_predictions
             else {}
         )

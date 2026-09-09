@@ -115,6 +115,21 @@ JOB_DEFINITIONS: dict[str, dict[str, Any]] = {
         "job_history_type": "data_quality_report",
         "cfg_fields": {"interval_minutes": "data_quality_interval_minutes"},
     },
+    "prediction_snapshot_refresh": {
+        "label": "Aggiorna predizioni salvate",
+        "description": (
+            "Ricalcola in background le predizioni delle partite non ancora disputate la cui "
+            "fingerprint di feature (quote/statistiche) e' cambiata dall'ultimo giro, popolando "
+            "la banca dati 'match_prediction_snapshot' PRIMA che qualcuno apra la Dashboard - "
+            "cosi' la Dashboard legge quasi sempre una riga gia' calcolata invece di rifare "
+            "l'inferenza ML ad ogni richiesta. Lavora solo su dati gia' a DB: non chiama API-Sports."
+        ),
+        "default_enabled": True,
+        "calls_api_sports": False,
+        "schedule_kind": "interval_minutes",
+        "job_history_type": "prediction_snapshot_refresh",
+        "cfg_fields": {"interval_minutes": "prediction_snapshot_interval_minutes"},
+    },
 }
 
 # Limiti di validazione per ciascun `schedule_kind` (Impostazioni, editor

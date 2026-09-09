@@ -9,14 +9,20 @@ from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.interval import IntervalTrigger
+from sqlalchemy.exc import OperationalError, ProgrammingError
+from sqlalchemy.orm import selectinload
 
 from src.data.live.live_sync_job import run_manual_live_sync
 from src.data.quality_report_service import DataQualityService
 from src.jobs.job_history import JobHistory
 from src.jobs.job_settings import JOB_DEFINITIONS, is_job_enabled, resolve_job_schedule
+from src.ml.serving.prediction_snapshot_service import PredictionSnapshotService
+from src.repository.base.repository_db import SessionLocal
 from src.service_ia.config.app_config import AppConfig, load_app_config
+from src.service_ia.model.match import Match
 from src.service_ia.pre_processing.download_match_service import calculate_mean, download_import_matches
 from src.service_ia.pre_processing.settlement_service import SettlementService
+from src.service_ia.training.model_registry import ModelRegistry
 from src.service_ia.training.train_multi_market import train_all_markets
 
 logging.basicConfig(level=logging.INFO)
@@ -374,6 +380,99 @@ def run_data_quality_report(
         raise
 
 
+def run_prediction_snapshot_refresh(
+    days_ahead: Optional[int] = None,
+    job_id: Optional[str] = None,
+) -> dict:
+    """Ricalcola in BACKGROUND le predizioni delle fixture NON ANCORA
+    disputate (status NS) nella finestra oggi -> oggi+`days_ahead` giorni
+    (default `cfg.daily_refresh_days_ahead`, la STESSA finestra gia'
+    tenuta sincronizzata da `data_daily_refresh`/`data_future_sync`),
+    riusando `PredictionSnapshotService` (2026-09-09, richiesto
+    esplicitamente dall'operatore: "salvare le predizioni... per le
+    partite di oggi o future, solo se cambia una delle feature").
+
+    Una riga viene RICALCOLATA solo se la fingerprint delle feature o il
+    modello in produzione sono cambiati dall'ultimo giro - la stragrande
+    maggioranza delle fixture in finestra e' quindi un no-op economico
+    (query + hash, nessuna inferenza). Popola `match_prediction_snapshot`
+    PRIMA che un utente apra la Dashboard, cosi' il percorso di serving
+    resta una pura lettura da DB (mai un caricamento modello nel path
+    della richiesta - la causa principale della lentezza percepita
+    indipendentemente dalla data, diagnosticata lo stesso giorno).
+
+    Un fallimento su una SINGOLA fixture non blocca le altre (stesso
+    principio "provider errors isolati" gia' applicato in LIVE-01) - finisce
+    in `errors`, mai un'eccezione che interrompe l'intero giro."""
+    cfg = load_app_config()
+    days_ahead = days_ahead if days_ahead is not None else cfg.daily_refresh_days_ahead
+    history = JobHistory()
+    params = {"days_ahead": days_ahead}
+    if job_id:
+        history.mark_running(job_id=job_id, params=params)
+    else:
+        started = history.create_job(
+            job_type="prediction_snapshot_refresh", status="running", params=params, started_at=JobHistory._now_iso()
+        )
+        job_id = started["job_id"]
+
+    start = time.perf_counter()
+    try:
+        today = datetime.now(timezone.utc).date()
+        window_start_iso = today.isoformat()
+        window_end_iso = (today + timedelta(days=days_ahead + 1)).isoformat()
+
+        try:
+            with SessionLocal() as session:
+                matches = (
+                    session.query(Match)
+                    .options(selectinload(Match.statistics), selectinload(Match.odds))
+                    .filter(Match.id_fixture.is_not(None))
+                    .filter(Match.status == "NS")
+                    .filter(Match.date_match >= window_start_iso)
+                    .filter(Match.date_match < window_end_iso)
+                    .all()
+                )
+        except (OperationalError, ProgrammingError):
+            matches = []
+
+        markets = ModelRegistry().list_markets()
+        service = PredictionSnapshotService()
+        fixtures_considered = 0
+        predictions_resolved = 0
+        errors: list[dict] = []
+
+        for match in matches:
+            fixtures_considered += 1
+            try:
+                payload = service.resolve_predictions(
+                    fixture_id=match.id_fixture, markets=markets, db_match=match, status=match.status
+                )
+                predictions_resolved += len(payload)
+            except Exception as exc:
+                errors.append({"fixture_id": match.id_fixture, "message": str(exc)})
+
+        summary = {
+            "days_ahead": days_ahead,
+            "fixtures_considered": fixtures_considered,
+            "predictions_resolved": predictions_resolved,
+            "errors": errors,
+            "duration_seconds": time.perf_counter() - start,
+        }
+        history.mark_success(job_id=job_id, summary=summary)
+        return {"job_id": job_id, **summary}
+    except Exception as exc:
+        history.mark_failed(
+            job_id=job_id,
+            error={
+                "message": str(exc),
+                "duration_seconds": time.perf_counter() - start,
+                "params": params,
+            },
+        )
+        raise
+
+
 def _add_job(
     scheduler: BlockingScheduler,
     func,
@@ -559,6 +658,15 @@ def build_scheduler(cfg: Optional[AppConfig] = None) -> BlockingScheduler:
       dataset LIVE distinto (`src/data/live/`, tabelle `live_*`) - MAI le
       tabelle pre-match `match`/`statistics`/`odds` (nessun impatto sul
       training).
+
+    2026-09-09 aggiunge un ultimo job, indipendente anch'esso:
+    - `prediction_snapshot_refresh` (`schedule_kind="interval_minutes"`):
+      ricalcola in background le predizioni delle fixture NS nella stessa
+      finestra di `data_daily_refresh`/`data_future_sync`, riusando
+      `PredictionSnapshotService` - solo dove la fingerprint delle feature
+      o il modello sono cambiati dall'ultimo giro (vedi
+      `run_prediction_snapshot_refresh`). Non chiama alcun provider
+      esterno (solo dati gia' a DB + inferenza ML locale).
     """
     cfg = cfg or load_app_config()
     scheduler = BlockingScheduler(timezone="Europe/Rome")
@@ -622,6 +730,15 @@ def build_scheduler(cfg: Optional[AppConfig] = None) -> BlockingScheduler:
         functools.partial(_run_if_due, "data_sync_live", run_manual_live_sync, cfg=cfg),
         trigger=heartbeat,
         job_id="data_sync_live",
+        misfire_grace_time=_MISFIRE_GRACE_SECONDS,
+    )
+
+    # --- Banca dati predizioni (2026-09-09, background, indipendente) ---
+    _add_job(
+        scheduler,
+        functools.partial(_run_if_due, "prediction_snapshot_refresh", run_prediction_snapshot_refresh, cfg=cfg),
+        trigger=heartbeat,
+        job_id="prediction_snapshot_refresh",
         misfire_grace_time=_MISFIRE_GRACE_SECONDS,
     )
 
