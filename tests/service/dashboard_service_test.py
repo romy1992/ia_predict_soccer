@@ -1,6 +1,6 @@
 import unittest
 import uuid
-from datetime import date
+from datetime import date, time
 from unittest import mock
 
 from sqlalchemy import create_engine
@@ -661,8 +661,8 @@ class TestQuotaExhaustedGuard(unittest.TestCase):
 
     def test_fetch_api_live_fixtures_still_calls_when_quota_not_exhausted(self):
         with mock.patch.object(dashboard_service_module, "is_quota_exhausted_today", return_value=False), mock.patch.object(
-            dashboard_service_module, "base_api_statistics", return_value=[]
-        ) as mocked_call:
+            DashboardService, "_is_within_dashboard_api_window", return_value=True
+        ), mock.patch.object(dashboard_service_module, "base_api_statistics", return_value=[]) as mocked_call:
             self.service._fetch_api_live_fixtures()
 
         self.assertTrue(mocked_call.called)
@@ -716,6 +716,98 @@ class TestApplyMonotonicProjection(unittest.TestCase):
         payload = self._payload(goal_no_goal={"prediction": 1, "probability": 0.55, "model_name": "m", "run_id": "r5"})
         DashboardService._apply_monotonic_projection(payload)
         self.assertEqual(payload["goal_no_goal"]["probability"], 0.55)
+
+
+class TestDashboardApiWindow(unittest.TestCase):
+    """Finestra oraria 12:30-00:30 Europe/Rome per il risparmio quota
+    (2026-09-09, richiesto esplicitamente dall'operatore): fuori da questa
+    finestra, per la data ODIERNA, _fetch_api_day_fixtures/
+    _fetch_api_live_fixtures non devono interrogare l'API esterna."""
+
+    def setUp(self):
+        self.service = DashboardService.__new__(DashboardService)
+        self.service.cfg = type("Cfg", (), {"leagues": [135], "seasons": [2026]})()
+        DashboardService._api_cache = {}
+
+    def tearDown(self):
+        DashboardService._api_cache = {}
+
+    def test_window_boundaries(self):
+        self.assertTrue(DashboardService._is_within_dashboard_api_window(time(12, 30)))
+        self.assertFalse(DashboardService._is_within_dashboard_api_window(time(12, 29)))
+        self.assertTrue(DashboardService._is_within_dashboard_api_window(time(23, 59)))
+        self.assertTrue(DashboardService._is_within_dashboard_api_window(time(0, 0)))
+        self.assertTrue(DashboardService._is_within_dashboard_api_window(time(0, 29)))
+        self.assertFalse(DashboardService._is_within_dashboard_api_window(time(0, 30)))
+        self.assertFalse(DashboardService._is_within_dashboard_api_window(time(6, 0)))
+
+    def test_day_fixtures_skipped_for_today_outside_window(self):
+        today = date(2026, 9, 9)
+        with mock.patch.object(DashboardService, "_today_in_dashboard_timezone", return_value=today), mock.patch.object(
+            DashboardService, "_is_within_dashboard_api_window", return_value=False
+        ), mock.patch.object(dashboard_service_module, "is_quota_exhausted_today", return_value=False), mock.patch.object(
+            dashboard_service_module, "base_api_statistics"
+        ) as mocked_call:
+            result = self.service._fetch_api_day_fixtures(today)
+
+        mocked_call.assert_not_called()
+        self.assertEqual(result, [])
+
+    def test_day_fixtures_force_refresh_bypasses_window(self):
+        """`force_refresh` (bottone "Forza aggiornamento", azione esplicita
+        dell'operatore) bypassa la finestra oraria - a differenza del guard
+        quota esaurita, che nessun bottone puo' bypassare."""
+        today = date(2026, 9, 9)
+        with mock.patch.object(DashboardService, "_today_in_dashboard_timezone", return_value=today), mock.patch.object(
+            DashboardService, "_is_within_dashboard_api_window", return_value=False
+        ), mock.patch.object(dashboard_service_module, "is_quota_exhausted_today", return_value=False), mock.patch.object(
+            dashboard_service_module, "base_api_statistics", return_value=[]
+        ) as mocked_call:
+            self.service._fetch_api_day_fixtures(today, force_refresh=True)
+
+        self.assertTrue(mocked_call.called)
+
+    def test_day_fixtures_not_blocked_for_other_dates_outside_window(self):
+        """La finestra oraria riguarda SOLO la data odierna - una data
+        diversa (storica/futura) non e' toccata da questo guard."""
+        today = date(2026, 9, 9)
+        other_date = date(2026, 9, 10)
+        with mock.patch.object(DashboardService, "_today_in_dashboard_timezone", return_value=today), mock.patch.object(
+            DashboardService, "_is_within_dashboard_api_window", return_value=False
+        ), mock.patch.object(dashboard_service_module, "is_quota_exhausted_today", return_value=False), mock.patch.object(
+            dashboard_service_module, "base_api_statistics", return_value=[]
+        ) as mocked_call:
+            self.service._fetch_api_day_fixtures(other_date)
+
+        self.assertTrue(mocked_call.called)
+
+    def test_day_fixtures_called_for_today_inside_window(self):
+        today = date(2026, 9, 9)
+        with mock.patch.object(DashboardService, "_today_in_dashboard_timezone", return_value=today), mock.patch.object(
+            DashboardService, "_is_within_dashboard_api_window", return_value=True
+        ), mock.patch.object(dashboard_service_module, "is_quota_exhausted_today", return_value=False), mock.patch.object(
+            dashboard_service_module, "base_api_statistics", return_value=[]
+        ) as mocked_call:
+            self.service._fetch_api_day_fixtures(today)
+
+        self.assertTrue(mocked_call.called)
+
+    def test_live_fixtures_skipped_outside_window(self):
+        with mock.patch.object(DashboardService, "_is_within_dashboard_api_window", return_value=False), mock.patch.object(
+            dashboard_service_module, "is_quota_exhausted_today", return_value=False
+        ), mock.patch.object(dashboard_service_module, "base_api_statistics") as mocked_call:
+            result = self.service._fetch_api_live_fixtures()
+
+        mocked_call.assert_not_called()
+        self.assertEqual(result, [])
+
+    def test_live_fixtures_called_inside_window(self):
+        with mock.patch.object(DashboardService, "_is_within_dashboard_api_window", return_value=True), mock.patch.object(
+            dashboard_service_module, "is_quota_exhausted_today", return_value=False
+        ), mock.patch.object(dashboard_service_module, "base_api_statistics", return_value=[]) as mocked_call:
+            self.service._fetch_api_live_fixtures()
+
+        self.assertTrue(mocked_call.called)
 
 
 if __name__ == "__main__":

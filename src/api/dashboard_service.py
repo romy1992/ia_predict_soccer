@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 import json
 import os
 import re
 from typing import Any, Optional
+from zoneinfo import ZoneInfo
 
 import joblib
 import numpy as np
@@ -43,6 +44,23 @@ _DECISION_LABEL_PRIORITY = {"PLAY": 0, "BORDERLINE": 1, "NO BET": 2}
 # effetto sul selection_score sempre leggermente positivo o nullo, mai
 # negativo - vedi `apply_monotonic_to_champions.py`). Vedi `_apply_monotonic_projection`.
 UNDER_OVER_MARKETS = ["under_over_1_5", "under_over_2_5", "under_over_3_5", "under_over_4_5"]
+
+# Finestra oraria per interrogare l'API-Sports da Dashboard per le partite
+# ODIERNE (risparmio quota, 2026-09-09, richiesto esplicitamente
+# dall'operatore): fuori da questa finestra (00:30-12:30, quando
+# tipicamente non ci sono partite in corso ne' imminenti) le fetch passive
+# per "oggi" (incluso l'auto-poll ogni 60s del frontend) restano bloccate,
+# si mostra solo cio' che e' gia' a DB - stesso principio del guard
+# `is_quota_exhausted_today`, gia' esistente. Orario LOCALE Europe/Rome
+# (stesso fuso gia' usato da `src/jobs/scheduler.py` per i cron): la
+# logica interna del progetto resta in UTC (confronti storico/oggi,
+# timestamp DB) per non introdurre ambiguita' sul cambio ora legale -
+# SOLO questa decisione "a che ora del giorno siamo" usa l'orario locale,
+# perche' e' l'unico punto in cui conta davvero (partite di calcio si
+# giocano in orario locale italiano, non UTC).
+_DASHBOARD_TIMEZONE = ZoneInfo("Europe/Rome")
+_DASHBOARD_API_WINDOW_START = time(12, 30)
+_DASHBOARD_API_WINDOW_END = time(0, 30)
 
 
 @dataclass
@@ -139,6 +157,21 @@ class DashboardService:
         cls._api_cache[key] = (datetime.now(timezone.utc), payload)
 
     @staticmethod
+    def _today_in_dashboard_timezone() -> date:
+        return datetime.now(_DASHBOARD_TIMEZONE).date()
+
+    @staticmethod
+    def _is_within_dashboard_api_window(now_local: Optional[time] = None) -> bool:
+        """Finestra 12:30->00:30 (Europe/Rome, attraversa la mezzanotte):
+        dentro se l'ora locale e' >= 12:30 OPPURE < 00:30 - un range che
+        attraversa la mezzanotte non e' confrontabile con un semplice
+        start<=now<=end. `now_local` esplicito solo per i test - a runtime
+        e' sempre l'ora corrente."""
+        if now_local is None:
+            now_local = datetime.now(_DASHBOARD_TIMEZONE).time()
+        return now_local >= _DASHBOARD_API_WINDOW_START or now_local < _DASHBOARD_API_WINDOW_END
+
+    @staticmethod
     def _fixture_id_from_api(fixture: dict[str, Any]) -> Optional[int]:
         fix = fixture.get("fixture") or {}
         fixture_id = fix.get("id")
@@ -186,6 +219,19 @@ class DashboardService:
         if is_quota_exhausted_today():
             return []
 
+        # Risparmio quota (2026-09-09): per la data ODIERNA (orario locale
+        # Europe/Rome, non UTC - le partite si giocano in orario locale),
+        # fuori dalla finestra 12:30-00:30 non c'e' motivo di interrogare
+        # l'API esterna (nessuna partita in corso/imminente) - si mostra
+        # solo cio' che e' gia' a DB. Bypassabile con `force_refresh`
+        # (azione esplicita dell'operatore, non l'auto-poll passivo del
+        # frontend), stesso principio dello skip DB-first per le date
+        # storiche. Le altre date (storiche/future) non sono toccate da
+        # questo guard: restano governate solo da `skip_api` in
+        # `get_day_matches`.
+        if not force_refresh and target_date == self._today_in_dashboard_timezone() and not self._is_within_dashboard_api_window():
+            return []
+
         season = self._season_for_date(target_date)
         leagues = self.cfg.leagues or []
 
@@ -215,6 +261,13 @@ class DashboardService:
         if cached is not None:
             return cached
         if is_quota_exhausted_today():
+            return []
+        # Risparmio quota (2026-09-09): le partite live sono per definizione
+        # "adesso" (nessun target_date da confrontare) - fuori dalla
+        # finestra 12:30-00:30 (Europe/Rome) non ha senso interrogare
+        # l'API esterna, nessun bottone la bypassa qui (nessun
+        # force_refresh dedicato per il live).
+        if not self._is_within_dashboard_api_window():
             return []
 
         fixtures: list[dict[str, Any]] = []
