@@ -24,7 +24,9 @@ import {
   triggerSettlement,
   triggerTodayUpdate,
   triggerRetrain,
+  updateJobSchedule,
   updateJobSettings,
+  resetJobSchedule,
 } from "./api";
 import AppRouter from "./features/layout/AppRouter";
 import Sidebar from "./features/layout/Sidebar";
@@ -71,6 +73,7 @@ export default function App() {
   const [jobSettingsLoading, setJobSettingsLoading] = useState(false);
   const [jobSettingsError, setJobSettingsError] = useState("");
   const [jobSettingsSavingId, setJobSettingsSavingId] = useState(null);
+  const [jobScheduleSavingId, setJobScheduleSavingId] = useState(null);
   const [quotaPaused, setQuotaPaused] = useState(false);
   const [quotaPausedSince, setQuotaPausedSince] = useState(null);
   const [apiQuota, setApiQuota] = useState(null);
@@ -390,6 +393,48 @@ export default function App() {
     },
     [loadJobSettings]
   );
+  const saveJobSchedule = useCallback(async (jobId, schedule) => {
+    setJobScheduleSavingId(jobId);
+    setJobSettingsError("");
+    try {
+      const payload = await updateJobSchedule(jobId, schedule);
+      setJobSettingsRows((rows) =>
+        rows.map((row) =>
+          row.job_id === jobId
+            ? { ...row, schedule: payload.schedule, schedule_is_default: payload.schedule_is_default }
+            : row
+        )
+      );
+      return payload;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setJobSettingsError(message);
+      throw err;
+    } finally {
+      setJobScheduleSavingId(null);
+    }
+  }, []);
+  const resetJobScheduleToDefault = useCallback(async (jobId) => {
+    setJobScheduleSavingId(jobId);
+    setJobSettingsError("");
+    try {
+      const payload = await resetJobSchedule(jobId);
+      setJobSettingsRows((rows) =>
+        rows.map((row) =>
+          row.job_id === jobId
+            ? { ...row, schedule: payload.schedule, schedule_is_default: payload.schedule_is_default }
+            : row
+        )
+      );
+      return payload;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setJobSettingsError(message);
+      throw err;
+    } finally {
+      setJobScheduleSavingId(null);
+    }
+  }, []);
   const loadApiQuota = useCallback(async () => {
     setApiQuotaLoading(true);
     setApiQuotaError("");
@@ -700,6 +745,9 @@ export default function App() {
       savingJobId: jobSettingsSavingId,
       onToggleJob: toggleJobSetting,
       onRefreshJobs: loadJobSettings,
+      scheduleSavingJobId: jobScheduleSavingId,
+      onSaveSchedule: saveJobSchedule,
+      onResetSchedule: resetJobScheduleToDefault,
       quota: apiQuota,
       quotaLoading: apiQuotaLoading,
       quotaError: apiQuotaError,

@@ -1,3 +1,113 @@
+import { useEffect, useState } from "react";
+
+function pad2(value) {
+  return String(value).padStart(2, "0");
+}
+
+/**
+ * Editor inline dell'orario/intervallo di un job (2026-09-09): la forma dei
+ * campi dipende da `schedule_kind` (vedi `src/jobs/job_settings.py`) -
+ * "daily" mostra un time picker HH:MM, "interval_minutes"/"interval_seconds"
+ * un semplice input numerico. Il salvataggio ha effetto immediato lato
+ * server (nessun restart), quindi qui basta chiamare `onSave`/`onReset` e
+ * lasciare che la riga del job si aggiorni dalla risposta.
+ */
+function JobScheduleEditor({ job, saving, onSave, onReset }) {
+  const schedule = job.schedule || {};
+  const [timeValue, setTimeValue] = useState(
+    schedule.hour !== undefined ? `${pad2(schedule.hour)}:${pad2(schedule.minute)}` : "00:00"
+  );
+  const [intervalValue, setIntervalValue] = useState(
+    schedule.interval_minutes ?? schedule.interval_seconds ?? 0
+  );
+  const [localError, setLocalError] = useState("");
+
+  useEffect(() => {
+    if (job.schedule_kind === "daily") {
+      setTimeValue(`${pad2(job.schedule?.hour ?? 0)}:${pad2(job.schedule?.minute ?? 0)}`);
+    } else if (job.schedule_kind === "interval_minutes") {
+      setIntervalValue(job.schedule?.interval_minutes ?? 0);
+    } else if (job.schedule_kind === "interval_seconds") {
+      setIntervalValue(job.schedule?.interval_seconds ?? 0);
+    }
+  }, [job.schedule_kind, job.schedule?.hour, job.schedule?.minute, job.schedule?.interval_minutes, job.schedule?.interval_seconds]);
+
+  async function handleSaveDaily() {
+    setLocalError("");
+    const [hourStr, minuteStr] = timeValue.split(":");
+    const hour = Number(hourStr);
+    const minute = Number(minuteStr);
+    if (Number.isNaN(hour) || Number.isNaN(minute)) {
+      setLocalError("Orario non valido.");
+      return;
+    }
+    try {
+      await onSave(job.job_id, { hour, minute });
+    } catch (err) {
+      setLocalError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  async function handleSaveInterval() {
+    setLocalError("");
+    const value = Number(intervalValue);
+    if (Number.isNaN(value)) {
+      setLocalError("Valore non valido.");
+      return;
+    }
+    const key = job.schedule_kind === "interval_seconds" ? "interval_seconds" : "interval_minutes";
+    try {
+      await onSave(job.job_id, { [key]: value });
+    } catch (err) {
+      setLocalError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  async function handleReset() {
+    setLocalError("");
+    try {
+      await onReset(job.job_id);
+    } catch (err) {
+      setLocalError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  const unitLabel = job.schedule_kind === "interval_seconds" ? "secondi" : "minuti";
+
+  return (
+    <div className="settings-job-schedule">
+      {job.schedule_kind === "daily" ? (
+        <input
+          type="time"
+          value={timeValue}
+          disabled={saving}
+          onChange={(e) => setTimeValue(e.target.value)}
+          onBlur={handleSaveDaily}
+        />
+      ) : (
+        <div className="settings-job-schedule-interval">
+          <input
+            type="number"
+            min="1"
+            value={intervalValue}
+            disabled={saving}
+            onChange={(e) => setIntervalValue(e.target.value)}
+            onBlur={handleSaveInterval}
+          />
+          <span className="muted">{unitLabel}</span>
+        </div>
+      )}
+      {!job.schedule_is_default && (
+        <button className="btn-link" disabled={saving} onClick={handleReset} title="Torna al valore di default">
+          ripristina default
+        </button>
+      )}
+      {saving && <small className="muted">Salvataggio...</small>}
+      {localError && <small className="error-text">{localError}</small>}
+    </div>
+  );
+}
+
 function quotaBarClass(percentage) {
   if (percentage === null || percentage === undefined) {
     return "";
@@ -33,6 +143,9 @@ export default function SettingsPage({
   savingJobId,
   onToggleJob,
   onRefreshJobs,
+  scheduleSavingJobId,
+  onSaveSchedule,
+  onResetSchedule,
   quota,
   quotaLoading,
   quotaError,
@@ -135,6 +248,14 @@ export default function SettingsPage({
                 </strong>
                 <small className="muted">{job.description}</small>
               </div>
+              {job.schedule_kind && onSaveSchedule && onResetSchedule && (
+                <JobScheduleEditor
+                  job={job}
+                  saving={scheduleSavingJobId === job.job_id}
+                  onSave={onSaveSchedule}
+                  onReset={onResetSchedule}
+                />
+              )}
               <label className="switch">
                 <input
                   type="checkbox"
