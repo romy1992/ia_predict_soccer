@@ -32,6 +32,8 @@ from src.api.schemas import (
     JobLiveSyncRequest,
     JobResponse,
     JobRetrainRequest,
+    JobScheduleResponse,
+    JobScheduleUpdateRequest,
     JobSettingsResponse,
     JobSettingsUpdateRequest,
     JobSettlementRequest,
@@ -75,9 +77,13 @@ from src.repository.live_data_repository import LiveDataRepository
 from src.jobs.api_quota_state import get_quota_snapshot
 from src.jobs.job_history import JobHistory
 from src.jobs.job_settings import (
+    JOB_DEFINITIONS,
     get_quota_pause_state,
     list_job_definitions,
+    reset_job_schedule,
+    resolve_job_schedule,
     sync_job_settings_with_quota,
+    update_job_schedule,
     update_job_settings,
 )
 from src.jobs.scheduler import (
@@ -1032,6 +1038,55 @@ def post_settings_jobs(payload: JobSettingsUpdateRequest) -> JobSettingsResponse
         jobs=list_job_definitions(),
         quota_paused=bool(pause_state.get("paused_date")),
         quota_paused_since=pause_state.get("paused_date"),
+    )
+
+
+@app.put("/settings/jobs/{job_id}/schedule", response_model=JobScheduleResponse)
+def put_settings_job_schedule(job_id: str, payload: JobScheduleUpdateRequest) -> JobScheduleResponse:
+    """Salva un override di orario/intervallo per `job_id` (2026-09-09,
+    "maggiore controllo" richiesto dall'operatore). Il container
+    `scheduler` rilegge questo valore PRIMA di ogni esecuzione (heartbeat
+    ogni 30s, vedi `src/jobs/scheduler.py::_is_job_due`), quindi ha effetto
+    immediato senza restart di nessun container - stesso principio gia'
+    applicato al toggle enabled/disabled.
+
+    Le chiavi accettate dipendono dallo `schedule_kind` del job (vedi
+    `GET /settings/jobs`): un `job_id` sconosciuto o un set di chiavi/
+    valori non valido per quel job risulta in 400 (mai un override
+    silenziosamente scartato o applicato a meta')."""
+    if job_id not in JOB_DEFINITIONS:
+        raise HTTPException(status_code=404, detail=f"Job id non riconosciuto: {job_id}")
+
+    schedule = {key: value for key, value in payload.model_dump().items() if value is not None}
+    try:
+        update_job_schedule(job_id, schedule)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    cfg = load_app_config()
+    return JobScheduleResponse(
+        job_id=job_id,
+        schedule_kind=JOB_DEFINITIONS[job_id]["schedule_kind"],
+        schedule=resolve_job_schedule(job_id, cfg=cfg),
+        schedule_is_default=False,
+    )
+
+
+@app.delete("/settings/jobs/{job_id}/schedule", response_model=JobScheduleResponse)
+def delete_settings_job_schedule(job_id: str) -> JobScheduleResponse:
+    """Rimuove l'override di orario/intervallo per `job_id`, tornando al
+    default calcolato da `AppConfig` (variabili d'ambiente) - stesso
+    effetto immediato (senza restart) del salvataggio."""
+    if job_id not in JOB_DEFINITIONS:
+        raise HTTPException(status_code=404, detail=f"Job id non riconosciuto: {job_id}")
+
+    reset_job_schedule(job_id)
+    cfg = load_app_config()
+    return JobScheduleResponse(
+        job_id=job_id,
+        schedule_kind=JOB_DEFINITIONS[job_id]["schedule_kind"],
+        schedule=resolve_job_schedule(job_id, cfg=cfg),
+        schedule_is_default=True,
     )
 
 

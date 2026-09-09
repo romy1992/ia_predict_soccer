@@ -5,15 +5,15 @@ import logging
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.blocking import BlockingScheduler
-from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
 from src.data.live.live_sync_job import run_manual_live_sync
 from src.data.quality_report_service import DataQualityService
 from src.jobs.job_history import JobHistory
-from src.jobs.job_settings import is_job_enabled
+from src.jobs.job_settings import JOB_DEFINITIONS, is_job_enabled, resolve_job_schedule
 from src.service_ia.config.app_config import AppConfig, load_app_config
 from src.service_ia.pre_processing.download_match_service import calculate_mean, download_import_matches
 from src.service_ia.pre_processing.settlement_service import SettlementService
@@ -405,14 +405,103 @@ def _add_job(
     )
 
 
-def _run_if_enabled(job_id: str, func, **kwargs) -> Optional[dict]:
-    """Esegue `func` SOLO se il job e' abilitato in `job_settings.json`
-    (pagina Impostazioni), controllato ad OGNI tick e non solo alla
-    registrazione: un toggle da frontend ha quindi effetto immediato,
-    senza richiedere il restart del container `scheduler`."""
+# Fuso orario SOLO per decidere "e' l'ora X locale?"/"e' passato abbastanza
+# tempo?" nel self-gating sotto - MAI usato per i timestamp persistiti
+# nello storico job (`JobHistory`, sempre UTC), stesso principio gia'
+# applicato in `DashboardService` per la finestra oraria del pool API.
+_SCHEDULER_TIMEZONE = ZoneInfo("Europe/Rome")
+
+# Cadenza dell'heartbeat unico che rimpiazza i vecchi trigger per-job
+# (`IntervalTrigger`/`CronTrigger` con orario fissato una volta sola
+# all'avvio): ad OGNI tick, ogni job si auto-valuta (`_is_job_due`) contro
+# lo `schedule` CORRENTE (`resolve_job_schedule`, riletto da disco ad ogni
+# chiamata) - un cambio di orario/intervallo da Impostazioni ha quindi
+# effetto immediato, senza restart del container `scheduler` (2026-09-09,
+# richiesto esplicitamente dall'operatore per "maggiore controllo").
+# 30s e' abbastanza fine da non introdurre ritardi percepibili nemmeno sul
+# job piu' frequente (`data_sync_live`, minimo 30s per via di
+# `_SCHEDULE_FIELD_BOUNDS`), restando comunque leggero (nessuna query DB,
+# solo lettura di due JSON piccoli + una lista in memoria).
+_HEARTBEAT_SECONDS = 30
+_MISFIRE_GRACE_SECONDS = 300
+
+
+def _last_completed_run(job_history_type: str) -> Optional[dict]:
+    """Ultima esecuzione TERMINATA (success o failed) di un job, riusando
+    lo storico JSONL gia' esistente (`JobHistory`, la stessa fonte
+    mostrata in Data Center/ML Lab) come unica fonte di verita' per "quando
+    e' girato l'ultima volta" - nessun nuovo tracking parallelo introdotto
+    apposta per lo scheduling."""
+    history = JobHistory()
+    rows = [row for row in history.tail(limit=200, job_type=job_history_type) if row.get("status") in ("success", "failed")]
+    return rows[-1] if rows else None
+
+
+def _parse_history_timestamp(row: dict) -> datetime:
+    raw = row.get("finished_at") or row.get("timestamp") or row.get("started_at")
+    parsed = datetime.fromisoformat(raw)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def _is_job_due(job_id: str, cfg: AppConfig) -> bool:
+    """Vero se, secondo lo `schedule` EFFETTIVO corrente (override salvato
+    da Impostazioni se presente, altrimenti default `AppConfig` - vedi
+    `resolve_job_schedule`), e' il momento di eseguire `job_id`:
+
+    - `schedule_kind == "daily"`: vero se l'ora locale (Europe/Rome) e'
+      gia' oltre `hour:minute` di OGGI, e l'ultima esecuzione riuscita/
+      fallita risale a un giorno locale precedente (mai due volte lo
+      stesso giorno, anche con molti tick di heartbeat).
+    - `schedule_kind in ("interval_minutes", "interval_seconds")`: vero se
+      e' trascorso almeno l'intervallo configurato dall'ultima esecuzione
+      (confronto in UTC, fuso irrilevante per una durata relativa).
+
+    Nessuna esecuzione precedente in `JobHistory` → sempre dovuto (un job
+    appena abilitato/promosso parte al primo tick utile, mai in attesa di
+    un giro storico che non esiste)."""
+    definition = JOB_DEFINITIONS[job_id]
+    schedule_kind = definition["schedule_kind"]
+    schedule = resolve_job_schedule(job_id, cfg=cfg)
+    last_run = _last_completed_run(definition["job_history_type"])
+
+    if schedule_kind == "daily":
+        now_local = datetime.now(_SCHEDULER_TIMEZONE)
+        target_today = now_local.replace(hour=schedule["hour"], minute=schedule["minute"], second=0, microsecond=0)
+        if now_local < target_today:
+            return False
+        if last_run is None:
+            return True
+        last_run_local = _parse_history_timestamp(last_run).astimezone(_SCHEDULER_TIMEZONE)
+        return last_run_local.date() < now_local.date()
+
+    if schedule_kind == "interval_minutes":
+        interval_seconds = schedule["interval_minutes"] * 60
+    elif schedule_kind == "interval_seconds":
+        interval_seconds = schedule["interval_seconds"]
+    else:
+        raise ValueError(f"schedule_kind sconosciuto per '{job_id}': {schedule_kind}")
+
+    if last_run is None:
+        return True
+    elapsed = (datetime.now(timezone.utc) - _parse_history_timestamp(last_run)).total_seconds()
+    return elapsed >= interval_seconds
+
+
+def _run_if_due(job_id: str, func, *, cfg: AppConfig, **kwargs) -> Optional[dict]:
+    """Esegue `func` SOLO se il job e' (1) abilitato in `job_settings.json`
+    (pagina Impostazioni) E (2) dovuto secondo lo `schedule` corrente
+    (`_is_job_due`) - entrambi controllati ad OGNI tick dell'heartbeat, non
+    solo alla registrazione: un toggle o un cambio orario da frontend ha
+    quindi effetto immediato, senza richiedere il restart del container
+    `scheduler`."""
     if not is_job_enabled(job_id):
-        logging.info("Job '%s' disabilitato da Impostazioni: skip esecuzione.", job_id)
+        logging.debug("Job '%s' disabilitato da Impostazioni: skip.", job_id)
         return None
+    if not _is_job_due(job_id, cfg):
+        return None
+    logging.info("Job '%s': schedulato ed abilitato, esecuzione in corso.", job_id)
     return func(**kwargs)
 
 
@@ -422,111 +511,118 @@ def build_scheduler(cfg: Optional[AppConfig] = None) -> BlockingScheduler:
     apposta per restare ispezionabile/testabile (`scheduler.get_jobs()`)
     senza dover mockare un loop bloccante.
 
-    OPS-01 (REFACTOR) — "Data jobs frequenti" + "Training job indipendente"
-    + "No retrain automatico ad ogni import": quattro job COMPLETAMENTE
-    separati e indipendenti, ciascuno col proprio trigger/orario
-    configurabile via env (`AppConfig` — mai un valore hardcoded inline):
+    OPS-01 (REFACTOR) + orario editabile (2026-09-09): ogni job resta
+    COMPLETAMENTE separato e indipendente (nessun retrain automatico
+    innescato dal completamento di un data job - acceptance criteria "No
+    retrain automatico ad ogni import"), ma NESSUNO ha piu' un trigger
+    APScheduler con orario fissato all'avvio (`CronTrigger`/`IntervalTrigger`
+    calcolato una volta da `cfg.*`): tutti condividono un unico heartbeat
+    (`IntervalTrigger(seconds=_HEARTBEAT_SECONDS)`) e si auto-valutano ad
+    ogni tick tramite `_run_if_due`/`_is_job_due` contro lo `schedule`
+    EFFETTIVO corrente (`resolve_job_schedule`, che riflette un eventuale
+    override salvato da Impostazioni) - un cambio di orario/intervallo da
+    frontend ha quindi effetto immediato, senza richiedere il restart del
+    container `scheduler` (vedi `job_settings.py::update_job_schedule`).
 
-    - `data_sync_today` (frequente, `IntervalTrigger` ogni
-      `cfg.data_sync_interval_minutes` minuti): sincronizza le fixture
-      odierne (NS/live/final) — l'unico job che deve girare spesso, per
-      tenere aggiornati punteggi/stati in tempo quasi reale.
-    - `data_settlement` (frequente, `IntervalTrigger` ogni
-      `cfg.settlement_interval_minutes` minuti): riconcilia le partite
-      concluse per il settlement (BET-06/dashboard), indipendente dal
-      training.
-    - `data_quality_report` (`IntervalTrigger` ogni
-      `cfg.data_quality_interval_minutes` minuti, default 60): ricalcola il
-      report Data Quality (coverage/anomalie/distribuzione) e lo logga -
-      STESSA funzione (`run_data_quality_report`) invocata dal bottone
-      "Aggiorna report" della pagina Data Quality. Nessuna chiamata al
-      provider esterno (solo dati gia' a DB).
-    - `data_future_sync` (giornaliero, `CronTrigger`): importa le fixture
+    - `data_sync_today` (`schedule_kind="interval_minutes"`): sincronizza
+      le fixture odierne (NS/live/final) — l'unico job che deve girare
+      spesso, per tenere aggiornati punteggi/stati in tempo quasi reale.
+    - `data_settlement` (`schedule_kind="interval_minutes"`): riconcilia le
+      partite concluse per il settlement (BET-06/dashboard), indipendente
+      dal training.
+    - `data_quality_report` (`schedule_kind="interval_minutes"`, default 60):
+      ricalcola il report Data Quality (coverage/anomalie/distribuzione) e
+      lo logga - STESSA funzione (`run_data_quality_report`) invocata dal
+      bottone "Aggiorna report" della pagina Data Quality. Nessuna chiamata
+      al provider esterno (solo dati gia' a DB).
+    - `data_future_sync` (`schedule_kind="daily"`): importa le fixture
       future in una finestra di N giorni — non richiede la frequenza dei
       due job precedenti (le partite future non cambiano stato spesso).
-    - `data_daily_refresh` (giornaliero, `CronTrigger`, orario configurabile
-      via `cfg.daily_refresh_hour`/`minute`): STESSO job invocato dal
-      bottone "Aggiorna tutto" della Sidebar (sempre visibile, in ogni
+    - `data_daily_refresh` (`schedule_kind="daily"`): STESSO job invocato
+      dal bottone "Aggiorna tutto" della Sidebar (sempre visibile, in ogni
       pagina) - chiama `run_daily_refresh` per importare le partite di IERI
       (tutti i campionati censiti) + sincronizzare il calendario prossimo
-      (`cfg.daily_refresh_days_ahead` giorni, default 7). Si sovrappone
+      (`cfg.daily_refresh_days_ahead` giorni, default 7 — NON editabile da
+      Impostazioni, solo orario/intervallo lo sono). Si sovrappone
       volutamente alla finestra futura di `data_future_sync`: se entrambi
       abilitati il calendario prossimo viene risincronizzato due volte al
       giorno (quote piu' fresche, ma doppio consumo quota API-Sports) - chi
       preferisce un solo giro puo' disattivare uno dei due da Impostazioni.
-    - `ml_training` (giornaliero, `CronTrigger`, orario INDIPENDENTE dai
-      data job): l'UNICO job che fa retrain — MAI innescato dal
-      completamento di un data job, gira col proprio orario/frequenza
-      configurabile separatamente (acceptance criteria "No retrain
-      automatico ad ogni import").
+    - `ml_training` (`schedule_kind="daily"`, orario INDIPENDENTE dai data
+      job): l'UNICO job che fa retrain — MAI innescato dal completamento di
+      un data job, gira col proprio orario/frequenza configurabile
+      separatamente (acceptance criteria "No retrain automatico ad ogni
+      import").
 
     LIVE-01 aggiunge un job aggiuntivo, anch'esso indipendente:
-    - `data_sync_live` (molto frequente, `IntervalTrigger` ogni
-      `cfg.live_sync_interval_seconds` SECONDI): sincronizza il dataset
-      LIVE distinto (`src/data/live/`, tabelle `live_*`) - MAI le tabelle
-      pre-match `match`/`statistics`/`odds` (nessun impatto sul training).
+    - `data_sync_live` (`schedule_kind="interval_seconds"`): sincronizza il
+      dataset LIVE distinto (`src/data/live/`, tabelle `live_*`) - MAI le
+      tabelle pre-match `match`/`statistics`/`odds` (nessun impatto sul
+      training).
     """
     cfg = cfg or load_app_config()
     scheduler = BlockingScheduler(timezone="Europe/Rome")
+    heartbeat = IntervalTrigger(seconds=_HEARTBEAT_SECONDS)
 
     # --- Data jobs (frequenti, indipendenti dal training) ---
     _add_job(
         scheduler,
-        functools.partial(_run_if_enabled, "data_sync_today", run_manual_today_update),
-        trigger=IntervalTrigger(minutes=cfg.data_sync_interval_minutes),
+        functools.partial(_run_if_due, "data_sync_today", run_manual_today_update, cfg=cfg),
+        trigger=heartbeat,
         job_id="data_sync_today",
-        misfire_grace_time=max(60, cfg.data_sync_interval_minutes * 60),
+        misfire_grace_time=_MISFIRE_GRACE_SECONDS,
     )
     _add_job(
         scheduler,
-        functools.partial(_run_if_enabled, "data_settlement", run_manual_settlement),
-        trigger=IntervalTrigger(minutes=cfg.settlement_interval_minutes),
+        functools.partial(_run_if_due, "data_settlement", run_manual_settlement, cfg=cfg),
+        trigger=heartbeat,
         job_id="data_settlement",
-        misfire_grace_time=max(60, cfg.settlement_interval_minutes * 60),
+        misfire_grace_time=_MISFIRE_GRACE_SECONDS,
     )
     _add_job(
         scheduler,
-        functools.partial(_run_if_enabled, "data_quality_report", run_data_quality_report),
-        trigger=IntervalTrigger(minutes=cfg.data_quality_interval_minutes),
+        functools.partial(_run_if_due, "data_quality_report", run_data_quality_report, cfg=cfg),
+        trigger=heartbeat,
         job_id="data_quality_report",
-        misfire_grace_time=max(60, cfg.data_quality_interval_minutes * 60),
+        misfire_grace_time=_MISFIRE_GRACE_SECONDS,
     )
     _add_job(
         scheduler,
-        functools.partial(_run_if_enabled, "data_future_sync", run_manual_future_sync),
-        trigger=CronTrigger(hour=cfg.future_sync_hour, minute=cfg.future_sync_minute),
+        functools.partial(_run_if_due, "data_future_sync", run_manual_future_sync, cfg=cfg),
+        trigger=heartbeat,
         job_id="data_future_sync",
-        misfire_grace_time=3600,
+        misfire_grace_time=_MISFIRE_GRACE_SECONDS,
     )
     _add_job(
         scheduler,
         functools.partial(
-            _run_if_enabled,
+            _run_if_due,
             "data_daily_refresh",
             run_daily_refresh,
+            cfg=cfg,
             days_ahead=cfg.daily_refresh_days_ahead,
         ),
-        trigger=CronTrigger(hour=cfg.daily_refresh_hour, minute=cfg.daily_refresh_minute),
+        trigger=heartbeat,
         job_id="data_daily_refresh",
-        misfire_grace_time=3600,
+        misfire_grace_time=_MISFIRE_GRACE_SECONDS,
     )
 
     # --- Training job (indipendente, orario SEPARATO dai data job) ---
     _add_job(
         scheduler,
-        functools.partial(_run_if_enabled, "ml_training", run_manual_retrain),
-        trigger=CronTrigger(hour=cfg.training_hour, minute=cfg.training_minute),
+        functools.partial(_run_if_due, "ml_training", run_manual_retrain, cfg=cfg),
+        trigger=heartbeat,
         job_id="ml_training",
-        misfire_grace_time=3600,
+        misfire_grace_time=_MISFIRE_GRACE_SECONDS,
     )
 
     # --- Live job (LIVE-01, dataset SEPARATO, polling frequente in secondi) ---
     _add_job(
         scheduler,
-        functools.partial(_run_if_enabled, "data_sync_live", run_manual_live_sync),
-        trigger=IntervalTrigger(seconds=cfg.live_sync_interval_seconds),
+        functools.partial(_run_if_due, "data_sync_live", run_manual_live_sync, cfg=cfg),
+        trigger=heartbeat,
         job_id="data_sync_live",
-        misfire_grace_time=max(30, cfg.live_sync_interval_seconds * 2),
+        misfire_grace_time=_MISFIRE_GRACE_SECONDS,
     )
 
     return scheduler
@@ -536,23 +632,14 @@ def start_scheduler() -> None:
     cfg = load_app_config()
     scheduler = build_scheduler(cfg)
 
+    schedule_summary = ", ".join(
+        f"{job_id}={resolve_job_schedule(job_id, cfg=cfg)}" for job_id in JOB_DEFINITIONS
+    )
     logging.info(
-        "Scheduler started: data_sync_today ogni %d min, data_settlement ogni %d min, "
-        "data_quality_report ogni %d min, "
-        "data_future_sync alle %02d:%02d, data_daily_refresh (ieri+%dgg, come 'Aggiorna tutto') "
-        "alle %02d:%02d, ml_training (indipendente) alle %02d:%02d, "
-        "data_sync_live (LIVE-01) ogni %d sec",
-        cfg.data_sync_interval_minutes,
-        cfg.settlement_interval_minutes,
-        cfg.data_quality_interval_minutes,
-        cfg.future_sync_hour,
-        cfg.future_sync_minute,
-        cfg.daily_refresh_days_ahead,
-        cfg.daily_refresh_hour,
-        cfg.daily_refresh_minute,
-        cfg.training_hour,
-        cfg.training_minute,
-        cfg.live_sync_interval_seconds,
+        "Scheduler started: heartbeat ogni %d sec, ogni job si auto-valuta contro il proprio "
+        "schedule effettivo (editabile da Impostazioni senza restart) - %s",
+        _HEARTBEAT_SECONDS,
+        schedule_summary,
     )
     scheduler.start()
 

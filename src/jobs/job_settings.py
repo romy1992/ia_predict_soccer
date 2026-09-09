@@ -8,11 +8,13 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from src.jobs.api_quota_state import get_quota_snapshot, is_quota_exhausted_today
+from src.service_ia.config.app_config import AppConfig, load_app_config
 
 logger = logging.getLogger(__name__)
 
 _LOCK = threading.Lock()
 _QUOTA_PAUSE_LOCK = threading.Lock()
+_SCHEDULE_LOCK = threading.Lock()
 
 # Job registrati da `build_scheduler` (src/jobs/scheduler.py) - le chiavi
 # DEVONO combaciare esattamente con i `job_id` passati a `_add_job`, cosi'
@@ -46,30 +48,45 @@ JOB_DEFINITIONS: dict[str, dict[str, Any]] = {
         ),
         "default_enabled": True,
         "calls_api_sports": True,
+        "schedule_kind": "daily",
+        "job_history_type": "daily_refresh",
+        "cfg_fields": {"hour": "daily_refresh_hour", "minute": "daily_refresh_minute"},
     },
     "data_sync_today": {
         "label": "Sync partite di oggi",
         "description": "Aggiorna stato/punteggi/quote delle fixture odierne (NS/live/final).",
         "default_enabled": True,
         "calls_api_sports": True,
+        "schedule_kind": "interval_minutes",
+        "job_history_type": "today_update",
+        "cfg_fields": {"interval_minutes": "data_sync_interval_minutes"},
     },
     "data_settlement": {
         "label": "Settlement partite concluse",
         "description": "Riconcilia le partite concluse per il settlement (dashboard/paper betting).",
         "default_enabled": True,
         "calls_api_sports": False,
+        "schedule_kind": "interval_minutes",
+        "job_history_type": "settlement",
+        "cfg_fields": {"interval_minutes": "settlement_interval_minutes"},
     },
     "data_future_sync": {
         "label": "Sync calendario prossimo",
         "description": "Importa le fixture future (solo status NS) nella finestra di giorni configurata.",
         "default_enabled": True,
         "calls_api_sports": True,
+        "schedule_kind": "daily",
+        "job_history_type": "future_sync",
+        "cfg_fields": {"hour": "future_sync_hour", "minute": "future_sync_minute"},
     },
     "ml_training": {
         "label": "Retrain modelli ML",
         "description": "Riaddestra tutti i mercati con i dati piu' recenti (giornaliero).",
         "default_enabled": True,
         "calls_api_sports": False,
+        "schedule_kind": "daily",
+        "job_history_type": "retrain",
+        "cfg_fields": {"hour": "training_hour", "minute": "training_minute"},
     },
     "data_sync_live": {
         "label": "Sync live (polling ogni pochi secondi)",
@@ -80,6 +97,9 @@ JOB_DEFINITIONS: dict[str, dict[str, Any]] = {
         ),
         "default_enabled": False,
         "calls_api_sports": True,
+        "schedule_kind": "interval_seconds",
+        "job_history_type": "live_sync",
+        "cfg_fields": {"interval_seconds": "live_sync_interval_seconds"},
     },
     "data_quality_report": {
         "label": "Aggiorna report Data Quality",
@@ -91,7 +111,22 @@ JOB_DEFINITIONS: dict[str, dict[str, Any]] = {
         ),
         "default_enabled": True,
         "calls_api_sports": False,
+        "schedule_kind": "interval_minutes",
+        "job_history_type": "data_quality_report",
+        "cfg_fields": {"interval_minutes": "data_quality_interval_minutes"},
     },
+}
+
+# Limiti di validazione per ciascun `schedule_kind` (Impostazioni, editor
+# orario/intervallo): valori troppo piccoli per gli intervalli in secondi/
+# minuti rischierebbero di bombardare API-Sports (rate limit) o il DB -
+# stesso principio di cautela gia' applicato altrove nel progetto (pool
+# limitato per le chiamate parallele, TTL cache minimi, ecc.).
+_SCHEDULE_FIELD_BOUNDS: dict[str, tuple[int, int]] = {
+    "hour": (0, 23),
+    "minute": (0, 59),
+    "interval_minutes": (5, 1440),
+    "interval_seconds": (30, 3600),
 }
 
 # Sottoinsieme di `JOB_DEFINITIONS` che consuma DAVVERO quota API-Sports -
@@ -168,12 +203,15 @@ def is_job_enabled(job_id: str) -> bool:
     return bool(get_job_settings().get(job_id, DEFAULT_JOB_SETTINGS.get(job_id, True)))
 
 
-def list_job_definitions() -> list[dict[str, Any]]:
-    """Vista arricchita (label/description/enabled/calls_api_sports) per il
-    frontend - `calls_api_sports` permette alla pagina Impostazioni di
-    segnalare quali job vengono coinvolti dall'auto-pausa per quota
-    esaurita (vedi `sync_job_settings_with_quota`)."""
+def list_job_definitions(cfg: Optional[AppConfig] = None) -> list[dict[str, Any]]:
+    """Vista arricchita (label/description/enabled/calls_api_sports/orario)
+    per il frontend - `calls_api_sports` permette alla pagina Impostazioni
+    di segnalare quali job vengono coinvolti dall'auto-pausa per quota
+    esaurita (vedi `sync_job_settings_with_quota`). `schedule` e' l'orario
+    EFFETTIVO (override salvato se presente, altrimenti quello da
+    `AppConfig`/variabili d'ambiente - vedi `resolve_job_schedule`)."""
     settings = get_job_settings()
+    cfg = cfg or load_app_config()
     rows = []
     for job_id, definition in JOB_DEFINITIONS.items():
         rows.append(
@@ -183,9 +221,131 @@ def list_job_definitions() -> list[dict[str, Any]]:
                 "description": definition["description"],
                 "enabled": settings.get(job_id, definition["default_enabled"]),
                 "calls_api_sports": bool(definition.get("calls_api_sports")),
+                "schedule_kind": definition["schedule_kind"],
+                "schedule": resolve_job_schedule(job_id, cfg=cfg),
+                "schedule_is_default": job_id not in get_job_schedule_overrides(),
             }
         )
     return rows
+
+
+# ------------------------------------------------------------------
+# Orario/intervallo editabile da Impostazioni (2026-09-09, richiesto
+# esplicitamente dall'operatore): stesso principio del toggle
+# enabled/disabled sopra (file JSON riletto dallo scheduler PRIMA di ogni
+# esecuzione, MAI un valore fissato una volta sola all'avvio - vedi
+# `src/jobs/scheduler.py::_is_job_due`, che sostituisce i vecchi
+# `IntervalTrigger`/`CronTrigger` con orario fisso). Se non esiste un
+# override salvato, il valore effettivo resta quello di `AppConfig`
+# (variabili d'ambiente) - stesso "default" di sempre, invariato per chi
+# non tocca mai questa pagina.
+def _schedule_path() -> str:
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    return os.path.join(project_root, "best_models", "job_schedule.json")
+
+
+def _cfg_default_schedule(job_id: str, cfg: AppConfig) -> dict[str, int]:
+    cfg_fields = JOB_DEFINITIONS[job_id]["cfg_fields"]
+    return {key: getattr(cfg, attr_name) for key, attr_name in cfg_fields.items()}
+
+
+def get_job_schedule_overrides() -> dict[str, dict[str, int]]:
+    """Legge gli override di orario/intervallo salvati - SOLO i job con un
+    override esplicito compaiono qui (un job mai toccato dall'operatore
+    non ha una chiave, e resta sul default `AppConfig`)."""
+    path = _schedule_path()
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            loaded = json.load(f)
+            return loaded if isinstance(loaded, dict) else {}
+    except (json.JSONDecodeError, OSError) as exc:
+        logger.warning("job_schedule.json illeggibile (%s): uso i default AppConfig", exc)
+        return {}
+
+
+def _validate_schedule(job_id: str, schedule: dict[str, Any]) -> dict[str, int]:
+    if job_id not in JOB_DEFINITIONS:
+        raise ValueError(f"Job id non riconosciuto: {job_id}")
+
+    expected_keys = set(JOB_DEFINITIONS[job_id]["cfg_fields"].keys())
+    provided_keys = set(schedule.keys())
+    if provided_keys != expected_keys:
+        raise ValueError(
+            f"Schedule per '{job_id}' deve avere ESATTAMENTE le chiavi {sorted(expected_keys)}, "
+            f"ricevute {sorted(provided_keys)}"
+        )
+
+    validated: dict[str, int] = {}
+    for key, raw_value in schedule.items():
+        try:
+            value = int(raw_value)
+        except (TypeError, ValueError):
+            raise ValueError(f"'{key}' per '{job_id}' deve essere un intero, ricevuto {raw_value!r}")
+        low, high = _SCHEDULE_FIELD_BOUNDS[key]
+        if not (low <= value <= high):
+            raise ValueError(f"'{key}' per '{job_id}' deve essere tra {low} e {high}, ricevuto {value}")
+        validated[key] = value
+    return validated
+
+
+def update_job_schedule(job_id: str, schedule: dict[str, Any]) -> dict[str, dict[str, int]]:
+    """Valida (chiavi attese per lo `schedule_kind` di quel job, range
+    sensati) e salva un override di orario/intervallo, persistito su disco
+    (scrittura atomica via file temporaneo + `os.replace`, stesso principio
+    di `update_job_settings`). Solleva `ValueError` esplicito su chiavi/
+    valori non validi (mai un override silenziosamente scartato)."""
+    validated = _validate_schedule(job_id, schedule)
+
+    with _SCHEDULE_LOCK:
+        current = get_job_schedule_overrides()
+        current[job_id] = validated
+
+        path = _schedule_path()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp_path = f"{path}.tmp"
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(current, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, path)
+
+    return current
+
+
+def reset_job_schedule(job_id: str) -> dict[str, dict[str, int]]:
+    """Rimuove l'override per `job_id` (torna al default `AppConfig`)."""
+    if job_id not in JOB_DEFINITIONS:
+        raise ValueError(f"Job id non riconosciuto: {job_id}")
+
+    with _SCHEDULE_LOCK:
+        current = get_job_schedule_overrides()
+        current.pop(job_id, None)
+
+        path = _schedule_path()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp_path = f"{path}.tmp"
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(current, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, path)
+
+    return current
+
+
+def resolve_job_schedule(job_id: str, cfg: Optional[AppConfig] = None) -> dict[str, int]:
+    """Schedule EFFETTIVO per `job_id`: override salvato se presente,
+    altrimenti il default calcolato da `AppConfig` (variabili d'ambiente) -
+    usato SIA da `list_job_definitions` (per mostrarlo in Impostazioni) SIA
+    da `src/jobs/scheduler.py::_is_job_due` (per decidere se e' ora di
+    eseguire il job), cosi' i due punti non possono mai disallinearsi."""
+    if job_id not in JOB_DEFINITIONS:
+        raise ValueError(f"Job id non riconosciuto: {job_id}")
+
+    overrides = get_job_schedule_overrides()
+    if job_id in overrides:
+        return dict(overrides[job_id])
+
+    cfg = cfg or load_app_config()
+    return _cfg_default_schedule(job_id, cfg)
 
 
 

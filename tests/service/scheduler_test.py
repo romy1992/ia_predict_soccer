@@ -1,7 +1,8 @@
 import functools
 import unittest
+from datetime import datetime, timedelta, timezone
+from unittest import mock
 
-from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
 from src.jobs import scheduler as scheduler_module
@@ -9,10 +10,11 @@ from src.service_ia.config.app_config import AppConfig
 
 
 def _target_func(job):
-    """I job sono registrati come `functools.partial(_run_if_enabled,
-    job_id, func)` (vedi `_run_if_enabled` in `src/jobs/scheduler.py`,
-    controllo enabled/disabled da Impostazioni): questo helper estrae la
-    funzione VERA da confrontare nei test, a prescindere dal wrapping."""
+    """I job sono registrati come `functools.partial(_run_if_due, job_id,
+    func, cfg=cfg, ...)` (vedi `_run_if_due` in `src/jobs/scheduler.py`,
+    controllo enabled/disabled + schedule da Impostazioni): questo helper
+    estrae la funzione VERA da confrontare nei test, a prescindere dal
+    wrapping."""
     func = job.func
     if isinstance(func, functools.partial):
         return func.args[-1]
@@ -43,11 +45,21 @@ def _cfg(**overrides) -> AppConfig:
     return AppConfig(**base)
 
 
-def _cron_field(trigger: CronTrigger, name: str) -> str:
-    for field in trigger.fields:
-        if field.name == name:
-            return str(field)
-    raise AssertionError(f"campo cron '{name}' non trovato")
+def _fixed_datetime_class(fixed_now: datetime):
+    """Sottoclasse di `datetime` che risponde SEMPRE `fixed_now` a `.now()`
+    (con conversione di fuso se richiesta), lasciando intatti gli altri
+    classmethod ereditati (`fromisoformat`, `replace`, ...) - usata per
+    rendere `_is_job_due` deterministico nei test senza dipendere
+    dall'orario reale in cui girano."""
+
+    class _FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            if tz is not None:
+                return fixed_now.astimezone(tz)
+            return fixed_now
+
+    return _FixedDateTime
 
 
 class TestBuildSchedulerJobsSeparation(unittest.TestCase):
@@ -55,7 +67,7 @@ class TestBuildSchedulerJobsSeparation(unittest.TestCase):
     job SEPARATI per data sync (frequenti) e training (indipendente) - mai
     un job unico che incatena import+retrain."""
 
-    def test_registers_exactly_four_independent_jobs(self):
+    def test_registers_exactly_seven_independent_jobs(self):
         sched = scheduler_module.build_scheduler(cfg=_cfg())
         job_ids = {job.id for job in sched.get_jobs()}
         self.assertEqual(
@@ -89,48 +101,31 @@ class TestMaxInstancesAndCoalesce(unittest.TestCase):
             self.assertTrue(job.coalesce, f"{job.id} deve avere coalesce=True")
 
 
-class TestTriggerTypesPerJob(unittest.TestCase):
-    def test_data_sync_and_settlement_use_interval_trigger(self):
-        sched = scheduler_module.build_scheduler(
-            cfg=_cfg(data_sync_interval_minutes=15, settlement_interval_minutes=45)
-        )
-        jobs_by_id = {job.id: job for job in sched.get_jobs()}
-        self.assertIsInstance(jobs_by_id["data_sync_today"].trigger, IntervalTrigger)
-        self.assertIsInstance(jobs_by_id["data_settlement"].trigger, IntervalTrigger)
-        self.assertEqual(jobs_by_id["data_sync_today"].trigger.interval.total_seconds(), 15 * 60)
-        self.assertEqual(jobs_by_id["data_settlement"].trigger.interval.total_seconds(), 45 * 60)
+class TestAllJobsShareHeartbeatTrigger(unittest.TestCase):
+    """Redesign 2026-09-09 (orario editabile da Impostazioni senza restart):
+    nessun job ha piu' un trigger APScheduler calcolato da `cfg.*` — TUTTI
+    condividono un unico heartbeat, e l'orario/intervallo EFFETTIVO e'
+    deciso ad ogni tick da `_is_job_due` (self-gating) contro lo schedule
+    corrente (`resolve_job_schedule`, che riflette un eventuale override
+    salvato da Impostazioni)."""
 
-    def test_data_quality_report_uses_interval_trigger(self):
-        sched = scheduler_module.build_scheduler(cfg=_cfg(data_quality_interval_minutes=25))
-        quality_job = sched.get_job("data_quality_report")
-        self.assertIsInstance(quality_job.trigger, IntervalTrigger)
-        self.assertEqual(quality_job.trigger.interval.total_seconds(), 25 * 60)
+    def test_every_job_uses_the_shared_heartbeat_interval(self):
+        sched = scheduler_module.build_scheduler(cfg=_cfg())
+        for job in sched.get_jobs():
+            self.assertIsInstance(job.trigger, IntervalTrigger)
+            self.assertEqual(job.trigger.interval.total_seconds(), scheduler_module._HEARTBEAT_SECONDS)
 
-    def test_future_sync_and_training_use_cron_trigger(self):
-        sched = scheduler_module.build_scheduler(cfg=_cfg(future_sync_hour=6, training_hour=2))
-        jobs_by_id = {job.id: job for job in sched.get_jobs()}
-        self.assertIsInstance(jobs_by_id["data_future_sync"].trigger, CronTrigger)
-        self.assertIsInstance(jobs_by_id["ml_training"].trigger, CronTrigger)
-        self.assertEqual(_cron_field(jobs_by_id["data_future_sync"].trigger, "hour"), "6")
-        self.assertEqual(_cron_field(jobs_by_id["ml_training"].trigger, "hour"), "2")
-
-    def test_daily_refresh_uses_cron_trigger_with_configurable_hour(self):
-        """Il job schedulato equivalente al bottone "Aggiorna tutto" ha un
-        orario CONFIGURABILE (`daily_refresh_hour`/`minute`), indipendente
-        da `future_sync_hour`/`training_hour`."""
-        sched = scheduler_module.build_scheduler(cfg=_cfg(daily_refresh_hour=7, daily_refresh_minute=15))
-        daily_refresh_job = sched.get_job("data_daily_refresh")
-        self.assertIsInstance(daily_refresh_job.trigger, CronTrigger)
-        self.assertEqual(_cron_field(daily_refresh_job.trigger, "hour"), "7")
-        self.assertEqual(_cron_field(daily_refresh_job.trigger, "minute"), "15")
-
-    def test_live_sync_uses_interval_trigger_in_seconds(self):
-        """LIVE-01: polling MOLTO piu' frequente dei data job, espresso in
-        secondi (non minuti) - trigger indipendente dagli altri."""
-        sched = scheduler_module.build_scheduler(cfg=_cfg(live_sync_interval_seconds=45))
-        live_job = sched.get_job("data_sync_live")
-        self.assertIsInstance(live_job.trigger, IntervalTrigger)
-        self.assertEqual(live_job.trigger.interval.total_seconds(), 45)
+    def test_changing_cfg_schedule_values_does_not_change_the_trigger(self):
+        """`cfg.*` resta solo il DEFAULT usato da `resolve_job_schedule`
+        quando non c'e' un override salvato — MAI piu' il trigger
+        APScheduler in se' (che resta il battito fisso, uguale per tutti)."""
+        sched_a = scheduler_module.build_scheduler(cfg=_cfg(training_hour=1, data_sync_interval_minutes=10))
+        sched_b = scheduler_module.build_scheduler(cfg=_cfg(training_hour=20, data_sync_interval_minutes=50))
+        for job_id in ("ml_training", "data_sync_today"):
+            self.assertEqual(
+                sched_a.get_job(job_id).trigger.interval,
+                sched_b.get_job(job_id).trigger.interval,
+            )
 
 
 class TestJobTargetsAreCorrectAndIndependent(unittest.TestCase):
@@ -188,38 +183,158 @@ class TestJobTargetsAreCorrectAndIndependent(unittest.TestCase):
         self.assertNotIn(scheduler_module.run_daily_pipeline, targets)
 
 
-class TestTrainingScheduleIndependentFromDataJobs(unittest.TestCase):
-    def test_changing_training_hour_does_not_affect_data_job_intervals(self):
-        sched_a = scheduler_module.build_scheduler(cfg=_cfg(training_hour=1))
-        sched_b = scheduler_module.build_scheduler(cfg=_cfg(training_hour=20))
+class TestLastCompletedRun(unittest.TestCase):
+    """`_last_completed_run` e' l'unica fonte di verita' per "quando e'
+    girato l'ultima volta" un job - isolata da file reali tramite un
+    `JobHistory` finto, cosi' i test non toccano mai
+    `best_models/jobs_history.jsonl`."""
 
-        self.assertEqual(
-            sched_a.get_job("data_sync_today").trigger.interval,
-            sched_b.get_job("data_sync_today").trigger.interval,
-        )
-        self.assertEqual(
-            sched_a.get_job("data_settlement").trigger.interval,
-            sched_b.get_job("data_settlement").trigger.interval,
-        )
-        self.assertNotEqual(
-            _cron_field(sched_a.get_job("ml_training").trigger, "hour"),
-            _cron_field(sched_b.get_job("ml_training").trigger, "hour"),
-        )
+    def test_filters_to_success_and_failed_and_returns_the_last_one(self):
+        class FakeHistory:
+            def tail(self, limit, job_type):
+                return [
+                    {"job_type": job_type, "status": "running"},
+                    {"job_type": job_type, "status": "success", "finished_at": "2026-09-09T10:00:00+00:00"},
+                    {"job_type": job_type, "status": "failed", "finished_at": "2026-09-09T11:00:00+00:00"},
+                ]
 
-    def test_changing_data_sync_interval_does_not_affect_training_hour(self):
-        sched_a = scheduler_module.build_scheduler(cfg=_cfg(data_sync_interval_minutes=10))
-        sched_b = scheduler_module.build_scheduler(cfg=_cfg(data_sync_interval_minutes=50))
+        with mock.patch.object(scheduler_module, "JobHistory", FakeHistory):
+            result = scheduler_module._last_completed_run("today_update")
+        self.assertEqual(result["status"], "failed")
 
-        self.assertEqual(
-            _cron_field(sched_a.get_job("ml_training").trigger, "hour"),
-            _cron_field(sched_b.get_job("ml_training").trigger, "hour"),
-        )
-        self.assertNotEqual(
-            sched_a.get_job("data_sync_today").trigger.interval,
-            sched_b.get_job("data_sync_today").trigger.interval,
-        )
+    def test_returns_none_when_no_completed_rows(self):
+        class FakeHistory:
+            def tail(self, limit, job_type):
+                return [{"job_type": job_type, "status": "running"}]
+
+        with mock.patch.object(scheduler_module, "JobHistory", FakeHistory):
+            result = scheduler_module._last_completed_run("today_update")
+        self.assertIsNone(result)
+
+
+class TestParseHistoryTimestamp(unittest.TestCase):
+    def test_uses_finished_at_when_present(self):
+        row = {"finished_at": "2026-09-09T10:00:00+00:00", "timestamp": "2026-09-09T09:00:00+00:00"}
+        parsed = scheduler_module._parse_history_timestamp(row)
+        self.assertEqual(parsed.hour, 10)
+
+    def test_falls_back_to_timestamp_when_finished_at_missing(self):
+        row = {"timestamp": "2026-09-09T09:00:00+00:00"}
+        parsed = scheduler_module._parse_history_timestamp(row)
+        self.assertEqual(parsed.hour, 9)
+
+    def test_naive_timestamp_assumed_utc(self):
+        row = {"finished_at": "2026-09-09T10:00:00"}
+        parsed = scheduler_module._parse_history_timestamp(row)
+        self.assertEqual(parsed.tzinfo, timezone.utc)
+
+
+class TestIsJobDue(unittest.TestCase):
+    """Logica di self-gating (`_is_job_due`), il cuore del redesign
+    "orario editabile senza restart": `resolve_job_schedule` e
+    `_last_completed_run` sono mockati per isolare il test dal filesystem,
+    `datetime.now()` e' fissato per rendere i confronti deterministici."""
+
+    def setUp(self):
+        self.cfg = _cfg()
+
+    def _is_due(self, job_id, schedule, last_run, fixed_now):
+        with mock.patch.object(scheduler_module, "resolve_job_schedule", return_value=schedule), \
+             mock.patch.object(scheduler_module, "_last_completed_run", return_value=last_run), \
+             mock.patch.object(scheduler_module, "datetime", _fixed_datetime_class(fixed_now)):
+            return scheduler_module._is_job_due(job_id, self.cfg)
+
+    def test_daily_not_due_before_target_hour_today(self):
+        fixed_now = datetime(2026, 9, 9, 10, 0, tzinfo=scheduler_module._SCHEDULER_TIMEZONE)
+        due = self._is_due("ml_training", {"hour": 23, "minute": 0}, last_run=None, fixed_now=fixed_now)
+        self.assertFalse(due)
+
+    def test_daily_due_after_target_hour_with_no_previous_run(self):
+        fixed_now = datetime(2026, 9, 9, 23, 30, tzinfo=scheduler_module._SCHEDULER_TIMEZONE)
+        due = self._is_due("ml_training", {"hour": 23, "minute": 0}, last_run=None, fixed_now=fixed_now)
+        self.assertTrue(due)
+
+    def test_daily_not_due_again_same_local_day(self):
+        fixed_now = datetime(2026, 9, 9, 23, 30, tzinfo=scheduler_module._SCHEDULER_TIMEZONE)
+        last_run_local = datetime(2026, 9, 9, 8, 0, tzinfo=scheduler_module._SCHEDULER_TIMEZONE)
+        last_run = {"status": "success", "finished_at": last_run_local.astimezone(timezone.utc).isoformat()}
+        due = self._is_due("ml_training", {"hour": 23, "minute": 0}, last_run=last_run, fixed_now=fixed_now)
+        self.assertFalse(due)
+
+    def test_daily_due_again_next_local_day(self):
+        fixed_now = datetime(2026, 9, 10, 23, 30, tzinfo=scheduler_module._SCHEDULER_TIMEZONE)
+        last_run_local = datetime(2026, 9, 9, 8, 0, tzinfo=scheduler_module._SCHEDULER_TIMEZONE)
+        last_run = {"status": "success", "finished_at": last_run_local.astimezone(timezone.utc).isoformat()}
+        due = self._is_due("ml_training", {"hour": 23, "minute": 0}, last_run=last_run, fixed_now=fixed_now)
+        self.assertTrue(due)
+
+    def test_interval_minutes_not_due_before_elapsed(self):
+        fixed_now = datetime(2026, 9, 9, 12, 0, tzinfo=timezone.utc)
+        last_run = {"status": "success", "finished_at": (fixed_now - timedelta(minutes=5)).isoformat()}
+        due = self._is_due("data_sync_today", {"interval_minutes": 30}, last_run=last_run, fixed_now=fixed_now)
+        self.assertFalse(due)
+
+    def test_interval_minutes_due_after_elapsed(self):
+        fixed_now = datetime(2026, 9, 9, 12, 0, tzinfo=timezone.utc)
+        last_run = {"status": "success", "finished_at": (fixed_now - timedelta(minutes=31)).isoformat()}
+        due = self._is_due("data_sync_today", {"interval_minutes": 30}, last_run=last_run, fixed_now=fixed_now)
+        self.assertTrue(due)
+
+    def test_interval_seconds_due_with_no_previous_run(self):
+        fixed_now = datetime(2026, 9, 9, 12, 0, tzinfo=timezone.utc)
+        due = self._is_due("data_sync_live", {"interval_seconds": 90}, last_run=None, fixed_now=fixed_now)
+        self.assertTrue(due)
+
+    def test_interval_seconds_not_due_before_elapsed(self):
+        fixed_now = datetime(2026, 9, 9, 12, 0, 0, tzinfo=timezone.utc)
+        last_run = {"status": "failed", "finished_at": (fixed_now - timedelta(seconds=30)).isoformat()}
+        due = self._is_due("data_sync_live", {"interval_seconds": 90}, last_run=last_run, fixed_now=fixed_now)
+        self.assertFalse(due)
+
+
+class TestRunIfDue(unittest.TestCase):
+    """`_run_if_due` combina enabled (Impostazioni) + due (`_is_job_due`) -
+    entrambi devono essere veri perche' la funzione reale venga chiamata."""
+
+    def test_skips_when_disabled_even_if_due(self):
+        called = []
+        with mock.patch.object(scheduler_module, "is_job_enabled", return_value=False), \
+             mock.patch.object(scheduler_module, "_is_job_due", return_value=True):
+            result = scheduler_module._run_if_due(
+                "data_sync_today", lambda: called.append(True) or {"ran": True}, cfg=_cfg()
+            )
+        self.assertIsNone(result)
+        self.assertEqual(called, [])
+
+    def test_skips_when_enabled_but_not_due(self):
+        called = []
+        with mock.patch.object(scheduler_module, "is_job_enabled", return_value=True), \
+             mock.patch.object(scheduler_module, "_is_job_due", return_value=False):
+            result = scheduler_module._run_if_due(
+                "data_sync_today", lambda: called.append(True) or {"ran": True}, cfg=_cfg()
+            )
+        self.assertIsNone(result)
+        self.assertEqual(called, [])
+
+    def test_runs_when_enabled_and_due(self):
+        with mock.patch.object(scheduler_module, "is_job_enabled", return_value=True), \
+             mock.patch.object(scheduler_module, "_is_job_due", return_value=True):
+            result = scheduler_module._run_if_due("data_sync_today", lambda: {"ran": True}, cfg=_cfg())
+        self.assertEqual(result, {"ran": True})
+
+    def test_passes_through_extra_kwargs_to_target_func(self):
+        received = {}
+
+        def fake(days_ahead):
+            received["days_ahead"] = days_ahead
+            return "done"
+
+        with mock.patch.object(scheduler_module, "is_job_enabled", return_value=True), \
+             mock.patch.object(scheduler_module, "_is_job_due", return_value=True):
+            result = scheduler_module._run_if_due("data_daily_refresh", fake, cfg=_cfg(), days_ahead=7)
+        self.assertEqual(received["days_ahead"], 7)
+        self.assertEqual(result, "done")
 
 
 if __name__ == "__main__":
     unittest.main()
-

@@ -280,6 +280,22 @@ export function updateJobSettings(updates) {
   });
 }
 
+export function updateJobSchedule(jobId, schedule) {
+  // Effetto immediato senza restart: lo scheduler rilegge lo schedule
+  // effettivo ad ogni tick dell'heartbeat (vedi src/jobs/scheduler.py).
+  return request(`/settings/jobs/${encodeURIComponent(jobId)}/schedule`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(schedule),
+  });
+}
+
+export function resetJobSchedule(jobId) {
+  return request(`/settings/jobs/${encodeURIComponent(jobId)}/schedule`, {
+    method: "DELETE",
+  });
+}
+
 export function getApiQuota() {
   return request("/settings/quota");
 }
