@@ -170,6 +170,7 @@ class PredictionLedger(Base):
     model_name = Column(String, nullable=True)
     policy_version = Column(String, nullable=True)
     p_model = Column(Float, nullable=True)
+    p_market_raw = Column(Float, nullable=True)
     p_market_fair = Column(Float, nullable=True)
     odd = Column(Float, nullable=True)
     fair_odd = Column(Float, nullable=True)
@@ -177,6 +178,15 @@ class PredictionLedger(Base):
     ev = Column(Float, nullable=True)
     decision = Column(String, nullable=False)
     stake = Column(Float, nullable=False, default=1.0)
+    period = Column(String, nullable=False, default="full_time")
+    line = Column(String, nullable=True)
+    source = Column(String, nullable=False, default="manual")
+    cohort = Column(String, nullable=False, default="manual")
+    captured_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+    odds_captured_at = Column(DateTime(timezone=True), nullable=True)
+    bookmaker_count = Column(Integer, nullable=False, default=0)
+    league = Column(Integer, nullable=True)
+    capture_key = Column(String(160), nullable=True, unique=True)
     kickoff_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
 
@@ -190,7 +200,7 @@ class PredictionLedger(Base):
 
     def to_dict(self):
         payload = {column.name: getattr(self, column.name) for column in self.__table__.columns}
-        for key in ("kickoff_at", "created_at", "settled_at"):
+        for key in ("captured_at", "odds_captured_at", "kickoff_at", "created_at", "settled_at"):
             if payload.get(key) is not None:
                 payload[key] = payload[key].isoformat()
         return payload

@@ -276,6 +276,15 @@ export function getMonitoringAlerts({ market } = {}) {
   return request(`/monitoring/alerts${query ? `?${query}` : ""}`);
 }
 
+export function getOfficialPerformance({ market, days = 30 } = {}) {
+  const params = new URLSearchParams();
+  params.set("days", String(days));
+  if (market && market !== "all") {
+    params.set("market", market);
+  }
+  return request(`/predictions/official/performance?${params.toString()}`);
+}
+
 export function getJobSettings() {
   return request("/settings/jobs");
 }

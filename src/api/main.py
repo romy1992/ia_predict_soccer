@@ -3,7 +3,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import os
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Optional
 
 import joblib
@@ -48,6 +48,8 @@ from src.api.schemas import (
     MonitoringAlertsResponse,
     MonitoringOverviewResponse,
     OracleMatchDetailResponse,
+    OfficialClvResponse,
+    OfficialPerformanceResponse,
     PaperPnlResponse,
     PredictRequest,
     PredictResponse,
@@ -72,6 +74,8 @@ from src.oracle.betslip.pick_pool_service import PickPoolService
 from src.oracle.betslip.betslip_service import BetslipService
 from src.oracle.decision_engine.decision_policy import DEFAULT_DECISION_POLICY, evaluate_decision
 from src.oracle.ledger.ledger_service import PredictionLedgerService
+from src.oracle.ledger.official_clv_service import OfficialClvService
+from src.oracle.ledger.official_performance_service import OFFICIAL_COHORT, OfficialPerformanceService
 from src.repository.base.database_audit import get_database_audit
 from src.repository.odds_snapshot_repository import OddsSnapshotRepository
 from src.data.live.live_sync_job import run_manual_live_sync
@@ -861,7 +865,7 @@ def log_prediction_ledger(payload: PredictionLedgerLogRequest) -> PredictionLedg
     PRIMA del kickoff. Calcola fair_odd/prob_edge/ev/decision qui (BET-01/
     BET-04, riusati — mai un client che duplica la policy di decisione),
     poi persiste (idempotente per fixture/market/outcome/model_run_id)."""
-    if payload.market not in FilterMarketService.SUPPORTED_MARKETS:
+    if payload.market not in (FilterMarketService.SUPPORTED_MARKETS | {"1x2"}):
         raise HTTPException(status_code=400, detail=f"Mercato non supportato: {payload.market}")
 
     decision = evaluate_decision(
@@ -874,15 +878,18 @@ def log_prediction_ledger(payload: PredictionLedgerLogRequest) -> PredictionLedg
         policy=DEFAULT_DECISION_POLICY,
     )
 
-    row = PredictionLedgerService().log_prediction(
-        fixture_id=payload.fixture_id,
-        decision=decision,
-        model_run_id=payload.model_run_id,
-        model_name=payload.model_name,
-        kickoff_at=_parse_iso_datetime_optional(payload.kickoff_at),
-        stake=payload.stake,
-        dedupe=payload.dedupe,
-    )
+    try:
+        row = PredictionLedgerService().log_prediction(
+            fixture_id=payload.fixture_id,
+            decision=decision,
+            model_run_id=payload.model_run_id,
+            model_name=payload.model_name,
+            kickoff_at=_parse_iso_datetime_optional(payload.kickoff_at),
+            stake=payload.stake,
+            dedupe=payload.dedupe,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return PredictionLedgerResponse(rows=[row.to_dict()], total=1)
 
 
@@ -920,6 +927,98 @@ def prediction_ledger_pnl(market: Optional[str] = None, stake: float = 1.0) -> P
     raw_summary = service.raw_pnl_summary(market=market)
     report = service.paper_pnl_report(market=market, stake=stake)
     return PaperPnlResponse(market=market, raw_summary=raw_summary, report=dataclasses.asdict(report))
+
+
+@app.get("/predictions/official/performance", response_model=OfficialPerformanceResponse)
+def official_prediction_performance(
+    days: Optional[int] = None,
+    from_at: Optional[str] = None,
+    to_at: Optional[str] = None,
+    market: Optional[str] = None,
+    league: Optional[int] = None,
+    model: Optional[str] = None,
+    policy_version: Optional[str] = None,
+) -> OfficialPerformanceResponse:
+    now = datetime.now(timezone.utc)
+    since = _parse_iso_datetime_optional(from_at)
+    if days is not None:
+        if days not in {7, 30, 90}:
+            raise HTTPException(status_code=400, detail="days deve essere 7, 30 o 90")
+        since = now - timedelta(days=days)
+    payload = OfficialPerformanceService().report(
+        since=since,
+        until=_parse_iso_datetime_optional(to_at),
+        market=market,
+        league=league,
+        model_name=model,
+        policy_version=policy_version,
+    )
+    clv = OfficialClvService().report(
+        since=since,
+        until=_parse_iso_datetime_optional(to_at),
+        market=market,
+        league=league,
+        model_name=model,
+        policy_version=policy_version,
+    )
+    payload["overall"].update(
+        {
+            "avg_clv_odd_pct": clv["overall"].get("avg_clv_odd_pct"),
+            "positive_clv_rate": clv["overall"].get("positive_clv_rate"),
+            "clv_coverage": clv["overall"].get("coverage"),
+        }
+    )
+    return OfficialPerformanceResponse(**payload)
+
+
+@app.get("/predictions/official/plays", response_model=PredictionLedgerResponse)
+def official_prediction_plays(
+    market: Optional[str] = None,
+    is_settled: Optional[bool] = None,
+    limit: int = 200,
+) -> PredictionLedgerResponse:
+    rows = PredictionLedgerService().repo.list_all(
+        market=market,
+        is_settled=is_settled,
+        cohort=OFFICIAL_COHORT,
+        limit=min(max(limit, 0), 2_000),
+    )
+    return PredictionLedgerResponse(rows=[row.to_dict() for row in rows], total=len(rows))
+
+
+@app.get("/predictions/official/clv", response_model=OfficialClvResponse)
+def official_prediction_clv(
+    days: Optional[int] = None,
+    from_at: Optional[str] = None,
+    to_at: Optional[str] = None,
+    market: Optional[str] = None,
+    league: Optional[int] = None,
+    model: Optional[str] = None,
+    policy_version: Optional[str] = None,
+) -> OfficialClvResponse:
+    now = datetime.now(timezone.utc)
+    since = _parse_iso_datetime_optional(from_at)
+    if days is not None:
+        if days not in {7, 30, 90}:
+            raise HTTPException(status_code=400, detail="days deve essere 7, 30 o 90")
+        since = now - timedelta(days=days)
+    payload = OfficialClvService().report(
+        since=since,
+        until=_parse_iso_datetime_optional(to_at),
+        market=market,
+        league=league,
+        model_name=model,
+        policy_version=policy_version,
+    )
+    return OfficialClvResponse(**payload)
+
+
+@app.get("/predictions/official/clv/{id_prediction}")
+def official_prediction_clv_detail(id_prediction: str) -> dict[str, Any]:
+    payload = OfficialClvService().detail(id_prediction)
+    if payload is None:
+        raise HTTPException(status_code=404, detail="Prediction ufficiale non trovata")
+    return payload
 
 
 @app.get("/betslip/pool", response_model=BetslipPoolResponse)

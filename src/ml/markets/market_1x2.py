@@ -160,6 +160,25 @@ def build_1x2_dataset_from_db(seasons: Optional[list[int]] = None) -> pd.DataFra
     return _finalize_frame(rows)
 
 
+def build_1x2_prediction_frame(match: dict[str, Any]) -> Optional[pd.DataFrame]:
+    """Feature pre-match del vero 1X2, senza richiedere risultato/statistiche finali."""
+    odds_list = match.get("odds") or []
+    market_odds = (odds_list[0] or {}).get("h2h") if odds_list else None
+    if not isinstance(market_odds, dict) or not market_odds:
+        return None
+    row: dict[str, Any] = {
+        "id_fixture": match.get("id_fixture"),
+        "season": match.get("season"),
+        "league": match.get("current_league"),
+        "market": MARKET_NAME,
+        "prediction_at": match.get("date_match"),
+    }
+    row.update(FilterMarketService._extract_market_odds_features(market_odds))
+    row.update(FilterMarketService._extract_mean_features(match))
+    frame = pd.DataFrame([row]).replace([np.inf, -np.inf], np.nan).fillna(0)
+    return frame
+
+
 @dataclass
 class Market1X2TrainResult:
     market: str

@@ -24,6 +24,7 @@ export function formatPercent(value) {
 export function marketLabel(market) {
   const map = {
     h2h: "Vincitore partita",
+    "1x2": "1X2",
     goal_no_goal: "Goal / No Goal",
     dc: "Doppia chance",
     corners: "Corners",
@@ -41,7 +42,7 @@ export function predictionLabel(market, prediction, row) {
     return prediction === 1 ? "Goal" : "No Goal";
   }
   if (market === "dc") {
-    return prediction === 1 ? "1X" : "X2";
+    return prediction === 1 ? "1X" : "Vittoria ospite";
   }
   if (market.startsWith("under_over_")) {
     const threshold = market.replace("under_over_", "").replace("_", ".");
