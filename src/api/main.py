@@ -59,6 +59,8 @@ from src.api.schemas import (
     PromotionHistoryResponse,
     PromotionRequest,
     PromotionResponse,
+    RecomputePredictionsRequest,
+    RecomputePredictionsResponse,
     RollbackRequest,
 )
 from src.data.quality_report_service import DataQualityService
@@ -306,6 +308,23 @@ def dashboard_match_detail(
         markets=selected_markets,
     )
     return DashboardMatchDetailResponse(**payload)
+
+
+@app.post("/dashboard/matches/{fixture_id}/recompute-predictions", response_model=RecomputePredictionsResponse)
+def dashboard_match_recompute_predictions(
+    fixture_id: int, payload: Optional[RecomputePredictionsRequest] = None
+) -> RecomputePredictionsResponse:
+    """Bottone "Ricalcola previsione" nel dettaglio partita (2026-09-10,
+    punto 4/4 di `PROMPT_fast_historical_predictions.md`): forza il
+    ricalcolo e il salvataggio di una riga NUOVA per questa fixture, anche
+    se una gia' esiste (partita conclusa "congelata" inclusa) - uso
+    ESPLICITO e manuale, mai chiamato da alcun job/vista lista."""
+    markets = payload.markets if payload else None
+    service = DashboardService()
+    result = service.recompute_predictions(fixture_id=fixture_id, markets=markets)
+    if not result.get("found"):
+        raise HTTPException(status_code=404, detail=f"Fixture non trovata: {fixture_id}")
+    return RecomputePredictionsResponse(**result)
 
 
 @app.get("/dashboard/match/{fixture_id}/consensus", response_model=ModelConsensusResponse)

@@ -156,6 +156,7 @@ class PredictionSnapshotService:
         db_match: Any = None,
         status: Optional[str] = None,
         allow_compute: bool = True,
+        force: bool = False,
     ) -> dict[str, dict[str, Any]]:
         """`allow_compute=False` (2026-09-10, richiesto esplicitamente
         dall'operatore: la vista storica della Dashboard deve restare
@@ -165,14 +166,26 @@ class PredictionSnapshotService:
         caricamento modello + inferenza. Pensato per le liste di fixture
         storiche (molte fixture insieme, dove un singolo ricalcolo lento si
         moltiplica) - il dettaglio di una singola fixture (un click
-        deliberato) resta sempre `allow_compute=True`."""
+        deliberato) resta sempre `allow_compute=True`.
+
+        `force=True` (2026-09-10, punto 4/4 di
+        `PROMPT_fast_historical_predictions.md`): ignora QUALUNQUE riga
+        esistente - anche una partita conclusa "congelata" - e
+        ricalcola+salva SEMPRE una riga nuova per ogni mercato richiesto.
+        Uso ESPLICITO e manuale (bottone "Ricalcola previsione" nel
+        dettaglio partita), MAI automatico - il regime "congelato" per le
+        partite concluse resta l'unico comportamento di default. Ha
+        priorita' su `allow_compute` (un `force=True` implica sempre il
+        calcolo, indipendentemente dal valore di `allow_compute`)."""
         if not markets:
             return {}
 
         is_final = (status or "").upper() in _FINAL_STATUSES
         payload: dict[str, dict[str, Any]] = {}
 
-        if is_final:
+        if force:
+            markets_needing_compute = list(markets)
+        elif is_final:
             markets_needing_compute = []
             for market in markets:
                 snapshot = self.repo.get_latest(fixture_id=fixture_id, market=market)
@@ -224,7 +237,7 @@ class PredictionSnapshotService:
             model_run_id = model_meta.get("run_id")
             fingerprint = compute_feature_fingerprint(X)
 
-            if not is_final:
+            if not is_final and not force:
                 existing = self.repo.get_latest(fixture_id=fixture_id, market=market)
                 if (
                     existing is not None

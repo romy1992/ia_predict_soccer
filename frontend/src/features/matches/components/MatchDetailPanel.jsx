@@ -7,6 +7,9 @@ export default function MatchDetailPanel({
   matchDetailError,
   onOpenOracleDetail,
   onClose,
+  onRecomputePredictions,
+  recomputingPredictions,
+  recomputePredictionsError,
 }) {
   if (!selectedFixtureId && !matchDetail) {
     return null;
@@ -40,9 +43,21 @@ export default function MatchDetailPanel({
               Oracle Match Detail &rarr;
             </button>
           )}
+          {onRecomputePredictions && (
+            <button
+              className="btn-secondary"
+              onClick={() => onRecomputePredictions(selectedFixtureId)}
+              disabled={recomputingPredictions}
+              title="Ricalcola e salva una nuova previsione per questa partita, anche se una e' gia' salvata."
+            >
+              {recomputingPredictions ? "Ricalcolo in corso..." : "Ricalcola previsione"}
+            </button>
+          )}
           <button className="btn-secondary" onClick={onClose}>Chiudi dettaglio</button>
         </div>
       </div>
+
+      {recomputePredictionsError && <div className="error-box">Errore ricalcolo: {recomputePredictionsError}</div>}
 
       <div className="detail-head-meta">
         <span className={`phase-badge ${phaseClass(fixture.phase)}`}>{phaseLabel(fixture.phase)}</span>
