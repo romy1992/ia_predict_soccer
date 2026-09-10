@@ -155,7 +155,17 @@ class PredictionSnapshotService:
         markets: list[str],
         db_match: Any = None,
         status: Optional[str] = None,
+        allow_compute: bool = True,
     ) -> dict[str, dict[str, Any]]:
+        """`allow_compute=False` (2026-09-10, richiesto esplicitamente
+        dall'operatore: la vista storica della Dashboard deve restare
+        SEMPRE veloce, mai "quasi sempre") disabilita qualunque calcolo
+        nuovo - serve SOLO cio' che e' gia' salvato, un mercato senza riga
+        semplicemente non compare nel payload invece di innescare
+        caricamento modello + inferenza. Pensato per le liste di fixture
+        storiche (molte fixture insieme, dove un singolo ricalcolo lento si
+        moltiplica) - il dettaglio di una singola fixture (un click
+        deliberato) resta sempre `allow_compute=True`."""
         if not markets:
             return {}
 
@@ -168,10 +178,20 @@ class PredictionSnapshotService:
                 snapshot = self.repo.get_latest(fixture_id=fixture_id, market=market)
                 if snapshot is not None:
                     payload[market] = self._entry_from_snapshot(snapshot)
-                else:
+                elif allow_compute:
                     markets_needing_compute.append(market)
             if not markets_needing_compute:
                 return payload
+        elif not allow_compute:
+            # Partita non conclusa ma il chiamante ha comunque chiesto di
+            # non calcolare (caso raro/difensivo - una data storica non
+            # dovrebbe mai avere fixture NS/live): serve solo cio' che e'
+            # gia' salvato, mai un calcolo nuovo.
+            for market in markets:
+                snapshot = self.repo.get_latest(fixture_id=fixture_id, market=market)
+                if snapshot is not None:
+                    payload[market] = self._entry_from_snapshot(snapshot)
+            return payload
         else:
             markets_needing_compute = list(markets)
 
