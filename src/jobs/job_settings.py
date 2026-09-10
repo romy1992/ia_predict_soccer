@@ -119,10 +119,12 @@ JOB_DEFINITIONS: dict[str, dict[str, Any]] = {
         "label": "Aggiorna predizioni salvate",
         "description": (
             "Ricalcola in background le predizioni delle partite non ancora disputate la cui "
-            "fingerprint di feature (quote/statistiche) e' cambiata dall'ultimo giro, popolando "
-            "la banca dati 'match_prediction_snapshot' PRIMA che qualcuno apra la Dashboard - "
-            "cosi' la Dashboard legge quasi sempre una riga gia' calcolata invece di rifare "
-            "l'inferenza ML ad ogni richiesta. Lavora solo su dati gia' a DB: non chiama API-Sports."
+            "fingerprint di feature (quote/statistiche) e' cambiata dall'ultimo giro, E chiude "
+            "automaticamente il buco di copertura per le partite APPENA concluse (ultimi giorni) "
+            "che non hanno ancora nessuna riga salvata - popolando la banca dati "
+            "'match_prediction_snapshot' PRIMA che qualcuno apra la Dashboard, cosi' la vista "
+            "storica legge sempre una riga gia' calcolata invece di rifare l'inferenza ML ad "
+            "ogni richiesta. Lavora solo su dati gia' a DB: non chiama API-Sports."
         ),
         "default_enabled": True,
         "calls_api_sports": False,
