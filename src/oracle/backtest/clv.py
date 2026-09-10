@@ -39,7 +39,7 @@ Riusa (mai duplica):
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 import numpy as np
@@ -106,6 +106,17 @@ def fetch_closing_market_baseline(
         return None
 
     snapshots = [row.to_dict() for row in rows]
+    # SQLite (test/locale) perde il tzinfo dei DateTime(timezone=True);
+    # normalizziamo entrambe le parti a UTC prima del confronto point-in-time.
+    kickoff_at = kickoff_at if kickoff_at.tzinfo else kickoff_at.replace(tzinfo=timezone.utc)
+    for snapshot in snapshots:
+        captured = snapshot.get("captured_at")
+        if isinstance(captured, str):
+            captured = datetime.fromisoformat(captured.replace("Z", "+00:00"))
+        if isinstance(captured, datetime) and captured.tzinfo is None:
+            captured = captured.replace(tzinfo=timezone.utc)
+        if isinstance(captured, datetime):
+            snapshot["captured_at"] = captured.isoformat()
     # as_of=kickoff_at: riusa EXP-04 con la STESSA regola gia' validata
     # (closing_allowed = kickoff_at is not None and as_of >= kickoff_at,
     # qui SEMPRE vera per costruzione) — "closing" per ogni bookmaker/outcome
