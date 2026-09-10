@@ -929,6 +929,8 @@ th {
 .slip-card {
   border-left-width: 4px;
   border-left-style: solid;
+  min-width: 0;
+  grid-column: 1 / -1;
 }
 
 .slip-card.risk-low {
@@ -960,6 +962,32 @@ th {
 .slip-explanation {
   margin: 8px 0 0;
   font-style: italic;
+}
+
+.slip-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  margin: 10px 0;
+}
+
+.slip-picks-table {
+  min-width: 1180px;
+}
+
+.slip-picks-table td small {
+  display: block;
+  margin-top: 3px;
+  color: #687895;
+}
+
+@media (max-width: 700px) {
+  .slip-summary {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .slip-card {
+    padding: 10px;
+  }
 }
 
 @media (max-width: 1180px) {

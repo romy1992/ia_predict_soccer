@@ -215,6 +215,111 @@ class PredictionLedger(Base):
         return payload
 
 
+class BettingSlip(Base):
+    """Schedina ufficiale: snapshot pre-partita immutabile e settlement separato."""
+
+    __tablename__ = "betting_slips"
+    __table_args__ = (
+        Index("ix_betting_slips_reference_profile", "reference_date", "profile"),
+        Index("ix_betting_slips_status", "status"),
+    )
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    capture_key = Column(String(160), nullable=False, unique=True)
+    reference_date = Column(String(10), nullable=False)
+    profile = Column(String(24), nullable=False)
+    initial_situation = Column(String(16), nullable=False)
+    initial_reason = Column(String, nullable=True)
+    status = Column(String(16), nullable=False, default="PENDING")
+    event_count = Column(Integer, nullable=False)
+    combined_odd = Column(Float, nullable=False)
+    naive_probability = Column(Float, nullable=True)
+    adjusted_probability = Column(Float, nullable=True)
+    combined_model_void_odd = Column(Float, nullable=True)
+    combined_edge_absolute = Column(Float, nullable=True)
+    combined_edge_percent = Column(Float, nullable=True)
+    combined_expected_roi = Column(Float, nullable=True)
+    risk_score = Column(Float, nullable=True)
+    combined_play_threshold = Column(Float, nullable=True)
+    slip_min_edge_percent = Column(Float, nullable=True)
+    stake = Column(Float, nullable=False, default=1.0)
+    potential_return = Column(Float, nullable=True)
+    effective_combined_odd = Column(Float, nullable=True)
+    actual_return = Column(Float, nullable=True)
+    realized_profit = Column(Float, nullable=True)
+    model_version = Column(String, nullable=True)
+    policy_version = Column(String, nullable=False)
+    correlation_version = Column(String, nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+    settled_at = Column(DateTime(timezone=True), nullable=True)
+
+    picks = relationship(
+        "BettingSlipPick",
+        back_populates="slip",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+        order_by="BettingSlipPick.position",
+    )
+
+    def to_dict(self):
+        payload = {column.name: getattr(self, column.name) for column in self.__table__.columns}
+        for key in ("created_at", "settled_at"):
+            if payload.get(key) is not None:
+                payload[key] = payload[key].isoformat()
+        payload["picks"] = [pick.to_dict() for pick in self.picks]
+        return payload
+
+
+class BettingSlipPick(Base):
+    """Snapshot della singola selezione appartenente a una schedina ufficiale."""
+
+    __tablename__ = "betting_slip_picks"
+    __table_args__ = (
+        Index("ix_betting_slip_picks_slip_position", "slip_id", "position", unique=True),
+        Index("ix_betting_slip_picks_fixture", "fixture_id"),
+    )
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    slip_id = Column(String(36), ForeignKey("betting_slips.id", ondelete="CASCADE"), nullable=False)
+    prediction_id = Column(String(36), ForeignKey("prediction_ledger.id_prediction"), nullable=True)
+    position = Column(Integer, nullable=False)
+    fixture_id = Column(Integer, nullable=False)
+    competition = Column(String, nullable=True)
+    kickoff_at = Column(DateTime(timezone=True), nullable=False)
+    home_team = Column(String, nullable=True)
+    away_team = Column(String, nullable=True)
+    market = Column(String, nullable=False)
+    line = Column(String, nullable=True)
+    outcome = Column(String, nullable=False)
+    p_model = Column(Float, nullable=False)
+    market_odd = Column(Float, nullable=False)
+    model_void_odd = Column(Float, nullable=True)
+    market_fair_odd = Column(Float, nullable=True)
+    odds_edge_absolute = Column(Float, nullable=True)
+    odds_edge_percent = Column(Float, nullable=True)
+    expected_roi = Column(Float, nullable=True)
+    situation = Column(String(16), nullable=False)
+    bookmakers_count = Column(Integer, nullable=False, default=0)
+    model_version = Column(String, nullable=True)
+    policy_version = Column(String, nullable=True)
+    status = Column(String(16), nullable=False, default="PENDING")
+    final_score = Column(String(24), nullable=True)
+    void_reason = Column(String, nullable=True)
+    settled_at = Column(DateTime(timezone=True), nullable=True)
+
+    slip = relationship("BettingSlip", back_populates="picks")
+
+    def to_dict(self):
+        payload = {column.name: getattr(self, column.name) for column in self.__table__.columns}
+        for key in ("kickoff_at", "settled_at"):
+            if payload.get(key) is not None:
+                payload[key] = payload[key].isoformat()
+        payload["expected_roi_percent"] = (
+            payload["expected_roi"] * 100.0 if payload.get("expected_roi") is not None else None
+        )
+        return payload
+
+
 class MatchPredictionSnapshot(Base):
     """Log APPEND-ONLY delle predizioni ML calcolate per fixture+mercato
     (2026-09-09, richiesto esplicitamente dall'operatore: "salvare le

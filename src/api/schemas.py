@@ -436,6 +436,15 @@ class BetslipGenerateResponse(BaseModel):
     warnings: list[str] = []
 
 
+class OfficialBetslipListResponse(BaseModel):
+    total: int
+    rows: list[dict[str, Any]] = []
+
+
+class OfficialBetslipStatisticsResponse(BaseModel):
+    statistics: dict[str, Any]
+
+
 class ModelRegistryOverviewResponse(BaseModel):
     """OPS-02: vista lifecycle per mercato — `latest` (ultimo run
     registrato, MAI implicitamente production) vs `production` (run

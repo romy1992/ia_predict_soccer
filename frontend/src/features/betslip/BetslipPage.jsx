@@ -14,9 +14,14 @@ import { formatNumber, formatOdd, formatPercent, marketLabel } from "../shared/f
 
 const PROFILE_ORDER = ["SAFE", "BALANCED", "AGGRESSIVE"];
 const PROFILE_LABELS = {
-  SAFE: "Safe",
-  BALANCED: "Balanced",
-  AGGRESSIVE: "Aggressive",
+  SAFE: "Prudente",
+  BALANCED: "Bilanciata",
+  AGGRESSIVE: "Spinta",
+};
+const PROFILE_HELP = {
+  SAFE: "2 eventi, probabilità più alte e soglie più restrittive.",
+  BALANCED: "2 o 3 eventi, equilibrio tra probabilità e quota.",
+  AGGRESSIVE: "3 o 4 eventi e rischio maggiore; ogni selezione resta comunque PLAY.",
 };
 
 function riskClass(riskLabel) {
@@ -31,10 +36,20 @@ function riskClass(riskLabel) {
 
 function legMatchLabel(leg, fixtureIndex) {
   const info = fixtureIndex[leg.fixture_id];
+  if (leg.home_team || leg.away_team) {
+    return `${leg.home_team || "Casa"} vs ${leg.away_team || "Trasferta"}`;
+  }
   if (!info) {
     return `Fixture #${leg.fixture_id}`;
   }
   return `${info.home} vs ${info.away}`;
+}
+
+function statusClass(status) {
+  if (status === "PLAY" || status === "WON") return "value-play";
+  if (status === "BORDERLINE") return "value-borderline";
+  if (status === "NO BET" || status === "LOST") return "value-no-bet";
+  return "value-unavailable";
 }
 
 export default function BetslipPage({
@@ -119,6 +134,7 @@ export default function BetslipPage({
               </button>
             ))}
           </div>
+          <p className="muted">{PROFILE_HELP[activeProfile]}</p>
 
           {activeSlips.length === 0 && (
             <div className="empty-state">
@@ -133,40 +149,108 @@ export default function BetslipPage({
           </div>
         </section>
       )}
+
+      {report?.official_statistics && (
+        <section className="panel">
+          <h3>Rendimento schedine ufficiali</h3>
+          <div className="decision-counters">
+            <span>Totali: {report.official_statistics.total}</span>
+            <span>Pending: {report.official_statistics.pending}</span>
+            <span>Vinte: {report.official_statistics.won}</span>
+            <span>Perse: {report.official_statistics.lost}</span>
+            <span>Rimborsate: {report.official_statistics.void}</span>
+            <span>Profitto: {formatNumber(report.official_statistics.net_profit, 2)}</span>
+            <span>ROI realizzato: {formatPercent(report.official_statistics.realized_roi)}</span>
+          </div>
+          <p className="muted">Calcolato esclusivamente sulle schedine congelate dal job server-side.</p>
+        </section>
+      )}
+
+      {report?.official_slips?.length > 0 && (
+        <section className="panel">
+          <h3>Schedine ufficiali del giorno</h3>
+          <div className="decision-grid">
+            {report.official_slips.map((slip) => (
+              <SlipCard key={slip.id} slip={{ ...slip, is_official: true, legs: slip.picks }} fixtureIndex={fixtureIndex} />
+            ))}
+          </div>
+        </section>
+      )}
     </section>
   );
 }
 
 function SlipCard({ slip, fixtureIndex }) {
+  const legs = slip.legs || [];
+  const situation = slip.situation || slip.initial_situation || "N/D";
+  const status = slip.status || "PROPOSTA";
   return (
     <article className={`decision-card slip-card ${riskClass(slip.risk_label)}`}>
       <div className="decision-head">
-        <span className={`value-badge ${riskClass(slip.risk_label)}`}>
-          {slip.n_legs} eventi · rischio {slip.risk_label}
+        <span className={`value-badge ${statusClass(situation)}`}>
+          {situation}
         </span>
-        <strong>quota {formatOdd(slip.combined_odd)}</strong>
+        <strong>{slip.is_official ? "UFFICIALE" : "PROPOSTA"} · {status}</strong>
       </div>
 
-      <ul className="slip-legs">
-        {slip.legs.map((leg, index) => (
-          <li key={`${slip.slip_id}-${index}`}>
-            <div className="match-title">{legMatchLabel(leg, fixtureIndex)}</div>
-            <div className="match-sub">
-              {marketLabel(leg.market)}: <strong>{leg.outcome}</strong> · quota {formatOdd(leg.odd)} · p.
-              modello {formatPercent(leg.p_model)}
-            </div>
-          </li>
-        ))}
-      </ul>
-
-      <div className="decision-metrics">
-        <span>Probabilita' ingenua (prodotto semplice): {formatPercent(slip.naive_probability)}</span>
-        <span>Probabilita' corretta per correlazione: {formatPercent(slip.adjusted_probability)}</span>
-        <span>EV combinato: {formatNumber(slip.combined_ev, 3)}</span>
-        <span>Coppie penalizzate per correlazione: {slip.penalty_pairs}</span>
+      <div className="decision-metrics slip-summary">
+        <span>Profilo: {PROFILE_LABELS[slip.profile_name || slip.profile] || slip.profile}</span>
+        <span>Eventi: {slip.n_legs || slip.event_count}</span>
+        <span>Quota combinata: {formatOdd(slip.combined_odd)}</span>
+        <span title="Quota teorica di pareggio ricavata dalla probabilità combinata corretta.">
+          Quota void combinata: {formatOdd(slip.combined_model_void_odd)}
+        </span>
+        <span>Edge combinato: {formatNumber(slip.combined_edge_absolute, 3)} ({formatPercent(slip.combined_edge_percent == null ? null : slip.combined_edge_percent / 100)})</span>
+        <span title="Rendimento teorico pre-partita; non è il ROI realizzato.">
+          Expected ROI: {formatPercent(slip.combined_expected_roi)}
+        </span>
+        <span title="Probabilità aggregata restituita dal motore centrale delle correlazioni.">
+          Probabilità corretta: {formatPercent(slip.adjusted_probability)}
+        </span>
+        <span>Rischio: {formatPercent(slip.risk_score)}</span>
+        <span>Policy: {slip.decision_policy_version || slip.policy_version}</span>
+        <span>Correlazioni: {slip.correlation_ruleset_version || slip.correlation_version}</span>
       </div>
 
-      <p className="muted slip-explanation">{slip.explanation}</p>
+      <div className="table-wrap">
+        <table className="slip-picks-table">
+          <thead>
+            <tr>
+              <th>Partita</th><th>Mercato</th><th>Selezione</th><th>Probabilità</th>
+              <th>Quota</th><th title="Quota teorica di pareggio: 1 / probabilità modello.">Quota void modello</th>
+              <th title="Differenza tra quota bookmaker e quota void modello.">Edge</th>
+              <th title="Rendimento teorico della selezione, non quello realizzato.">Expected ROI</th>
+              <th>Situazione</th><th>Esito</th>
+            </tr>
+          </thead>
+          <tbody>
+            {legs.map((leg, index) => (
+              <tr key={`${slip.slip_id || slip.id}-${index}`}>
+                <td>
+                  <strong>{legMatchLabel(leg, fixtureIndex)}</strong>
+                  <small>{leg.competition ? `${leg.competition} · ` : ""}{leg.kickoff_at ? new Date(leg.kickoff_at).toLocaleString("it-IT") : ""}</small>
+                </td>
+                <td>{marketLabel(leg.market)}{leg.line ? ` · ${leg.line}` : ""}</td>
+                <td>{leg.outcome}</td>
+                <td>{formatPercent(leg.p_model)}</td>
+                <td>{formatOdd(leg.odd ?? leg.market_odd)}</td>
+                <td>{formatOdd(leg.model_void_odd)}</td>
+                <td title={`Edge percentuale: ${formatPercent(leg.odds_edge_percent == null ? null : leg.odds_edge_percent / 100)}`}>
+                  {formatNumber(leg.odds_edge_absolute, 3)}
+                </td>
+                <td>{formatPercent(leg.ev ?? leg.expected_roi)}</td>
+                <td><span className={`value-badge ${statusClass(leg.decision || leg.situation)}`}>{leg.decision || leg.situation}</span></td>
+                <td title={leg.status === "VOID" ? `Esito rimborsato: ${leg.void_reason || "evento void"}` : ""}>
+                  <span className={`value-badge ${statusClass(leg.status || "PENDING")}`}>{leg.status || "PENDING"}</span>
+                  {leg.final_score && <small>{leg.final_score}</small>}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <p className="muted slip-explanation">{slip.explanation || slip.initial_reason}</p>
     </article>
   );
 }

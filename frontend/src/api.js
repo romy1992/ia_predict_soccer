@@ -142,6 +142,18 @@ export function getBetslipGenerate({
   return request(`/betslip/generate?${params.toString()}`);
 }
 
+export function getOfficialBetslips({ targetDate, status, limit = 200 } = {}) {
+  const params = new URLSearchParams();
+  if (targetDate) params.set("reference_date", targetDate);
+  if (status) params.set("status", status);
+  params.set("limit", String(limit));
+  return request(`/betslip/official?${params.toString()}`);
+}
+
+export function getOfficialBetslipStatistics() {
+  return request("/betslip/official/statistics");
+}
+
 function normalizeJobBody(asyncRunOrPayload, fallbackPayload = {}) {
   if (typeof asyncRunOrPayload === "object" && asyncRunOrPayload !== null) {
     return asyncRunOrPayload;

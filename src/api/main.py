@@ -49,6 +49,8 @@ from src.api.schemas import (
     MonitoringOverviewResponse,
     OracleMatchDetailResponse,
     OfficialClvResponse,
+    OfficialBetslipListResponse,
+    OfficialBetslipStatisticsResponse,
     OfficialPerformanceResponse,
     PaperPnlResponse,
     PredictRequest,
@@ -72,6 +74,7 @@ from src.ml.registry.promotion_policy import DEFAULT_PROMOTION_POLICY
 from src.oracle.betslip.pick_pool import PickPoolPolicy
 from src.oracle.betslip.pick_pool_service import PickPoolService
 from src.oracle.betslip.betslip_service import BetslipService
+from src.oracle.betslip.official_betslip_service import OfficialBetslipService
 from src.oracle.decision_engine.decision_policy import DEFAULT_DECISION_POLICY, evaluate_decision
 from src.oracle.ledger.ledger_service import PredictionLedgerService
 from src.oracle.ledger.official_clv_service import OfficialClvService
@@ -1080,6 +1083,26 @@ def betslip_generate(
     payload["pool_id"] = pool_result.pool_id
     payload["pool_policy_version"] = pool_result.policy_version
     return BetslipGenerateResponse(**payload)
+
+
+@app.get("/betslip/official", response_model=OfficialBetslipListResponse)
+def betslip_official(
+    reference_date: Optional[str] = None,
+    status: Optional[str] = None,
+    limit: int = 200,
+) -> OfficialBetslipListResponse:
+    """Sole schedine congelate dal job server-side; endpoint strettamente read-only."""
+    rows = OfficialBetslipService().list_official(
+        reference_date=reference_date,
+        status=status.upper() if status else None,
+        limit=limit,
+    )
+    return OfficialBetslipListResponse(total=len(rows), rows=rows)
+
+
+@app.get("/betslip/official/statistics", response_model=OfficialBetslipStatisticsResponse)
+def betslip_official_statistics() -> OfficialBetslipStatisticsResponse:
+    return OfficialBetslipStatisticsResponse(statistics=OfficialBetslipService().statistics())
 
 
 @app.get("/monitoring/overview", response_model=MonitoringOverviewResponse)
