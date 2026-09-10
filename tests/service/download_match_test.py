@@ -3,7 +3,12 @@ from unittest.mock import patch
 
 from src.service_ia.model.match import Match, Statistics
 from src.service_ia.pre_processing.api_sports_provider import ApiSportsQuotaExceededError
-from src.service_ia.pre_processing.download_match_service import calculate_mean, download_import_matches, map_odds
+from src.service_ia.pre_processing.download_match_service import (
+    calculate_mean,
+    download_import_matches,
+    map_base_match,
+    map_odds,
+)
 
 
 class FakeProvider:
@@ -419,6 +424,68 @@ class TestMapOddsGoalNoGoalBugfix(unittest.TestCase):
 
         self.assertIn("X2_Bet365", result["dc"])
         self.assertEqual(result["dc"]["X2_Bet365"], "1.40")
+
+
+class TestMapBaseMatchScore(unittest.TestCase):
+    """`map_base_match` (2026-09-10, richiesto esplicitamente dall'operatore
+    dopo aver segnalato partite "Finita" senza alcun punteggio mostrato in
+    Dashboard): il punteggio finale va salvato SEMPRE dalla risposta
+    'fixtures' leggera (`score.fulltime`), indipendentemente da eventuali
+    statistiche dettagliate (`fixtures/statistics`, spesso assenti per
+    campionati minori) - stessa fonte gia' usata da `map_statistic` per
+    `Statistics.score_ft`, cosi' i due valori restano coerenti."""
+
+    def test_extracts_score_from_fixture_score_fulltime(self):
+        dict_match = map_base_match(match=None, id_fix=1326590, fixture=_sample_fixture(), league=135, season=2026)
+        self.assertEqual(dict_match["score_home"], 2)
+        self.assertEqual(dict_match["score_away"], 1)
+
+    def test_none_when_fixture_not_yet_played(self):
+        fixture = _sample_fixture(status="NS")
+        fixture["score"] = {"halftime": {"home": None, "away": None}, "fulltime": {"home": None, "away": None}}
+        dict_match = map_base_match(match=None, id_fix=1326590, fixture=fixture, league=135, season=2026)
+        self.assertIsNone(dict_match["score_home"])
+        self.assertIsNone(dict_match["score_away"])
+
+    def test_none_when_score_key_missing_entirely(self):
+        fixture = _sample_fixture()
+        del fixture["score"]
+        dict_match = map_base_match(match=None, id_fix=1326590, fixture=fixture, league=135, season=2026)
+        self.assertIsNone(dict_match["score_home"])
+        self.assertIsNone(dict_match["score_away"])
+
+
+class TestDownloadImportMatchesScoreWithoutStatistics(unittest.TestCase):
+    """Regressione reale segnalata dall'operatore (2026-09-10): una fixture
+    "Finita" per cui l'endpoint statistiche dedicato non ha dati (leghe
+    minori) deve comunque finire a DB con `score_home`/`score_away`
+    popolati - non piu' un punteggio "- - -" in Dashboard."""
+
+    @patch("src.service_ia.pre_processing.download_match_service.BET_BOOKMAKERS", [{"id": 1}])
+    @patch("src.service_ia.pre_processing.download_match_service.form_last_5_tot", return_value=None)
+    @patch("src.service_ia.pre_processing.download_match_service.repo_snapshot.save_many")
+    @patch("src.service_ia.pre_processing.download_match_service.repo_match.save_all")
+    @patch("src.service_ia.pre_processing.download_match_service.repo_match.filter_by")
+    def test_score_saved_even_when_statistics_endpoint_returns_nothing(
+        self, mock_filter_by, mock_save_all, _mock_snapshot_save, _mock_form,
+    ):
+        mock_filter_by.return_value.first.return_value = None
+        provider = FakeProvider(
+            fixtures=[_sample_fixture(status="FT")],
+            statistics=[],  # esattamente il gap segnalato: nessuna statistica disponibile
+            odds=[],
+        )
+
+        report = download_import_matches(
+            seasons=[2026], leagues=[135], fixture_date="2026-09-01", statuses="FT", provider=provider,
+        )
+
+        self.assertEqual(report["inserted"], 1)
+        saved_matches = mock_save_all.call_args[0][0]
+        self.assertEqual(len(saved_matches), 1)
+        self.assertEqual(saved_matches[0].score_home, 2)
+        self.assertEqual(saved_matches[0].score_away, 1)
+        self.assertEqual(saved_matches[0].statistics, [])
 
 
 if __name__ == "__main__":
