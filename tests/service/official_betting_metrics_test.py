@@ -142,6 +142,13 @@ def test_only_voids_have_null_roi_and_hit_rate():
     assert report["hit_rate"] is None
 
 
+def test_first_loss_counts_towards_max_drawdown():
+    report = compute_official_performance(
+        [_row(settlement_status="settled_loss", won=False, pnl=-1.0)]
+    )["overall"]
+    assert report["max_drawdown"] == 1.0
+
+
 class _Repo:
     def __init__(self):
         self.rows = {}
