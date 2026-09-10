@@ -7,7 +7,7 @@ data** (non solo la prima volta) — la banca dati predizioni
 intercettate dal job mentre erano ancora `NS`, mai lo storico gia' passato
 ne' le partite appena finite fuori da quella finestra.
 
-## Stato: 2/4 completati
+## Stato: 3/4 completati
 
 ## 1. Niente ricalcolo al volo per le date storiche (vista lista) — ☑ Fatto (commit `ad50648`)
 
@@ -80,7 +80,7 @@ completamente coperte (nessuna chiamata a `resolve_predictions` sprecata).
 Aggiornate anche la description del job in Impostazioni e la docstring di
 `build_scheduler`. 5 nuovi test, suite completa (817 test) verde.
 
-## 3. Script di backfill storico (una tantum) — ☐ Da fare
+## 3. Script di backfill storico (una tantum) — ☑ Fatto (commit `d72b4f5`), DA LANCIARE
 
 **Obiettivo**: chiudere il buco su tutto lo storico gia' in DB. Lanciato UNA
 VOLTA dall'operatore (o da me per suo conto), non schedulato.
@@ -95,6 +95,16 @@ VOLTA dall'operatore (o da me per suo conto), non schedulato.
 - Richiede accesso reale al DB - da lanciare dalla sessione bridge locale
   (stesso meccanismo gia' usato per backup/migration), NON eseguibile da
   questa sessione cloud.
+
+**Fatto (codice)**: `scripts/backfill_prediction_snapshots.py` scritto e
+testato (6 test con SQLite in-memory: raccolta, anti-join, isolamento
+errori, paginazione multi-batch via keyset su `id_fixture`, `--limit`).
+Suite completa (823 test) verde. **ANCORA DA LANCIARE**: serve una sessione
+con accesso reale al DB Postgres di produzione (bridge locale) - senza
+questo giro lo storico gia' passato resta scoperto (il codice esiste ma
+non e' ancora stato eseguito contro i dati veri). Consigliato un primo
+giro con `--limit 500` per verificare tempi/comportamento prima del giro
+completo su tutto lo storico.
 
 ## 4. Bottone "Ricalcola previsione" nel dettaglio partita — ☐ Da fare
 
