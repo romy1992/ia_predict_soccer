@@ -2,7 +2,7 @@ import PredictionBadges from "./PredictionBadges";
 import ValueBadge from "./ValueBadge";
 import { phaseClass, phaseLabel } from "../../shared/formatters";
 
-export default function MatchTable({ rows, selectedFixtureId, onOpenMatch, onOpenOracleDetail }) {
+export default function MatchTable({ rows, selectedFixtureId, onOpenMatch, onOpenOracleDetail, modelMarkets }) {
   if (!rows || rows.length === 0) {
     return <div className="empty-panel">Nessuna partita trovata per i filtri correnti.</div>;
   }
@@ -40,7 +40,7 @@ export default function MatchTable({ rows, selectedFixtureId, onOpenMatch, onOpe
               <td>
                 <span className={`phase-badge ${phaseClass(row.phase)}`}>{phaseLabel(row.phase)}</span>
               </td>
-              <td><PredictionBadges row={row} /></td>
+              <td><PredictionBadges row={row} modelMarkets={modelMarkets} /></td>
               <td><ValueBadge decision={row.best_decision} /></td>
               <td>
                 <div className="cell-actions">

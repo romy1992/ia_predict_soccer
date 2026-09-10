@@ -287,6 +287,19 @@ class DashboardMatchDetailResponse(BaseModel):
     odds_updated_at: Optional[str] = None
 
 
+class RecomputePredictionsRequest(BaseModel):
+    markets: Optional[list[str]] = Field(
+        default=None, description="Mercati da ricalcolare (default: tutti quelli registrati)."
+    )
+
+
+class RecomputePredictionsResponse(BaseModel):
+    fixture_id: int
+    found: bool
+    predictions: dict[str, Any]
+    model_markets: list[str]
+
+
 class ModelConsensusResponse(BaseModel):
     fixture_id: int
     market: str

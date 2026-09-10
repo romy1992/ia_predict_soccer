@@ -32,7 +32,7 @@ class TestDashboardService(unittest.TestCase):
             self._fixture(1002, "2026-09-01", "1H", "Roma", "Lazio"),
         ]
         service._fetch_matches = lambda target_date=None, day_margin=1: []
-        service._predict_fixture = lambda fixture_id, markets, db_match=None, status=None: {
+        service._predict_fixture = lambda fixture_id, markets, db_match=None, status=None, allow_compute=True: {
             "h2h": {
                 "prediction": 1,
                 "probability": 0.72,
@@ -115,7 +115,7 @@ class TestDashboardService(unittest.TestCase):
                 }
             ],
         }
-        service._predict_fixture = lambda fixture_id, markets, db_match=None, status=None: {
+        service._predict_fixture = lambda fixture_id, markets, db_match=None, status=None, allow_compute=True: {
             "under_over_2_5": {
                 "prediction": 1,
                 "probability": 0.72,
@@ -145,6 +145,72 @@ class TestDashboardService(unittest.TestCase):
         self.assertIn("bookmaker_fair_probability", payload["decision_cards"][0])
         self.assertIn("fair_odd", payload["decision_cards"][0])
 
+    def test_recompute_predictions_calls_predict_fixture_with_force_true(self):
+        """Bottone "Ricalcola previsione" (2026-09-10, punto 4/4): deve
+        SEMPRE passare `force=True` a `_predict_fixture`, indipendentemente
+        da eventuali righe gia' salvate - il chiamante ha chiesto
+        esplicitamente un ricalcolo, non un fast-path."""
+        service = DashboardService()
+        service.registry.list_markets = lambda: ["h2h", "goal_no_goal"]
+        service._fetch_api_fixture_detail = lambda fixture_id: self._fixture(
+            fixture_id=fixture_id, day="2026-09-01", status="FT", home="Inter", away="Roma"
+        )
+        service._fetch_db_match_by_fixture = lambda fixture_id: None
+
+        captured = []
+
+        def _capturing_predict(fixture_id, markets, db_match=None, status=None, allow_compute=True, force=False):
+            captured.append({"fixture_id": fixture_id, "markets": markets, "status": status, "force": force})
+            return {"h2h": {"prediction": 1, "probability": 0.9, "model_name": "m", "run_id": "r1"}}
+
+        service._predict_fixture = _capturing_predict
+
+        result = service.recompute_predictions(fixture_id=555)
+
+        self.assertEqual(len(captured), 1)
+        self.assertEqual(captured[0]["fixture_id"], 555)
+        self.assertEqual(sorted(captured[0]["markets"]), ["goal_no_goal", "h2h"])
+        self.assertEqual(captured[0]["status"], "FT")
+        self.assertTrue(captured[0]["force"])
+        self.assertTrue(result["found"])
+        self.assertIn("h2h", result["predictions"])
+
+    def test_recompute_predictions_respects_explicit_markets(self):
+        service = DashboardService()
+        service.registry.list_markets = lambda: ["h2h", "goal_no_goal", "under_over_2_5"]
+        service._fetch_api_fixture_detail = lambda fixture_id: self._fixture(
+            fixture_id=fixture_id, day="2026-09-01", status="FT", home="Inter", away="Roma"
+        )
+        service._fetch_db_match_by_fixture = lambda fixture_id: None
+
+        captured = []
+
+        def _capturing_predict(fixture_id, markets, db_match=None, status=None, allow_compute=True, force=False):
+            captured.append(markets)
+            return {}
+
+        service._predict_fixture = _capturing_predict
+
+        service.recompute_predictions(fixture_id=555, markets=["goal_no_goal"])
+
+        self.assertEqual(captured[0], ["goal_no_goal"])
+
+    def test_recompute_predictions_fixture_not_found(self):
+        service = DashboardService()
+        service.registry.list_markets = lambda: ["h2h"]
+        service._fetch_api_fixture_detail = lambda fixture_id: None
+        service._fetch_db_match_by_fixture = lambda fixture_id: None
+
+        def _boom(*args, **kwargs):
+            raise AssertionError("_predict_fixture NON deve essere chiamato per una fixture inesistente")
+
+        service._predict_fixture = _boom
+
+        result = service.recompute_predictions(fixture_id=999)
+
+        self.assertFalse(result["found"])
+        self.assertEqual(result["predictions"], {})
+
     def test_get_day_matches_enriches_db_rows_with_decision_cards(self):
         """MATCH-01: quando la fixture e' gia' nel DB locale (`match.odds`
         gia' caricato dalla query unica di `_fetch_matches`), la riga di
@@ -164,7 +230,7 @@ class TestDashboardService(unittest.TestCase):
             title_league="Serie A",
         )
         service._fetch_matches = lambda target_date=None, day_margin=1: [match]
-        service._predict_fixture = lambda fixture_id, markets, db_match=None, status=None: {
+        service._predict_fixture = lambda fixture_id, markets, db_match=None, status=None, allow_compute=True: {
             "h2h": {"prediction": 1, "probability": 0.75, "model_name": "logistic", "run_id": "run-x"}
         }
         service._aggregate_odds_from_db = lambda m: {
@@ -195,7 +261,7 @@ class TestDashboardService(unittest.TestCase):
             self._fixture(1001, "2026-09-01", "NS", "Inter", "Milan"),
         ]
         service._fetch_matches = lambda target_date=None, day_margin=1: []
-        service._predict_fixture = lambda fixture_id, markets, db_match=None, status=None: {
+        service._predict_fixture = lambda fixture_id, markets, db_match=None, status=None, allow_compute=True: {
             "h2h": {"prediction": 1, "probability": 0.72, "model_name": "logistic", "run_id": "run-test"}
         }
 
@@ -219,9 +285,15 @@ class TestDashboardService(unittest.TestCase):
             def __init__(self):
                 self.calls = []
 
-            def resolve_predictions(self, fixture_id, markets, db_match=None, status=None):
+            def resolve_predictions(self, fixture_id, markets, db_match=None, status=None, allow_compute=True, force=False):
                 self.calls.append(
-                    {"fixture_id": fixture_id, "markets": markets, "db_match": db_match, "status": status}
+                    {
+                        "fixture_id": fixture_id,
+                        "markets": markets,
+                        "db_match": db_match,
+                        "status": status,
+                        "allow_compute": allow_compute,
+                    }
                 )
                 return {"h2h": {"prediction": 1, "probability": 0.6, "model_name": "m", "run_id": "r1"}}
 
@@ -238,6 +310,7 @@ class TestDashboardService(unittest.TestCase):
         self.assertEqual(call["markets"], ["h2h"])
         self.assertIs(call["db_match"], sentinel_match)
         self.assertEqual(call["status"], "FT")
+        self.assertTrue(call["allow_compute"])
         self.assertEqual(payload["h2h"]["prediction"], 1)
 
     def test_predict_fixture_caches_within_same_instance(self):
@@ -251,7 +324,7 @@ class TestDashboardService(unittest.TestCase):
             def __init__(self):
                 self.call_count = 0
 
-            def resolve_predictions(self, fixture_id, markets, db_match=None, status=None):
+            def resolve_predictions(self, fixture_id, markets, db_match=None, status=None, allow_compute=True, force=False):
                 self.call_count += 1
                 return {"h2h": {"prediction": 1, "probability": 0.6, "model_name": "m", "run_id": "r1"}}
 
@@ -261,6 +334,31 @@ class TestDashboardService(unittest.TestCase):
         service._predict_fixture(fixture_id=123, markets=["h2h"], status="NS")
 
         self.assertEqual(service._snapshot_service.call_count, 1)
+
+    def test_predict_fixture_cache_key_distinguishes_allow_compute(self):
+        """`allow_compute` fa parte della chiave di cache (2026-09-10): la
+        stessa fixture+mercati vista prima con `allow_compute=False` (lista
+        storica) e poi con `allow_compute=True` (es. dettaglio) non deve
+        MAI riusare la voce di cache dell'altra modalita' - altrimenti un
+        payload "solo cio' che e' salvato" potrebbe restare incollato anche
+        quando sarebbe stato lecito calcolare."""
+        service = DashboardService.__new__(DashboardService)
+        service._prediction_cache = {}
+
+        class _FakeSnapshotService:
+            def __init__(self):
+                self.call_count = 0
+
+            def resolve_predictions(self, fixture_id, markets, db_match=None, status=None, allow_compute=True, force=False):
+                self.call_count += 1
+                return {"h2h": {"prediction": 1, "probability": 0.6, "model_name": "m", "run_id": "r1"}}
+
+        service._snapshot_service = _FakeSnapshotService()
+
+        service._predict_fixture(fixture_id=123, markets=["h2h"], status="FT", allow_compute=False)
+        service._predict_fixture(fixture_id=123, markets=["h2h"], status="FT", allow_compute=True)
+
+        self.assertEqual(service._snapshot_service.call_count, 2)
 
     def test_get_overview_never_computes_predictions(self):
         """Fix performance: `get_overview` (usato dal frontend SOLO per i
@@ -314,7 +412,7 @@ class TestDashboardService(unittest.TestCase):
             title_league="Serie A",
         )
         service._fetch_matches = lambda target_date=None, day_margin=1: [match]
-        service._predict_fixture = lambda fixture_id, markets, db_match=None, status=None: {}
+        service._predict_fixture = lambda fixture_id, markets, db_match=None, status=None, allow_compute=True: {}
 
         payload = service.get_day_matches(target_date=date(2026, 9, 1), limit=50, with_predictions=True)
 
@@ -337,7 +435,7 @@ class TestDashboardService(unittest.TestCase):
 
         service._fetch_api_day_fixtures = _counting_fetch
         service._fetch_matches = lambda target_date=None, day_margin=1: []
-        service._predict_fixture = lambda fixture_id, markets, db_match=None, status=None: {}
+        service._predict_fixture = lambda fixture_id, markets, db_match=None, status=None, allow_compute=True: {}
 
         payload = service.get_day_matches(target_date=date(2026, 9, 1), limit=50, with_predictions=True)
 
@@ -367,7 +465,7 @@ class TestDashboardService(unittest.TestCase):
             status="FT",
         )
         service._fetch_matches = lambda target_date=None, day_margin=1: [other_day_match]
-        service._predict_fixture = lambda fixture_id, markets, db_match=None, status=None: {}
+        service._predict_fixture = lambda fixture_id, markets, db_match=None, status=None, allow_compute=True: {}
 
         service.get_day_matches(target_date=date(2026, 9, 1), limit=50, with_predictions=True)
 
@@ -398,7 +496,7 @@ class TestDashboardService(unittest.TestCase):
             status="NS",
         )
         service._fetch_matches = lambda target_date=None, day_margin=1: [future_match]
-        service._predict_fixture = lambda fixture_id, markets, db_match=None, status=None: {}
+        service._predict_fixture = lambda fixture_id, markets, db_match=None, status=None, allow_compute=True: {}
 
         service.get_day_matches(target_date=date(2099, 9, 1), limit=50, with_predictions=True)
 
@@ -426,7 +524,7 @@ class TestDashboardService(unittest.TestCase):
             status="NS",
         )
         service._fetch_matches = lambda target_date=None, day_margin=1: [today_match]
-        service._predict_fixture = lambda fixture_id, markets, db_match=None, status=None: {}
+        service._predict_fixture = lambda fixture_id, markets, db_match=None, status=None, allow_compute=True: {}
 
         service.get_day_matches(target_date=today, limit=50, with_predictions=True)
 
@@ -455,7 +553,7 @@ class TestDashboardService(unittest.TestCase):
             status="FT",
         )
         service._fetch_matches = lambda target_date=None, day_margin=1: [historical_match]
-        service._predict_fixture = lambda fixture_id, markets, db_match=None, status=None: {}
+        service._predict_fixture = lambda fixture_id, markets, db_match=None, status=None, allow_compute=True: {}
 
         service.get_day_matches(
             target_date=date(2026, 9, 1), limit=50, with_predictions=True, force_refresh=True
@@ -472,7 +570,7 @@ class TestDashboardService(unittest.TestCase):
         service.cfg = type("Cfg", (), {"leagues": [135], "seasons": [2026]})()
         service.registry.list_markets = lambda: ["h2h"]
         service._fetch_matches = lambda target_date=None, day_margin=1: []
-        service._predict_fixture = lambda fixture_id, markets, db_match=None, status=None: {}
+        service._predict_fixture = lambda fixture_id, markets, db_match=None, status=None, allow_compute=True: {}
         DashboardService._api_cache = {}
 
         with mock.patch.object(
@@ -485,6 +583,61 @@ class TestDashboardService(unittest.TestCase):
         mocked_call.assert_not_called()
         self.assertEqual(payload.returned, 0)
         DashboardService._api_cache = {}
+
+    def test_get_day_matches_historical_date_passes_allow_compute_false(self):
+        """Vista storica sempre veloce (2026-09-10): per una data passata,
+        `_predict_fixture` deve sempre ricevere `allow_compute=False`, sia
+        per le righe DB-only sia (quando `force_refresh` bypassa lo skip
+        API) per quelle arricchite dal feed esterno."""
+        service = DashboardService()
+        service.registry.list_markets = lambda: ["h2h"]
+
+        historical_match = Match(
+            id_match_fk=str(uuid.uuid4()),
+            id_fixture=9001,
+            date_match="2026-09-01T18:00:00+00:00",
+            status="FT",
+            name_home="Inter",
+            name_away="Milan",
+        )
+        service._fetch_matches = lambda target_date=None, day_margin=1: [historical_match]
+
+        captured = []
+
+        def _capturing_predict(fixture_id, markets, db_match=None, status=None, allow_compute=True):
+            captured.append(allow_compute)
+            return {}
+
+        service._predict_fixture = _capturing_predict
+
+        service.get_day_matches(target_date=date(2026, 9, 1), limit=50, with_predictions=True)
+
+        self.assertEqual(captured, [False])
+
+    def test_get_day_matches_today_date_passes_allow_compute_true(self):
+        """Oggi/date future: `_predict_fixture` deve sempre ricevere
+        `allow_compute=True` (mai il fast-path "solo cio' che e' gia'
+        salvato"), sia dal ramo API sia dal fallback DB."""
+        service = DashboardService()
+        service.registry.list_markets = lambda: ["h2h"]
+
+        today = dashboard_service_module.datetime.now(dashboard_service_module.timezone.utc).date()
+        service._fetch_api_day_fixtures = lambda target_date, force_refresh=False: [
+            self._fixture(9101, today.isoformat(), "NS", "Inter", "Milan"),
+        ]
+        service._fetch_matches = lambda target_date=None, day_margin=1: []
+
+        captured = []
+
+        def _capturing_predict(fixture_id, markets, db_match=None, status=None, allow_compute=True):
+            captured.append(allow_compute)
+            return {}
+
+        service._predict_fixture = _capturing_predict
+
+        service.get_day_matches(target_date=today, limit=50, with_predictions=True)
+
+        self.assertEqual(captured, [True])
 
 
 class TestFetchMatchesDateFilter(unittest.TestCase):
