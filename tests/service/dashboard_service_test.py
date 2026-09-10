@@ -145,6 +145,72 @@ class TestDashboardService(unittest.TestCase):
         self.assertIn("bookmaker_fair_probability", payload["decision_cards"][0])
         self.assertIn("fair_odd", payload["decision_cards"][0])
 
+    def test_recompute_predictions_calls_predict_fixture_with_force_true(self):
+        """Bottone "Ricalcola previsione" (2026-09-10, punto 4/4): deve
+        SEMPRE passare `force=True` a `_predict_fixture`, indipendentemente
+        da eventuali righe gia' salvate - il chiamante ha chiesto
+        esplicitamente un ricalcolo, non un fast-path."""
+        service = DashboardService()
+        service.registry.list_markets = lambda: ["h2h", "goal_no_goal"]
+        service._fetch_api_fixture_detail = lambda fixture_id: self._fixture(
+            fixture_id=fixture_id, day="2026-09-01", status="FT", home="Inter", away="Roma"
+        )
+        service._fetch_db_match_by_fixture = lambda fixture_id: None
+
+        captured = []
+
+        def _capturing_predict(fixture_id, markets, db_match=None, status=None, allow_compute=True, force=False):
+            captured.append({"fixture_id": fixture_id, "markets": markets, "status": status, "force": force})
+            return {"h2h": {"prediction": 1, "probability": 0.9, "model_name": "m", "run_id": "r1"}}
+
+        service._predict_fixture = _capturing_predict
+
+        result = service.recompute_predictions(fixture_id=555)
+
+        self.assertEqual(len(captured), 1)
+        self.assertEqual(captured[0]["fixture_id"], 555)
+        self.assertEqual(sorted(captured[0]["markets"]), ["goal_no_goal", "h2h"])
+        self.assertEqual(captured[0]["status"], "FT")
+        self.assertTrue(captured[0]["force"])
+        self.assertTrue(result["found"])
+        self.assertIn("h2h", result["predictions"])
+
+    def test_recompute_predictions_respects_explicit_markets(self):
+        service = DashboardService()
+        service.registry.list_markets = lambda: ["h2h", "goal_no_goal", "under_over_2_5"]
+        service._fetch_api_fixture_detail = lambda fixture_id: self._fixture(
+            fixture_id=fixture_id, day="2026-09-01", status="FT", home="Inter", away="Roma"
+        )
+        service._fetch_db_match_by_fixture = lambda fixture_id: None
+
+        captured = []
+
+        def _capturing_predict(fixture_id, markets, db_match=None, status=None, allow_compute=True, force=False):
+            captured.append(markets)
+            return {}
+
+        service._predict_fixture = _capturing_predict
+
+        service.recompute_predictions(fixture_id=555, markets=["goal_no_goal"])
+
+        self.assertEqual(captured[0], ["goal_no_goal"])
+
+    def test_recompute_predictions_fixture_not_found(self):
+        service = DashboardService()
+        service.registry.list_markets = lambda: ["h2h"]
+        service._fetch_api_fixture_detail = lambda fixture_id: None
+        service._fetch_db_match_by_fixture = lambda fixture_id: None
+
+        def _boom(*args, **kwargs):
+            raise AssertionError("_predict_fixture NON deve essere chiamato per una fixture inesistente")
+
+        service._predict_fixture = _boom
+
+        result = service.recompute_predictions(fixture_id=999)
+
+        self.assertFalse(result["found"])
+        self.assertEqual(result["predictions"], {})
+
     def test_get_day_matches_enriches_db_rows_with_decision_cards(self):
         """MATCH-01: quando la fixture e' gia' nel DB locale (`match.odds`
         gia' caricato dalla query unica di `_fetch_matches`), la riga di
@@ -219,7 +285,7 @@ class TestDashboardService(unittest.TestCase):
             def __init__(self):
                 self.calls = []
 
-            def resolve_predictions(self, fixture_id, markets, db_match=None, status=None, allow_compute=True):
+            def resolve_predictions(self, fixture_id, markets, db_match=None, status=None, allow_compute=True, force=False):
                 self.calls.append(
                     {
                         "fixture_id": fixture_id,
@@ -258,7 +324,7 @@ class TestDashboardService(unittest.TestCase):
             def __init__(self):
                 self.call_count = 0
 
-            def resolve_predictions(self, fixture_id, markets, db_match=None, status=None, allow_compute=True):
+            def resolve_predictions(self, fixture_id, markets, db_match=None, status=None, allow_compute=True, force=False):
                 self.call_count += 1
                 return {"h2h": {"prediction": 1, "probability": 0.6, "model_name": "m", "run_id": "r1"}}
 
@@ -283,7 +349,7 @@ class TestDashboardService(unittest.TestCase):
             def __init__(self):
                 self.call_count = 0
 
-            def resolve_predictions(self, fixture_id, markets, db_match=None, status=None, allow_compute=True):
+            def resolve_predictions(self, fixture_id, markets, db_match=None, status=None, allow_compute=True, force=False):
                 self.call_count += 1
                 return {"h2h": {"prediction": 1, "probability": 0.6, "model_name": "m", "run_id": "r1"}}
 

@@ -16,6 +16,7 @@ import {
   getMonitoringOverview,
   getPredictions,
   predict,
+  recomputeMatchPredictions,
   refreshApiQuota,
   triggerDailyRefresh,
   triggerDataQualityReport,
@@ -84,6 +85,8 @@ export default function App() {
   const [matchDetail, setMatchDetail] = useState(null);
   const [matchDetailLoading, setMatchDetailLoading] = useState(false);
   const [matchDetailError, setMatchDetailError] = useState("");
+  const [recomputingPredictions, setRecomputingPredictions] = useState(false);
+  const [recomputePredictionsError, setRecomputePredictionsError] = useState("");
   const [oracleFixtureId, setOracleFixtureId] = useState(null);
   const [previousPage, setPreviousPage] = useState("dashboard");
   const marketsQuery = useMemo(() => {
@@ -503,6 +506,25 @@ export default function App() {
     },
     [loadMatchDetail]
   );
+  const recomputePredictions = useCallback(
+    async (fixtureId) => {
+      if (!fixtureId) {
+        return;
+      }
+      setRecomputingPredictions(true);
+      setRecomputePredictionsError("");
+      try {
+        await recomputeMatchPredictions(fixtureId, { markets: marketsQuery });
+        await loadMatchDetail(fixtureId, true);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        setRecomputePredictionsError(message);
+      } finally {
+        setRecomputingPredictions(false);
+      }
+    },
+    [marketsQuery, loadMatchDetail]
+  );
   const openOracleDetail = useCallback(
     (fixtureId) => {
       setPreviousPage((current) => (activePage === "oracle-detail" ? current : activePage));
@@ -799,6 +821,9 @@ export default function App() {
               setSelectedFixtureId(null);
               setMatchDetail(null);
             }}
+            onRecomputePredictions={recomputePredictions}
+            recomputingPredictions={recomputingPredictions}
+            recomputePredictionsError={recomputePredictionsError}
           />
         )}
       </main>

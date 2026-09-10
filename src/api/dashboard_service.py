@@ -850,6 +850,7 @@ class DashboardService:
         db_match: Optional[Match] = None,
         status: Optional[str] = None,
         allow_compute: bool = True,
+        force: bool = False,
     ) -> dict[str, Any]:
         """Delega la risoluzione della predizione grezza per mercato a
         `PredictionSnapshotService` (2026-09-09: cache persistita su DB,
@@ -865,17 +866,27 @@ class DashboardService:
         nuovo, serve SOLO cio' che e' gia' salvato - usato dalla vista
         lista per le date storiche (`get_day_matches`), cosi' che scorrere
         lo storico resti SEMPRE veloce, mai "quasi sempre" (vedi
-        `PredictionSnapshotService.resolve_predictions`)."""
+        `PredictionSnapshotService.resolve_predictions`).
+
+        `force=True` (2026-09-10, punto 4/4 di
+        `PROMPT_fast_historical_predictions.md`): ricalcolo ESPLICITO e
+        manuale, usato SOLO da `recompute_predictions` (bottone "Ricalcola
+        previsione" nel dettaglio partita) - MAI dalla vista lista."""
         if not markets:
             return {}
 
-        cache_key = f"{fixture_id}:{','.join(sorted(markets))}:{allow_compute}"
+        cache_key = f"{fixture_id}:{','.join(sorted(markets))}:{allow_compute}:{force}"
         cached = self._prediction_cache.get(cache_key)
         if cached is not None:
             return cached
 
         payload = self._snapshot_service.resolve_predictions(
-            fixture_id=fixture_id, markets=markets, db_match=db_match, status=status, allow_compute=allow_compute
+            fixture_id=fixture_id,
+            markets=markets,
+            db_match=db_match,
+            status=status,
+            allow_compute=allow_compute,
+            force=force,
         )
 
         self._apply_monotonic_projection(payload)
@@ -1360,6 +1371,43 @@ class DashboardService:
             "predictions": predictions,
             "model_markets": model_markets,
             "odds_updated_at": (odds_payload or {}).get("update") if odds_payload else None,
+        }
+
+    def recompute_predictions(self, fixture_id: int, markets: Optional[list[str]] = None) -> dict[str, Any]:
+        """Ricalcolo ESPLICITO e manuale di UNA fixture (2026-09-10, punto
+        4/4 di `PROMPT_fast_historical_predictions.md` - bottone "Ricalcola
+        previsione" nel dettaglio partita): forza
+        `PredictionSnapshotService.resolve_predictions` (via `_predict_fixture`,
+        `force=True`) a ignorare qualunque riga esistente - anche una
+        partita conclusa "congelata" - e a salvare sempre una riga nuova
+        per ogni mercato richiesto (o tutti i mercati registrati se
+        `markets` non specificato). MAI chiamato in automatico da nessun
+        job/vista lista - solo da questa azione utente deliberata."""
+        model_markets = self._normalize_market_request(markets) or self.registry.list_markets()
+
+        api_fixture = self._fetch_api_fixture_detail(fixture_id)
+        db_match = self._fetch_db_match_by_fixture(fixture_id)
+
+        if api_fixture:
+            fixture_row = self._serialize_api_fixture(api_fixture, with_predictions=False, markets=[])
+        elif db_match:
+            fixture_row = self._serialize_match(db_match, with_predictions=False, markets=[])
+        else:
+            return {"fixture_id": fixture_id, "found": False, "predictions": {}, "model_markets": model_markets}
+
+        predictions = self._predict_fixture(
+            fixture_id=fixture_id,
+            markets=model_markets,
+            db_match=db_match,
+            status=fixture_row.get("status"),
+            force=True,
+        )
+
+        return {
+            "fixture_id": fixture_id,
+            "found": True,
+            "predictions": predictions,
+            "model_markets": model_markets,
         }
 
 
