@@ -123,6 +123,31 @@ Il **07/09** e' stata inoltre completata un'estensione mirata su Under/Over 1.5/
 ## Regola
 Completare e validare questo task prima di aggiornare il file al task successivo.
 
+## Correzione incrementale schedine ufficiali (2026-09-10)
+
+Il generatore schedine riusa le decision card ufficiali e accetta soltanto
+selezioni `PLAY`. Per impostazione predefinita inserisce una sola selezione
+per fixture; una correlazione same-match non viene stimata arbitrariamente.
+
+Metriche pre-partita:
+
+- quota void modello: `1 / p_model` (diversa dalla quota fair del mercato);
+- edge quota: `market_odd - model_void_odd`;
+- expected ROI: `p_model * market_odd - 1`;
+- metriche combinate calcolate con la probabilità corretta dal Correlation
+  Engine, mai con il solo prodotto ingenuo.
+
+La policy combinata versionata è `slip_decision_policy_v1` (margine 2%).
+Una schedina è `PLAY` solo se tutte le selezioni sono `PLAY` e supera la
+soglia combinata; `BORDERLINE` indica margine combinato insufficiente;
+`NO BET` copre selezioni non idonee, dati mancanti, EV non positivo o
+combinazioni non valutabili.
+
+Le schedine ufficiali sono snapshot server-side immutabili creati dal job
+di cattura prima del kickoff. Lo stato `VOID` indica un esito rimborsato ed
+è distinto dalla quota void modello. Expected ROI è una stima pre-partita;
+ROI realizzato e PnL sono calcolati solo sulle schedine ufficiali concluse.
+
 ## Task completati (vedi IMPLEMENTATION_LOG.md)
 SOCCER-00, SOCCER-01, SOCCER-02, DATA-01..08, ML-01..07, FE-01..03, EXP-01..05 (fase ORACLE EXPERTS completata), MARKET-01..06 (fase MARKETS completata), ORACLE-01..04 (fase ENSEMBLE completata), BET-01..06 (fase BETTING completata), MATCH-01..02 (fase MATCH CENTER completata), SLIP-01..03 (fase SCHEDINA completata), OPS-01..03 (fase OPERATIONS completata), LIVE-01..03 (fase LIVE ORACLE completata)
 

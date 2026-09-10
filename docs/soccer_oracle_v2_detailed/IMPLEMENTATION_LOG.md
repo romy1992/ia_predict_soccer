@@ -248,6 +248,23 @@ Prima di ogni task viene applicata la premessa in `AI_MASTER_PROMPT.md`:
 - locale: `alembic stamp 55bbb5f0a367` + `alembic upgrade head` (ora include anche `f3a9c1d8e2b7`, vedi sotto)
 - docker: nessuna piu' necessaria, l'API Docker riusa lo schema del DB locale (nessun Postgres containerizzato)
 
+- **Schedine ufficiali e metriche decisionali complete (2026-09-10)**:
+  esteso il generatore esistente senza introdurre un secondo motore.
+  `CandidatePick` trasporta le metriche già prodotte dalla Decision Policy;
+  `GeneratedSlip` espone quota combinata, probabilità ingenua e corretta,
+  quota void combinata, edge, expected ROI, rischio, situazione e versioni.
+  I profili mantengono le soglie tecniche precedenti ma sono versionati
+  `*_v2_play_only`: solo selezioni `PLAY`, una fixture per schedina di
+  default. Aggiunte le tabelle additive `betting_slips` e
+  `betting_slip_picks` (migration `8f7d3c2a1b09`) con capture key
+  deterministica, snapshot pre-partita, settlement `PENDING/WON/LOST/VOID`,
+  quota effettiva con VOID a fattore 1, ritorno e PnL. Il job ufficiale
+  cattura le schedine dopo le singole PLAY; il job settlement aggiorna
+  anche le schedine. Nuove API GET read-only per lista e statistiche
+  ufficiali. La pagina Schedina mostra profili Prudente/Bilanciata/Spinta,
+  metriche aggregate e tutte le metriche di ogni selezione, distinguendo
+  quota void modello da esito VOID.
+
 ## Connessione DB runtime
 - **AGGIORNATO 2026-09-04**: sorgente runtime ora fissata sul DB dev remoto Railway: `DATABASE_URL=postgresql://postgres:...@sakura.proxy.rlwy.net:18862/railway` (credenziali complete in `properties/config.env`), unica per locale/Docker/Alembic - vedi entry INFRA sopra. Il valore storico sotto (`localhost:5432/match_db`) e la narrazione del fix Docker restano come riferimento della situazione PRECEDENTE al cambio Railway.
 - vecchio runtime locale (fino al 2026-09-03): `DATABASE_URL=postgresql://postgres:postgres@localhost:5432/match_db`
