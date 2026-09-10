@@ -7,7 +7,7 @@ data** (non solo la prima volta) — la banca dati predizioni
 intercettate dal job mentre erano ancora `NS`, mai lo storico gia' passato
 ne' le partite appena finite fuori da quella finestra.
 
-## Stato: 4/4 completati (codice) - punto 3 ancora da LANCIARE sul DB reale
+## Stato: 4/4 completati (codice) - punto 3 lanciato una volta e interrotto su richiesta dell'operatore (2026-09-10), rimandato senza urgenza (nessun impatto sulla velocita' della Dashboard, vedi punto 3 per il dettaglio)
 
 ## 1. Niente ricalcolo al volo per le date storiche (vista lista) — ☑ Fatto (commit `ad50648`)
 
@@ -99,12 +99,23 @@ VOLTA dall'operatore (o da me per suo conto), non schedulato.
 **Fatto (codice)**: `scripts/backfill_prediction_snapshots.py` scritto e
 testato (6 test con SQLite in-memory: raccolta, anti-join, isolamento
 errori, paginazione multi-batch via keyset su `id_fixture`, `--limit`).
-Suite completa (823 test) verde. **ANCORA DA LANCIARE**: serve una sessione
-con accesso reale al DB Postgres di produzione (bridge locale) - senza
-questo giro lo storico gia' passato resta scoperto (il codice esiste ma
-non e' ancora stato eseguito contro i dati veri). Consigliato un primo
-giro con `--limit 500` per verificare tempi/comportamento prima del giro
-completo su tutto lo storico.
+Suite completa (823 test) verde.
+
+**Esecuzione (2026-09-10)**: lanciato una prima volta (giro completo) dalla
+sessione bridge locale, poi **interrotto manualmente dall'operatore**
+prima del completamento - scelta esplicita di rimandare, non un errore.
+Nessun danno/stato inconsistente: lo script e' idempotente per costruzione
+(anti-join per fixture+mercato, mai un overwrite), quindi un'interruzione a
+meta' lascia semplicemente PARTE dello storico coperto e il resto invariato
+rispetto a prima - **rilanciabile in qualunque momento senza duplicare
+nulla e senza dover tracciare manualmente dove si era fermato**. La
+Dashboard resta comunque SEMPRE veloce nel frattempo (Punto 1, indipendente
+dallo stato del backfill): le fixture storiche non ancora coperte mostrano
+il placeholder "In coda" invece di un ricalcolo lento. **ANCORA DA
+COMPLETARE**, rimandato su richiesta dell'operatore - nessuna urgenza,
+nessun impatto sulla velocita' percepita. Quando si vorra' riprenderlo,
+consigliato un primo giro con `--limit 500` per verificare tempi/carico
+prima di un giro completo.
 
 ## 4. Bottone "Ricalcola previsione" nel dettaglio partita — ☑ Fatto (commit `5ceba8b`)
 
@@ -139,13 +150,20 @@ completa (829 test) verde, build frontend verificata.
 ## Riepilogo finale
 
 Tutti e 4 i punti sono COMPLETATI dal lato codice (commit `ad50648`,
-`caf12bb`, `d72b4f5`, `5ceba8b`, tutti su `feature/soccer-oracle-v2`).
-**Resta un solo passo operativo, non di codice**: lanciare
-`scripts/backfill_prediction_snapshots.py` UNA VOLTA contro il DB reale
-(sessione bridge locale) per chiudere il buco sullo storico gia' passato -
-da questo momento in poi (punto 2) e per il resto dell'esperienza utente
-(punti 1 e 4) il sistema e' gia' completo e in produzione sulla feature
-branch.
+`caf12bb`, `d72b4f5`, `5ceba8b`, tutti su `feature/soccer-oracle-v2`) e in
+produzione. **Resta un solo passo operativo, non di codice, RIMANDATO su
+richiesta esplicita dell'operatore (2026-09-10)**: completare il giro di
+`scripts/backfill_prediction_snapshots.py` contro il DB reale (lanciato una
+volta, interrotto volontariamente a meta') per chiudere il buco sullo
+storico gia' passato - nessuna urgenza, e' rilanciabile in qualunque
+momento senza rischio (idempotente, anti-join, nessun dato duplicato o
+perso interrompendolo). Da questo momento in poi (punto 2, copertura
+automatica delle nuove partite concluse) e per il resto dell'esperienza
+utente (punti 1 e 4, vista storica sempre veloce + ricalcolo manuale) il
+sistema e' gia' completo e in produzione, indipendentemente da quando il
+backfill verra' completato - l'unico effetto visibile di lasciarlo a meta'
+e' il placeholder "In coda" su alcuni mercati di partite storiche non
+ancora coperte, mai una lentezza.
 
 ## Note trasversali
 
