@@ -755,7 +755,16 @@ class DashboardService:
 
     @staticmethod
     def _extract_scores(match: Match) -> dict[str, Optional[int]]:
-        scores = {"home": None, "away": None}
+        # Punteggio finale (2026-09-10): preferisce SEMPRE `Match.score_home`/
+        # `score_away` (popolati dalla risposta 'fixtures', sempre
+        # disponibile indipendentemente dalle statistiche dettagliate - vedi
+        # `download_match_service.map_base_match`). Fallback su
+        # `Statistics.score_ft`/`score_ht` SOLO per righe importate PRIMA di
+        # questo fix (gia' a DB con Statistics ma senza i due nuovi campi).
+        scores = {"home": match.score_home, "away": match.score_away}
+        if scores["home"] is not None and scores["away"] is not None:
+            return scores
+
         stats = match.statistics or []
         if not stats:
             return scores
@@ -764,9 +773,9 @@ class DashboardService:
         home_stat = by_team.get(match.id_team_home)
         away_stat = by_team.get(match.id_team_away)
 
-        if home_stat:
+        if scores["home"] is None and home_stat:
             scores["home"] = home_stat.score_ft if home_stat.score_ft is not None else home_stat.score_ht
-        if away_stat:
+        if scores["away"] is None and away_stat:
             scores["away"] = away_stat.score_ft if away_stat.score_ft is not None else away_stat.score_ht
 
         return scores
@@ -787,36 +796,53 @@ class DashboardService:
 
         return {"home": _to_int(home), "away": _to_int(away)}
 
+    # Mercati che richiedono le statistiche COMPLETE (corners/yellow_cards/
+    # red_cards), mai risolvibili dal solo punteggio finale - vedi
+    # `_resolve_final_stat_dicts`/`_annotate_prediction_correctness`.
+    _CORRECTNESS_REQUIRES_FULL_STATS = {"corners", "cards"}
+
     @staticmethod
-    def _resolve_final_stat_dicts(match: Optional[Match]) -> tuple[Optional[dict], Optional[dict]]:
+    def _resolve_final_stat_dicts(match: Optional[Match]) -> tuple[Optional[dict], Optional[dict], bool]:
         """Box-score FINALE per squadra (dict con le stesse chiavi usate da
         `FilterMarketService._label_by_market`: `score_ft`/`corners`/
-        `yellow_cards`/`red_cards`/...) da un `Match` ORM gia' caricato -
-        SOLO da `match.statistics` (mai da un dict parziale costruito a
-        mano: `_label_by_market` tratta una chiave ASSENTE come `0`, quindi
-        un dict incompleto produrrebbe un esito "0 corner"/"0 cartellini"
-        FALSO invece di "sconosciuto" - vedi `_annotate_prediction_correctness`,
-        che per questo passa SEMPRE `None` quando `match` o le sue
-        statistiche non sono disponibili, mai un dict parziale)."""
+        `yellow_cards`/`red_cards`/...) da un `Match` ORM gia' caricato, piu'
+        un flag `has_full_stats` che dice se il dict e' COMPLETO (da
+        `match.statistics`) o "solo punteggio" (da `Match.score_home`/
+        `score_away`, 2026-09-10 - sempre disponibili indipendentemente
+        dalle statistiche dettagliate, vedi `map_base_match`).
+
+        MAI un dict parziale spacciato per completo: `_label_by_market`
+        tratta una chiave ASSENTE come `0`, quindi un dict "solo punteggio"
+        letto per corners/cards produrrebbe un esito "0 corner"/"0
+        cartellini" FALSO invece di "sconosciuto" - per questo il flag
+        esiste, e `_annotate_prediction_correctness` lo usa per escludere
+        esplicitamente corners/cards quando `has_full_stats=False`."""
         if match is None:
-            return None, None
+            return None, None, False
+
         stats = match.statistics or []
-        if not stats:
-            return None, None
+        if stats:
+            by_team = {s.statistics_team_id: s for s in stats}
+            home_stat = by_team.get(match.id_team_home)
+            away_stat = by_team.get(match.id_team_away)
+            return (
+                home_stat.to_dict() if home_stat else None,
+                away_stat.to_dict() if away_stat else None,
+                True,
+            )
 
-        by_team = {s.statistics_team_id: s for s in stats}
-        home_stat = by_team.get(match.id_team_home)
-        away_stat = by_team.get(match.id_team_away)
-        return (
-            home_stat.to_dict() if home_stat else None,
-            away_stat.to_dict() if away_stat else None,
-        )
+        if match.score_home is not None and match.score_away is not None:
+            return {"score_ft": match.score_home}, {"score_ft": match.score_away}, False
 
-    @staticmethod
+        return None, None, False
+
+    @classmethod
     def _annotate_prediction_correctness(
+        cls,
         predictions: dict[str, dict[str, Any]],
         stat_home: Optional[dict],
         stat_away: Optional[dict],
+        has_full_stats: bool = True,
     ) -> None:
         """Aggiunge `"correct": True/False/None` ad ogni entry gia' risolta
         di `predictions`, confrontando la previsione MOSTRATA (post
@@ -832,8 +858,13 @@ class DashboardService:
         Dashboard e un settlement del ledger non possono mai divergere).
         `None` (mai un esito inventato) quando il risultato reale non e'
         determinabile per quel mercato specifico (punteggio/statistiche
-        mancanti, o mercato non supportato dal confronto)."""
+        mancanti, mercato non supportato dal confronto, o - quando
+        `has_full_stats=False`, dict "solo punteggio" - un mercato come
+        corners/cards che richiederebbe le statistiche complete)."""
         for market, entry in predictions.items():
+            if not has_full_stats and market in cls._CORRECTNESS_REQUIRES_FULL_STATS:
+                entry["correct"] = None
+                continue
             actual = resolve_actual_outcome(market=market, stat_home=stat_home, stat_away=stat_away)
             if actual is None:
                 entry["correct"] = None
@@ -898,8 +929,8 @@ class DashboardService:
                 fixture_id=fixture_id, markets=markets, db_match=db_match, status=status, allow_compute=allow_compute
             )
             if phase == "finished":
-                stat_home, stat_away = self._resolve_final_stat_dicts(db_match)
-                self._annotate_prediction_correctness(predictions, stat_home, stat_away)
+                stat_home, stat_away, has_full_stats = self._resolve_final_stat_dicts(db_match)
+                self._annotate_prediction_correctness(predictions, stat_home, stat_away, has_full_stats)
             row["predictions"] = predictions
             row["decision_cards"], row["best_decision"] = self._decisions_for_row(
                 row=row, predictions=predictions, db_match=db_match
@@ -1017,8 +1048,8 @@ class DashboardService:
                 allow_compute=allow_compute,
             )
             if phase == "finished":
-                stat_home, stat_away = self._resolve_final_stat_dicts(match)
-                self._annotate_prediction_correctness(predictions, stat_home, stat_away)
+                stat_home, stat_away, has_full_stats = self._resolve_final_stat_dicts(match)
+                self._annotate_prediction_correctness(predictions, stat_home, stat_away, has_full_stats)
             row["predictions"] = predictions
             # Riga gia' dal DB locale: `match.odds` e' gia' caricato via
             # `selectinload` dalla query unica di `_fetch_matches` (nessuna
@@ -1411,8 +1442,8 @@ class DashboardService:
             else {}
         )
         if with_predictions and fixture_row.get("phase") == "finished":
-            stat_home, stat_away = self._resolve_final_stat_dicts(db_match)
-            self._annotate_prediction_correctness(predictions, stat_home, stat_away)
+            stat_home, stat_away, has_full_stats = self._resolve_final_stat_dicts(db_match)
+            self._annotate_prediction_correctness(predictions, stat_home, stat_away, has_full_stats)
         fixture_row["predictions"] = predictions
 
         events = self._fetch_api_events(fixture_id)

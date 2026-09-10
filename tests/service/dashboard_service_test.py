@@ -985,19 +985,58 @@ class TestDashboardApiWindow(unittest.TestCase):
         self.assertTrue(mocked_call.called)
 
 
+class TestExtractScores(unittest.TestCase):
+    """`_extract_scores` (2026-09-10): preferisce SEMPRE `Match.score_home`/
+    `score_away` (sempre disponibili, indipendenti dalle statistiche
+    dettagliate), con fallback su `Statistics.score_ft`/`score_ht` SOLO per
+    righe importate PRIMA di questo fix."""
+
+    def test_prefers_match_score_over_statistics(self):
+        match = Match(
+            id_match_fk=str(uuid.uuid4()), id_fixture=1, id_team_home=10, id_team_away=20,
+            score_home=3, score_away=1,
+        )
+        match.statistics = [
+            Statistics(id_statistics_fk=str(uuid.uuid4()), statistics_team_id=10, score_ft=99),
+            Statistics(id_statistics_fk=str(uuid.uuid4()), statistics_team_id=20, score_ft=99),
+        ]
+
+        self.assertEqual(DashboardService._extract_scores(match), {"home": 3, "away": 1})
+
+    def test_falls_back_to_statistics_when_match_score_missing(self):
+        match = Match(id_match_fk=str(uuid.uuid4()), id_fixture=1, id_team_home=10, id_team_away=20)
+        match.statistics = [
+            Statistics(id_statistics_fk=str(uuid.uuid4()), statistics_team_id=10, score_ft=2),
+            Statistics(id_statistics_fk=str(uuid.uuid4()), statistics_team_id=20, score_ft=1),
+        ]
+
+        self.assertEqual(DashboardService._extract_scores(match), {"home": 2, "away": 1})
+
+    def test_none_none_when_neither_source_available(self):
+        match = Match(id_match_fk=str(uuid.uuid4()), id_fixture=1, id_team_home=10, id_team_away=20)
+        match.statistics = []
+
+        self.assertEqual(DashboardService._extract_scores(match), {"home": None, "away": None})
+
+
 class TestResolveFinalStatDicts(unittest.TestCase):
     """`_resolve_final_stat_dicts` (2026-09-10, colorazione badge per esito
     reale): deve costruire i dict home/away SOLO da `Statistics` ORM reali
-    (mai un dict parziale a mano - vedi il commento nel metodo sul perche'
-    una chiave assente verrebbe letta come 0 da `_label_by_market`)."""
+    quando disponibili (mai un dict parziale a mano - vedi il commento nel
+    metodo sul perche' una chiave assente verrebbe letta come 0 da
+    `_label_by_market`), con fallback "solo punteggio" da
+    `Match.score_home`/`score_away` (2026-09-10: sempre disponibili
+    indipendentemente dalle statistiche dettagliate, vedi
+    `download_match_service.map_base_match`) quando `Statistics` manca del
+    tutto - segnalato dal terzo elemento `has_full_stats`."""
 
     def test_none_when_match_is_none(self):
-        self.assertEqual(DashboardService._resolve_final_stat_dicts(None), (None, None))
+        self.assertEqual(DashboardService._resolve_final_stat_dicts(None), (None, None, False))
 
-    def test_none_when_match_has_no_statistics(self):
+    def test_none_when_match_has_no_statistics_and_no_score(self):
         match = Match(id_match_fk=str(uuid.uuid4()), id_fixture=1, id_team_home=10, id_team_away=20)
         match.statistics = []
-        self.assertEqual(DashboardService._resolve_final_stat_dicts(match), (None, None))
+        self.assertEqual(DashboardService._resolve_final_stat_dicts(match), (None, None, False))
 
     def test_maps_home_away_by_team_id_regardless_of_list_order(self):
         match = Match(id_match_fk=str(uuid.uuid4()), id_fixture=1, id_team_home=10, id_team_away=20)
@@ -1009,12 +1048,38 @@ class TestResolveFinalStatDicts(unittest.TestCase):
         )
         match.statistics = [stat_away, stat_home]  # ordine invertito apposta
 
-        home_dict, away_dict = DashboardService._resolve_final_stat_dicts(match)
+        home_dict, away_dict, has_full_stats = DashboardService._resolve_final_stat_dicts(match)
 
+        self.assertTrue(has_full_stats)
         self.assertEqual(home_dict["score_ft"], 2)
         self.assertEqual(home_dict["corners"], 5)
         self.assertEqual(away_dict["score_ft"], 1)
         self.assertEqual(away_dict["corners"], 4)
+
+    def test_falls_back_to_score_only_when_no_statistics_but_match_score_present(self):
+        """Il gap reale segnalato dall'operatore (2026-09-10): leghe minori
+        dove l'endpoint statistiche dedicato non ha dati, ma il punteggio
+        finale e' comunque noto dalla risposta 'fixtures' leggera."""
+        match = Match(
+            id_match_fk=str(uuid.uuid4()), id_fixture=1, id_team_home=10, id_team_away=20,
+            score_home=2, score_away=1,
+        )
+        match.statistics = []
+
+        home_dict, away_dict, has_full_stats = DashboardService._resolve_final_stat_dicts(match)
+
+        self.assertFalse(has_full_stats)
+        self.assertEqual(home_dict, {"score_ft": 2})
+        self.assertEqual(away_dict, {"score_ft": 1})
+
+    def test_no_fallback_when_only_one_side_of_score_is_known(self):
+        match = Match(
+            id_match_fk=str(uuid.uuid4()), id_fixture=1, id_team_home=10, id_team_away=20,
+            score_home=2, score_away=None,
+        )
+        match.statistics = []
+
+        self.assertEqual(DashboardService._resolve_final_stat_dicts(match), (None, None, False))
 
 
 class TestAnnotatePredictionCorrectness(unittest.TestCase):
@@ -1046,11 +1111,58 @@ class TestAnnotatePredictionCorrectness(unittest.TestCase):
         self.assertTrue(predictions["h2h"]["correct"])
         self.assertFalse(predictions["under_over_2_5"]["correct"])
 
+    def test_has_full_stats_false_still_resolves_score_only_markets(self):
+        predictions = {"h2h": {"prediction": 1, "probability": 0.7}}
+        DashboardService._annotate_prediction_correctness(
+            predictions, {"score_ft": 2}, {"score_ft": 1}, has_full_stats=False
+        )
+        self.assertTrue(predictions["h2h"]["correct"])
+
+    def test_has_full_stats_false_never_resolves_corners_or_cards(self):
+        """Un dict 'solo punteggio' non ha ne' 'corners' ne'
+        'yellow_cards'/'red_cards' - senza questo guard, `_label_by_market`
+        li leggerebbe come 0 (FALSO, non sconosciuto)."""
+        predictions = {
+            "corners": {"prediction": 1, "probability": 0.6},
+            "cards": {"prediction": 0, "probability": 0.55},
+        }
+        DashboardService._annotate_prediction_correctness(
+            predictions, {"score_ft": 2}, {"score_ft": 1}, has_full_stats=False
+        )
+        self.assertIsNone(predictions["corners"]["correct"])
+        self.assertIsNone(predictions["cards"]["correct"])
+
 
 class TestSerializeRowsAnnotateCorrectnessOnlyWhenFinished(unittest.TestCase):
     """Integrazione: `_serialize_match`/`_serialize_api_fixture` devono
     aggiungere `correct` SOLO per partite concluse - mai per NS/live (nessun
     risultato reale su cui basarsi)."""
+
+    def test_serialize_match_uses_score_only_fallback_when_no_statistics(self):
+        """Il gap reale segnalato dall'operatore (2026-09-10, leghe minori
+        senza statistiche dettagliate): `score` in riga E `correct` per h2h
+        devono comunque risolversi dal solo `Match.score_home`/`score_away`."""
+        service = DashboardService()
+        match = Match(
+            id_match_fk=str(uuid.uuid4()),
+            id_fixture=1,
+            date_match="2026-09-01T18:00:00+00:00",
+            status="FT",
+            id_team_home=10,
+            id_team_away=20,
+            name_home="Alcione",
+            name_away="Treviso",
+            score_home=1,
+            score_away=0,
+        )
+        match.statistics = []
+        match.odds = []
+        service._predict_fixture = lambda **kwargs: {"h2h": {"prediction": 1, "probability": 0.7}}
+
+        row = service._serialize_match(match, with_predictions=True, markets=["h2h"])
+
+        self.assertEqual(row["score"], {"home": 1, "away": 0})
+        self.assertTrue(row["predictions"]["h2h"]["correct"])
 
     def test_serialize_match_adds_correct_for_finished_match(self):
         service = DashboardService()
