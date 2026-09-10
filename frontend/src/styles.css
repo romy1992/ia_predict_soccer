@@ -503,6 +503,18 @@ th {
   color: #8a1f1f;
 }
 
+.prediction-correct {
+  background: #dcf7e4;
+  color: #0f5d2a;
+  border: 1px solid #8fd9a8;
+}
+
+.prediction-wrong {
+  background: #fde5e5;
+  color: #8a1f1f;
+  border: 1px solid #f0a8a8;
+}
+
 .prediction-pending {
   background: #eef1f7;
   color: #6e80a2;

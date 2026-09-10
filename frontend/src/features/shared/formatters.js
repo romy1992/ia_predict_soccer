@@ -89,6 +89,24 @@ export function confidenceClass(probability) {
   return "prediction-low";
 }
 
+// Colore per ESITO REALE (2026-09-10, richiesto esplicitamente
+// dall'operatore: "quando una partita e' finita, colorami di verde le
+// odds prese e in rosso quelle non prese") - distinto da `confidenceClass`
+// (che colora per PROBABILITA' stimata, sempre disponibile anche prima del
+// fischio d'inizio). `correct` e' `true`/`false` SOLO per partite concluse
+// con risultato determinabile per quel mercato (vedi
+// `DashboardService._annotate_prediction_correctness`); `null`/`undefined`
+// altrimenti, nel qual caso il chiamante deve ricadere su `confidenceClass`.
+export function outcomeClass(correct) {
+  if (correct === true) {
+    return "prediction-correct";
+  }
+  if (correct === false) {
+    return "prediction-wrong";
+  }
+  return null;
+}
+
 export function formatOdd(value) {
   const num = Number(value);
   if (Number.isNaN(num) || num <= 0) {

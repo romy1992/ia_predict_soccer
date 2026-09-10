@@ -8,7 +8,7 @@ from sqlalchemy.orm import sessionmaker
 
 import src.api.dashboard_service as dashboard_service_module
 from src.api.dashboard_service import DashboardService
-from src.service_ia.model.match import Base, Match
+from src.service_ia.model.match import Base, Match, Statistics
 
 
 class TestDashboardService(unittest.TestCase):
@@ -144,6 +144,32 @@ class TestDashboardService(unittest.TestCase):
         self.assertTrue(labels.issubset({"PLAY", "BORDERLINE", "NO BET"}))
         self.assertIn("bookmaker_fair_probability", payload["decision_cards"][0])
         self.assertIn("fair_odd", payload["decision_cards"][0])
+
+    def test_get_match_detail_adds_correct_for_finished_match(self):
+        """`get_match_detail` (2026-09-10, colorazione badge per esito
+        reale): a differenza della vista lista, qui il `db_match` con le
+        statistiche finali arriva da `_fetch_db_match_by_fixture`."""
+        service = DashboardService()
+        service.registry.list_markets = lambda: ["h2h"]
+
+        service._fetch_api_fixture_detail = lambda fixture_id: self._fixture(
+            fixture_id=fixture_id, day="2026-09-01", status="FT", home="Inter", away="Roma"
+        )
+        db_match = Match(id_match_fk=str(uuid.uuid4()), id_fixture=1234, id_team_home=10, id_team_away=20)
+        db_match.statistics = [
+            Statistics(id_statistics_fk=str(uuid.uuid4()), statistics_team_id=10, score_ft=1),
+            Statistics(id_statistics_fk=str(uuid.uuid4()), statistics_team_id=20, score_ft=0),
+        ]
+        service._fetch_db_match_by_fixture = lambda fixture_id: db_match
+        service._fetch_api_events = lambda fixture_id: []
+        service._fetch_api_odds = lambda fixture_id: None
+        service._predict_fixture = lambda fixture_id, markets, db_match=None, status=None, allow_compute=True: {
+            "h2h": {"prediction": 1, "probability": 0.72, "model_name": "logistic", "run_id": "run-1"}
+        }
+
+        payload = service.get_match_detail(fixture_id=1234, with_predictions=True)
+
+        self.assertTrue(payload["predictions"]["h2h"]["correct"])
 
     def test_recompute_predictions_calls_predict_fixture_with_force_true(self):
         """Bottone "Ricalcola previsione" (2026-09-10, punto 4/4): deve
@@ -957,6 +983,148 @@ class TestDashboardApiWindow(unittest.TestCase):
             self.service._fetch_api_live_fixtures()
 
         self.assertTrue(mocked_call.called)
+
+
+class TestResolveFinalStatDicts(unittest.TestCase):
+    """`_resolve_final_stat_dicts` (2026-09-10, colorazione badge per esito
+    reale): deve costruire i dict home/away SOLO da `Statistics` ORM reali
+    (mai un dict parziale a mano - vedi il commento nel metodo sul perche'
+    una chiave assente verrebbe letta come 0 da `_label_by_market`)."""
+
+    def test_none_when_match_is_none(self):
+        self.assertEqual(DashboardService._resolve_final_stat_dicts(None), (None, None))
+
+    def test_none_when_match_has_no_statistics(self):
+        match = Match(id_match_fk=str(uuid.uuid4()), id_fixture=1, id_team_home=10, id_team_away=20)
+        match.statistics = []
+        self.assertEqual(DashboardService._resolve_final_stat_dicts(match), (None, None))
+
+    def test_maps_home_away_by_team_id_regardless_of_list_order(self):
+        match = Match(id_match_fk=str(uuid.uuid4()), id_fixture=1, id_team_home=10, id_team_away=20)
+        stat_home = Statistics(
+            id_statistics_fk=str(uuid.uuid4()), statistics_team_id=10, score_ft=2, corners=5, yellow_cards=1
+        )
+        stat_away = Statistics(
+            id_statistics_fk=str(uuid.uuid4()), statistics_team_id=20, score_ft=1, corners=4, yellow_cards=2
+        )
+        match.statistics = [stat_away, stat_home]  # ordine invertito apposta
+
+        home_dict, away_dict = DashboardService._resolve_final_stat_dicts(match)
+
+        self.assertEqual(home_dict["score_ft"], 2)
+        self.assertEqual(home_dict["corners"], 5)
+        self.assertEqual(away_dict["score_ft"], 1)
+        self.assertEqual(away_dict["corners"], 4)
+
+
+class TestAnnotatePredictionCorrectness(unittest.TestCase):
+    """`_annotate_prediction_correctness` (2026-09-10, richiesto
+    esplicitamente dall'operatore: "quando una partita e' finita, colorami
+    di verde le odds prese e in rosso quelle non prese")."""
+
+    def test_marks_correct_when_prediction_matches_real_result(self):
+        predictions = {"h2h": {"prediction": 1, "probability": 0.7}}  # prevista vittoria home
+        DashboardService._annotate_prediction_correctness(predictions, {"score_ft": 2}, {"score_ft": 1})
+        self.assertTrue(predictions["h2h"]["correct"])
+
+    def test_marks_wrong_when_prediction_does_not_match_real_result(self):
+        predictions = {"h2h": {"prediction": 1, "probability": 0.7}}  # prevista vittoria home
+        DashboardService._annotate_prediction_correctness(predictions, {"score_ft": 0}, {"score_ft": 2})
+        self.assertFalse(predictions["h2h"]["correct"])
+
+    def test_none_when_result_not_determinable(self):
+        predictions = {"h2h": {"prediction": 1, "probability": 0.7}}
+        DashboardService._annotate_prediction_correctness(predictions, None, None)
+        self.assertIsNone(predictions["h2h"]["correct"])
+
+    def test_each_market_evaluated_independently(self):
+        predictions = {
+            "h2h": {"prediction": 1, "probability": 0.7},  # home vince -> corretto
+            "under_over_2_5": {"prediction": 0, "probability": 0.6},  # under, ma 3 gol totali -> sbagliato
+        }
+        DashboardService._annotate_prediction_correctness(predictions, {"score_ft": 2}, {"score_ft": 1})
+        self.assertTrue(predictions["h2h"]["correct"])
+        self.assertFalse(predictions["under_over_2_5"]["correct"])
+
+
+class TestSerializeRowsAnnotateCorrectnessOnlyWhenFinished(unittest.TestCase):
+    """Integrazione: `_serialize_match`/`_serialize_api_fixture` devono
+    aggiungere `correct` SOLO per partite concluse - mai per NS/live (nessun
+    risultato reale su cui basarsi)."""
+
+    def test_serialize_match_adds_correct_for_finished_match(self):
+        service = DashboardService()
+        match = Match(
+            id_match_fk=str(uuid.uuid4()),
+            id_fixture=1,
+            date_match="2026-09-01T18:00:00+00:00",
+            status="FT",
+            id_team_home=10,
+            id_team_away=20,
+            name_home="Inter",
+            name_away="Milan",
+        )
+        match.statistics = [
+            Statistics(id_statistics_fk=str(uuid.uuid4()), statistics_team_id=10, score_ft=2),
+            Statistics(id_statistics_fk=str(uuid.uuid4()), statistics_team_id=20, score_ft=1),
+        ]
+        match.odds = []
+        service._predict_fixture = lambda **kwargs: {"h2h": {"prediction": 1, "probability": 0.7}}
+
+        row = service._serialize_match(match, with_predictions=True, markets=["h2h"])
+
+        self.assertTrue(row["predictions"]["h2h"]["correct"])
+
+    def test_serialize_match_no_correct_key_when_not_finished(self):
+        service = DashboardService()
+        match = Match(
+            id_match_fk=str(uuid.uuid4()),
+            id_fixture=1,
+            date_match="2099-09-01T18:00:00+00:00",
+            status="NS",
+            id_team_home=10,
+            id_team_away=20,
+        )
+        match.statistics = []
+        match.odds = []
+        service._predict_fixture = lambda **kwargs: {"h2h": {"prediction": 1, "probability": 0.7}}
+
+        row = service._serialize_match(match, with_predictions=True, markets=["h2h"])
+
+        self.assertNotIn("correct", row["predictions"]["h2h"])
+
+    def test_serialize_api_fixture_adds_correct_for_finished_match_using_db_match_stats(self):
+        service = DashboardService()
+        fixture = {
+            "fixture": {"id": 1, "date": "2026-09-01T18:45:00+00:00", "status": {"short": "FT"}},
+            "league": {"id": 135, "name": "Serie A"},
+            "teams": {"home": {"name": "Inter"}, "away": {"name": "Milan"}},
+            "goals": {"home": 2, "away": 1},
+        }
+        db_match = Match(id_match_fk=str(uuid.uuid4()), id_fixture=1, id_team_home=10, id_team_away=20)
+        db_match.statistics = [
+            Statistics(id_statistics_fk=str(uuid.uuid4()), statistics_team_id=10, score_ft=2),
+            Statistics(id_statistics_fk=str(uuid.uuid4()), statistics_team_id=20, score_ft=1),
+        ]
+        service._predict_fixture = lambda **kwargs: {"h2h": {"prediction": 1, "probability": 0.7}}
+
+        row = service._serialize_api_fixture(fixture, with_predictions=True, markets=["h2h"], db_match=db_match)
+
+        self.assertTrue(row["predictions"]["h2h"]["correct"])
+
+    def test_serialize_api_fixture_correct_is_none_without_db_match(self):
+        service = DashboardService()
+        fixture = {
+            "fixture": {"id": 1, "date": "2026-09-01T18:45:00+00:00", "status": {"short": "FT"}},
+            "league": {"id": 135, "name": "Serie A"},
+            "teams": {"home": {"name": "Inter"}, "away": {"name": "Milan"}},
+            "goals": {"home": 2, "away": 1},
+        }
+        service._predict_fixture = lambda **kwargs: {"h2h": {"prediction": 1, "probability": 0.7}}
+
+        row = service._serialize_api_fixture(fixture, with_predictions=True, markets=["h2h"], db_match=None)
+
+        self.assertIsNone(row["predictions"]["h2h"]["correct"])
 
 
 if __name__ == "__main__":
