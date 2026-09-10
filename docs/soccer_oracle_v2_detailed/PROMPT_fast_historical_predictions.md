@@ -7,7 +7,7 @@ data** (non solo la prima volta) — la banca dati predizioni
 intercettate dal job mentre erano ancora `NS`, mai lo storico gia' passato
 ne' le partite appena finite fuori da quella finestra.
 
-## Stato: 4/4 completati (codice) - punto 3 lanciato una volta e interrotto su richiesta dell'operatore (2026-09-10), rimandato senza urgenza (nessun impatto sulla velocita' della Dashboard, vedi punto 3 per il dettaglio)
+## Stato: 4/4 completati, MERGIATO in main e deployato (2026-09-10) - punto 3 (backfill storico completo) deciso di NON completarlo, non serve per l'uso reale del progetto (vedi punto 3 per il dettaglio)
 
 ## 1. Niente ricalcolo al volo per le date storiche (vista lista) — ☑ Fatto (commit `ad50648`)
 
@@ -102,20 +102,31 @@ errori, paginazione multi-batch via keyset su `id_fixture`, `--limit`).
 Suite completa (823 test) verde.
 
 **Esecuzione (2026-09-10)**: lanciato una prima volta (giro completo) dalla
-sessione bridge locale, poi **interrotto manualmente dall'operatore**
-prima del completamento - scelta esplicita di rimandare, non un errore.
-Nessun danno/stato inconsistente: lo script e' idempotente per costruzione
-(anti-join per fixture+mercato, mai un overwrite), quindi un'interruzione a
-meta' lascia semplicemente PARTE dello storico coperto e il resto invariato
-rispetto a prima - **rilanciabile in qualunque momento senza duplicare
-nulla e senza dover tracciare manualmente dove si era fermato**. La
-Dashboard resta comunque SEMPRE veloce nel frattempo (Punto 1, indipendente
-dallo stato del backfill): le fixture storiche non ancora coperte mostrano
-il placeholder "In coda" invece di un ricalcolo lento. **ANCORA DA
-COMPLETARE**, rimandato su richiesta dell'operatore - nessuna urgenza,
-nessun impatto sulla velocita' percepita. Quando si vorra' riprenderlo,
-consigliato un primo giro con `--limit 500` per verificare tempi/carico
-prima di un giro completo.
+sessione bridge locale, poi interrotto manualmente dall'operatore prima
+del completamento. Nessun danno/stato inconsistente (script idempotente,
+anti-join per fixture+mercato, mai un overwrite) - quanto processato prima
+dell'interruzione resta comunque salvato correttamente.
+
+**Deciso di NON completarlo (2026-09-10, chiarimento esplicito
+dell'operatore)**: "il progetto e' nuovo... tutte le partite storiche in
+realta' dovevano servire solo per addestrare... da oggi in poi mi
+interessano che le partite vengano salvate con predizioni". Chiarimento
+importante: lo storico profondo (usato per il TRAINING dei modelli) legge
+direttamente da `match`/`statistics`/`odds`, MAI da
+`match_prediction_snapshot` - quella tabella e' solo un log/cache delle
+predizioni SERVITE in Dashboard, zero impatto sul training presente o
+futuro. Cio' che l'operatore vuole davvero ("qualche giorno indietro" +
+"da oggi in poi") e' ESATTAMENTE cio' che il Punto 2 (job in background)
+gia' fa in automatico, per sempre, senza alcun intervento manuale: copre
+le fixture concluse negli ultimi `_RECENTLY_FINISHED_WINDOW_DAYS` (3)
+giorni ad ogni giro schedulato. **Il giro completo dello script di
+backfill (tutto lo storico pre-esistente) NON e' quindi necessario per
+l'uso reale del progetto** - resta disponibile (codice pronto e testato)
+solo per un eventuale uso futuro one-off (es. un'analisi retrospettiva
+sull'intero storico), non per l'operativita' quotidiana. Le fixture
+storiche vecchie mai coperte continueranno a mostrare il placeholder
+"In coda" in Dashboard - accettato come comportamento finale, non un
+difetto da risolvere.
 
 ## 4. Bottone "Ricalcola previsione" nel dettaglio partita — ☑ Fatto (commit `5ceba8b`)
 
@@ -150,20 +161,17 @@ completa (829 test) verde, build frontend verificata.
 ## Riepilogo finale
 
 Tutti e 4 i punti sono COMPLETATI dal lato codice (commit `ad50648`,
-`caf12bb`, `d72b4f5`, `5ceba8b`, tutti su `feature/soccer-oracle-v2`) e in
-produzione. **Resta un solo passo operativo, non di codice, RIMANDATO su
-richiesta esplicita dell'operatore (2026-09-10)**: completare il giro di
-`scripts/backfill_prediction_snapshots.py` contro il DB reale (lanciato una
-volta, interrotto volontariamente a meta') per chiudere il buco sullo
-storico gia' passato - nessuna urgenza, e' rilanciabile in qualunque
-momento senza rischio (idempotente, anti-join, nessun dato duplicato o
-perso interrompendolo). Da questo momento in poi (punto 2, copertura
-automatica delle nuove partite concluse) e per il resto dell'esperienza
-utente (punti 1 e 4, vista storica sempre veloce + ricalcolo manuale) il
-sistema e' gia' completo e in produzione, indipendentemente da quando il
-backfill verra' completato - l'unico effetto visibile di lasciarlo a meta'
-e' il placeholder "In coda" su alcuni mercati di partite storiche non
-ancora coperte, mai una lentezza.
+`caf12bb`, `d72b4f5`, `5ceba8b`, tutti su `feature/soccer-oracle-v2`),
+**mergiati in `main` e deployati** (merge commit `06b1405`, 2026-09-10) -
+in produzione da questo momento.
+
+Il giro completo di `scripts/backfill_prediction_snapshots.py` (punto 3)
+e' stato lanciato una volta, interrotto volontariamente a meta', e
+**deciso di NON completarlo**: l'operatore ha chiarito che lo storico
+profondo serve solo per il training (che non dipende da questa tabella) e
+che l'esigenza reale e' "qualche giorno indietro + da oggi in poi", gia'
+coperta interamente e per sempre dal job automatico del punto 2, ora
+attivo in produzione. Nessuna azione manuale ulteriore richiesta.
 
 ## Note trasversali
 
