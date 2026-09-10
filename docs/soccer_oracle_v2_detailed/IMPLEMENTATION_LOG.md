@@ -20,6 +20,12 @@
 - Per fixture con Ledger ufficiale, Match Center usa i valori congelati e
   mostra PENDING/WON/LOST/VOID e PnL; in assenza di record mostra
   “Non ufficiale”.
+- Rifinitura vista “Tutti i mercati”: mantenuti i chip storici di ogni
+  previsione (con colore di correttezza/confidenza), aggiunto su ciascun chip
+  lo stato economico prodotto dal backend e affiancato il “Pronostico
+  vincitore” con probabilità, quota mercato, quota void IA, edge, ROI atteso
+  ed esito ufficiale. Se viene selezionato un singolo mercato resta la vista
+  analitica dedicata a quel mercato.
 
 # Soccer Oracle V2 - Implementation Log
 

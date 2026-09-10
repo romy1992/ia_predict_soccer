@@ -23,19 +23,31 @@ export default function DashboardPage({
   const counters = useMemo(() => {
     const initial = { PLAY: 0, BORDERLINE: 0, "NO BET": 0, "SENZA QUOTA": 0, official: 0, WON: 0, LOST: 0, VOID: 0 };
     return safeRows.reduce((acc, row) => {
-      const card = row.best_decision;
-      const label = card?.value_label || "SENZA QUOTA";
-      if (Object.prototype.hasOwnProperty.call(acc, label)) acc[label] += 1;
-      if (card?.is_official) acc.official += 1;
-      if (["WON", "LOST", "VOID"].includes(card?.official_outcome)) acc[card.official_outcome] += 1;
+      const cards = selectedMarket === "all"
+        ? (row.decision_cards || []).filter((card) => card.is_market_best !== false)
+        : [row.best_decision].filter(Boolean);
+      if (cards.length === 0) acc["SENZA QUOTA"] += 1;
+      cards.forEach((card) => {
+        const label = card?.value_label || "SENZA QUOTA";
+        if (Object.prototype.hasOwnProperty.call(acc, label)) acc[label] += 1;
+        if (card?.is_official) acc.official += 1;
+        if (["WON", "LOST", "VOID"].includes(card?.official_outcome)) acc[card.official_outcome] += 1;
+      });
       return acc;
     }, initial);
-  }, [safeRows]);
+  }, [safeRows, selectedMarket]);
   const visibleRows = useMemo(
     () => situationFilter === "all"
       ? safeRows
-      : safeRows.filter((row) => (row.best_decision?.value_label || "SENZA QUOTA") === situationFilter),
-    [safeRows, situationFilter],
+      : safeRows.filter((row) => {
+        const cards = selectedMarket === "all"
+          ? (row.decision_cards || []).filter((card) => card.is_market_best !== false)
+          : [row.best_decision].filter(Boolean);
+        return cards.length === 0
+          ? situationFilter === "SENZA QUOTA"
+          : cards.some((card) => (card.value_label || "SENZA QUOTA") === situationFilter);
+      }),
+    [safeRows, selectedMarket, situationFilter],
   );
 
   return (
@@ -128,6 +140,7 @@ export default function DashboardPage({
           onOpenMatch={onOpenMatch}
           onOpenOracleDetail={onOpenOracleDetail}
           modelMarkets={dayData?.model_markets}
+          selectedMarket={selectedMarket}
         />
       </section>
     </section>

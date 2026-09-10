@@ -488,6 +488,30 @@ th {
   font-size: 11px;
 }
 
+.prediction-chip .prediction-value-label {
+  align-self: flex-start;
+  border-radius: 999px;
+  padding: 2px 6px;
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.all-markets-cell {
+  min-width: 650px;
+}
+
+.match-mobile-all-markets {
+  margin-bottom: 10px;
+}
+
+.match-mobile-all-markets > span {
+  display: block;
+  margin-bottom: 5px;
+  color: #657aa0;
+  font-size: 12px;
+}
+
 .prediction-strong {
   background: #dcf7e4;
   color: #0f5d2a;
@@ -692,6 +716,10 @@ th {
 
 .match-center-table {
   min-width: 1450px;
+}
+
+.match-center-table:has(.all-markets-cell) {
+  min-width: 2100px;
 }
 
 .official-pnl {
@@ -990,6 +1018,15 @@ th {
 
   .match-mobile-card dd {
     text-align: left;
+  }
+
+  .match-mobile-all-markets .prediction-badges {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .match-mobile-all-markets .prediction-chip {
+    min-width: 0;
   }
 
   .odds-market-grid {
