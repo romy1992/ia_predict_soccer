@@ -103,7 +103,9 @@ def _metric_row(rows: list[Any]) -> dict[str, Any]:
         "avg_odd": average("odd"),
         "avg_prob_edge": average("prob_edge"),
         "avg_ev": average("ev"),
-        "max_drawdown": max_drawdown_from_cumulative(cumulative),
+        # Include il capitale iniziale (0): una prima perdita deve produrre
+        # drawdown, non diventare artificialmente il primo "peak".
+        "max_drawdown": max_drawdown_from_cumulative([0.0, *cumulative]),
         "sample_size": len(placed),
     }
 
