@@ -248,11 +248,13 @@ export default function App() {
       setBetslipLoading(true);
       setBetslipError("");
       try {
-        const [payload, official, officialStatistics] = await Promise.all([
-          getBetslipGenerate({ targetDate: betslipDate, ...overrides }),
+        const payload = await getBetslipGenerate({ targetDate: betslipDate, ...overrides });
+        const [officialResult, statisticsResult] = await Promise.allSettled([
           getOfficialBetslips({ targetDate: betslipDate }),
           getOfficialBetslipStatistics(),
         ]);
+        const official = officialResult.status === "fulfilled" ? officialResult.value : { rows: [] };
+        const officialStatistics = statisticsResult.status === "fulfilled" ? statisticsResult.value : { statistics: null };
         const enriched = {
           ...payload,
           official_slips: official.rows || [],
