@@ -1,0 +1,107 @@
+# Prompt: vista storica sempre veloce + copertura completa banca dati
+
+Richiesto esplicitamente dall'operatore (2026-09-10), dopo aver segnalato che
+il cambio data in Dashboard resta lento **anche al secondo giro sulla stessa
+data** (non solo la prima volta) — la banca dati predizioni
+(`match_prediction_snapshot`) copre solo le partite viste in Dashboard o
+intercettate dal job mentre erano ancora `NS`, mai lo storico gia' passato
+ne' le partite appena finite fuori da quella finestra.
+
+## Stato: 0/4 completati
+
+## 1. Niente ricalcolo al volo per le date storiche (vista lista) — ☐ Da fare
+
+**Obiettivo**: la vista lista (`GET /dashboard/day`) per una data passata
+(`target_date < oggi`) non deve MAI ricalcolare una predizione al volo — se
+manca la riga salvata, mostra il mercato come non disponibile invece di
+aspettare. Cosi' la vista storica e' SEMPRE veloce, mai "quasi sempre".
+
+- `PredictionSnapshotService.resolve_predictions` (`src/ml/serving/prediction_snapshot_service.py`):
+  nuovo parametro `allow_compute: bool = True`. Quando `False` e lo status e'
+  finale senza una riga salvata, il mercato viene saltato (nessun frame,
+  nessun modello caricato) invece di calcolare+salvare.
+- `DashboardService._predict_fixture`/`_serialize_api_fixture`/`_serialize_match`
+  (`src/api/dashboard_service.py`): thread `allow_compute` fino al servizio.
+- `DashboardService.get_day_matches`: passa `allow_compute=False` SOLO
+  quando `is_historical_date` e' vero (variabile gia' presente nel metodo) -
+  MAI per oggi/date future (li' la predizione deve poter essere calcolata la
+  prima volta). `get_match_detail` (vista dettaglio, un click deliberato su
+  UNA fixture) resta sempre `allow_compute=True` - la lentezza li' e'
+  accettabile, e' un'azione singola non un rendering di lista.
+- Frontend: gestire il caso "mercato assente dal payload" nelle celle di
+  previsione (`PredictionBadges.jsx`) con un placeholder chiaro (es. "N/D" o
+  "in coda") invece di un crash o una cella vuota ambigua.
+- Test: nuovi casi in `prediction_snapshot_service_test.py`
+  (`allow_compute=False` con/senza snapshot esistente) e
+  `dashboard_service_test.py` (`get_day_matches` passa `allow_compute`
+  corretto per date storiche vs oggi/future).
+
+## 2. Job esteso per le partite appena finite — ☐ Da fare
+
+**Obiettivo**: da questo momento in poi, copertura automatica — nessuna
+manutenzione manuale richiesta per le partite nuove.
+
+- `run_prediction_snapshot_refresh` (`src/jobs/scheduler.py`): estendere la
+  query oltre a `status == "NS"` per includere anche le fixture con status
+  finale (`FINAL_STATUSES`) negli ultimi N giorni (finestra piccola, es. 2-3
+  giorni - non l'intero storico, quello e' lo script di backfill al punto 3)
+  che NON hanno ancora nessuna riga in `match_prediction_snapshot`
+  (serve un modo per individuarle: query anti-join o controllo via
+  `MatchPredictionSnapshotRepository.get_latest_bulk` sui fixture_id del
+  batch, scartando quelli gia' coperti).
+- Aggiornare `JOB_DEFINITIONS["prediction_snapshot_refresh"]["description"]`
+  (`src/jobs/job_settings.py`) per riflettere il nuovo scope (non piu' solo
+  "partite non ancora disputate").
+- Aggiornare la docstring del job e la sezione corrispondente in
+  `build_scheduler`.
+- Test: nuovo caso in `prediction_snapshot_refresh_job_test.py` (fixture
+  FINAL recente senza snapshot viene raccolta; fixture FINAL gia' coperta
+  NON viene ricalcolata; fixture FINAL vecchia fuori dalla piccola finestra
+  NON viene toccata da questo job - quella e' lo scope dello script punto 3).
+
+## 3. Script di backfill storico (una tantum) — ☐ Da fare
+
+**Obiettivo**: chiudere il buco su tutto lo storico gia' in DB. Lanciato UNA
+VOLTA dall'operatore (o da me per suo conto), non schedulato.
+
+- Nuovo `scripts/backfill_prediction_snapshots.py`: itera tutte le fixture
+  con status finale che non hanno ancora nessuna riga in
+  `match_prediction_snapshot` (stessa query "anti-join" del punto 2 ma senza
+  finestra temporale - tutto lo storico), in batch (evitare di caricare
+  tutto in memoria in un colpo solo), chiamando
+  `PredictionSnapshotService.resolve_predictions(allow_compute=True)` per
+  ciascuna. Log di progresso (quante fixture processate/coperte/errori).
+- Richiede accesso reale al DB - da lanciare dalla sessione bridge locale
+  (stesso meccanismo gia' usato per backup/migration), NON eseguibile da
+  questa sessione cloud.
+
+## 4. Bottone "Ricalcola previsione" nel dettaglio partita — ☐ Da fare
+
+**Obiettivo**: forzatura puntuale, manuale, su una singola fixture - utile
+se il backfill ha saltato qualcosa o serve un refresh mirato.
+
+- `PredictionSnapshotService.resolve_predictions`: nuovo parametro
+  `force: bool = False` - quando `True`, ignora qualunque riga esistente
+  (anche per partite finali "congelate") e ricalcola+salva sempre una riga
+  nuova. Uso ESPLICITO e manuale, mai automatico.
+- Nuovo endpoint `POST /dashboard/matches/{fixture_id}/recompute-predictions`
+  (`src/api/main.py`, schema dedicato in `schemas.py`) che chiama
+  `resolve_predictions(fixture_id=..., markets=..., force=True)` per tutti i
+  mercati con un modello registrato.
+- Frontend: bottone "Ricalcola previsione" dentro il pannello di dettaglio
+  partita (`MatchDetailPanel.jsx` o dove si aprono "Apri"/"Oracle"), NON
+  nella lista - chiama il nuovo endpoint e ricarica le previsioni della
+  fixture.
+- Test: nuovo caso in `prediction_snapshot_service_test.py` (`force=True` su
+  una fixture finale gia' congelata produce una riga nuova, non riusa quella
+  vecchia).
+
+## Note trasversali
+
+- Nessuna modifica alla logica di invalidazione per fingerprint gia'
+  esistente (partite NS/future) - questo prompt riguarda SOLO le partite
+  gia' concluse.
+- Suite completa da rieseguire prima di ogni commit, come sempre in questo
+  progetto.
+- Aggiornare `IMPLEMENTATION_LOG.md`/`CURRENT_TASK.md` a lavoro concluso
+  (tutti e 4 i punti), non ad ogni singolo commit intermedio.
