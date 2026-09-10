@@ -18,9 +18,11 @@ from src.ml.baselines.bookmaker_baseline import build_fixture_baseline, get_mark
 from src.ml.markets.totals.totals_market import enforce_monotonic_over_probabilities
 from src.ml.serving.prediction_snapshot_service import PredictionSnapshotService
 from src.jobs.api_quota_state import is_quota_exhausted_today
+from src.oracle.backtest.market_backtest import _canonical_outcome_for_prediction
 from src.oracle.decision_engine.decision_policy import evaluate_decision_from_fair_odds_outcome
 from src.oracle.decision_engine.over_signal_policy import evaluate_over_signal
 from src.oracle.fair_odds.fair_odds_engine import build_fair_odds_outcome
+from src.oracle.ledger.prediction_ledger import resolve_actual_outcome
 from src.repository.base.repository_db import SessionLocal
 from src.repository.prediction_ledger_repository import PredictionLedgerRepository
 from src.service_ia.config.app_config import load_app_config
@@ -786,6 +788,64 @@ class DashboardService:
         return {"home": _to_int(home), "away": _to_int(away)}
 
     @staticmethod
+    def _resolve_final_stat_dicts(match: Optional[Match]) -> tuple[Optional[dict], Optional[dict]]:
+        """Box-score FINALE per squadra (dict con le stesse chiavi usate da
+        `FilterMarketService._label_by_market`: `score_ft`/`corners`/
+        `yellow_cards`/`red_cards`/...) da un `Match` ORM gia' caricato -
+        SOLO da `match.statistics` (mai da un dict parziale costruito a
+        mano: `_label_by_market` tratta una chiave ASSENTE come `0`, quindi
+        un dict incompleto produrrebbe un esito "0 corner"/"0 cartellini"
+        FALSO invece di "sconosciuto" - vedi `_annotate_prediction_correctness`,
+        che per questo passa SEMPRE `None` quando `match` o le sue
+        statistiche non sono disponibili, mai un dict parziale)."""
+        if match is None:
+            return None, None
+        stats = match.statistics or []
+        if not stats:
+            return None, None
+
+        by_team = {s.statistics_team_id: s for s in stats}
+        home_stat = by_team.get(match.id_team_home)
+        away_stat = by_team.get(match.id_team_away)
+        return (
+            home_stat.to_dict() if home_stat else None,
+            away_stat.to_dict() if away_stat else None,
+        )
+
+    @staticmethod
+    def _annotate_prediction_correctness(
+        predictions: dict[str, dict[str, Any]],
+        stat_home: Optional[dict],
+        stat_away: Optional[dict],
+    ) -> None:
+        """Aggiunge `"correct": True/False/None` ad ogni entry gia' risolta
+        di `predictions`, confrontando la previsione MOSTRATA (post
+        proiezione monotona, la stessa che l'utente vede in badge) con
+        l'ESITO REALE della partita conclusa (2026-09-10, richiesto
+        esplicitamente dall'operatore: "quando una partita e' finita,
+        colorami di verde le odds prese e in rosso quelle non prese").
+
+        Riusa SENZA duplicare `resolve_actual_outcome`/
+        `_canonical_outcome_for_prediction` (BET-06/backtest, gia'
+        validati per il settlement del Prediction Ledger - stessa identica
+        logica di confronto, cosi' un "corretto/sbagliato" mostrato in
+        Dashboard e un settlement del ledger non possono mai divergere).
+        `None` (mai un esito inventato) quando il risultato reale non e'
+        determinabile per quel mercato specifico (punteggio/statistiche
+        mancanti, o mercato non supportato dal confronto)."""
+        for market, entry in predictions.items():
+            actual = resolve_actual_outcome(market=market, stat_home=stat_home, stat_away=stat_away)
+            if actual is None:
+                entry["correct"] = None
+                continue
+            try:
+                predicted = _canonical_outcome_for_prediction(market=market, prediction=int(entry["prediction"]))
+            except (ValueError, KeyError, TypeError):
+                entry["correct"] = None
+                continue
+            entry["correct"] = actual == predicted
+
+    @staticmethod
     def _passes_search(row: dict[str, Any], search_text: Optional[str]) -> bool:
         if not search_text:
             return True
@@ -811,6 +871,7 @@ class DashboardService:
 
         dt_value = self._parse_datetime(fixture_meta.get("date"))
         status = ((fixture_meta.get("status") or {}).get("short") or "NS").upper()
+        phase = self._classify_phase(status, dt_value)
 
         row = {
             "fixture_id": fixture_id,
@@ -822,7 +883,7 @@ class DashboardService:
             "home": ((teams.get("home") or {}).get("name") or "-").strip(),
             "away": ((teams.get("away") or {}).get("name") or "-").strip(),
             "status": status,
-            "phase": self._classify_phase(status, dt_value),
+            "phase": phase,
             "score": self._score_from_api(fixture),
             "predictions": {},
             # MATCH-01: badge decision/edge/EV per la vista lista, vedi
@@ -836,6 +897,9 @@ class DashboardService:
             predictions = self._predict_fixture(
                 fixture_id=fixture_id, markets=markets, db_match=db_match, status=status, allow_compute=allow_compute
             )
+            if phase == "finished":
+                stat_home, stat_away = self._resolve_final_stat_dicts(db_match)
+                self._annotate_prediction_correctness(predictions, stat_home, stat_away)
             row["predictions"] = predictions
             row["decision_cards"], row["best_decision"] = self._decisions_for_row(
                 row=row, predictions=predictions, db_match=db_match
@@ -952,6 +1016,9 @@ class DashboardService:
                 status=match.status,
                 allow_compute=allow_compute,
             )
+            if phase == "finished":
+                stat_home, stat_away = self._resolve_final_stat_dicts(match)
+                self._annotate_prediction_correctness(predictions, stat_home, stat_away)
             row["predictions"] = predictions
             # Riga gia' dal DB locale: `match.odds` e' gia' caricato via
             # `selectinload` dalla query unica di `_fetch_matches` (nessuna
@@ -1343,6 +1410,9 @@ class DashboardService:
             if with_predictions
             else {}
         )
+        if with_predictions and fixture_row.get("phase") == "finished":
+            stat_home, stat_away = self._resolve_final_stat_dicts(db_match)
+            self._annotate_prediction_correctness(predictions, stat_home, stat_away)
         fixture_row["predictions"] = predictions
 
         events = self._fetch_api_events(fixture_id)
