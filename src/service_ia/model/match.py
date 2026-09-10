@@ -33,6 +33,16 @@ class Match(Base):
     settlement_status = Column(String, nullable=True)
     settled_at = Column(String, nullable=True)
     settlement_details = Column(JSON, nullable=True)
+    # Punteggio finale (2026-09-10): salvato INDIPENDENTEMENTE da
+    # `Statistics.score_ft`, dalla stessa risposta 'fixtures' che aggiorna
+    # gia' `status` (sempre disponibile) - a differenza delle righe
+    # `Statistics`, create SOLO se l'endpoint dedicato 'fixtures/statistics'
+    # ha dati per quella fixture (spesso assente per campionati minori con
+    # copertura limitata: una partita "Finita" restava senza alcun
+    # punteggio mostrabile ne' un risultato reale per h2h/goal_no_goal/
+    # under_over/dc). Vedi `download_match_service.map_base_match`.
+    score_home = Column(Integer, nullable=True)
+    score_away = Column(Integer, nullable=True)
     statistics = relationship("Statistics",
                               back_populates="match",  # back_populates crea la relazione # 👈 One-to-Many
                               cascade="all, delete-orphan", lazy="selectin")
