@@ -64,6 +64,19 @@ def map_base_match(match, id_fix, fixture, league, season):
     def get_val(team, value):
         return team[value]
 
+    # Punteggio finale (2026-09-10): salvato QUI, indipendentemente da
+    # 'statistics', perche' arriva dalla STESSA risposta 'fixtures' che
+    # fornisce gia' status/data (sempre disponibile) - a differenza di
+    # 'score_ft' su Statistics (vedi map_statistic sotto), che esiste SOLO
+    # se l'endpoint dedicato 'fixtures/statistics' ha dati per quella
+    # fixture (spesso assente per campionati minori con copertura API
+    # limitata: il match risultava "Finita" ma senza alcun punteggio
+    # mostrabile in Dashboard, ne' un risultato reale per h2h/goal_no_goal/
+    # under_over/dc). Stessa fonte ('score.fulltime.{home,away}') gia'
+    # usata da `map_statistic` per 'score_ft', cosi' i due valori restano
+    # sempre coerenti quando entrambi disponibili.
+    score_fulltime = (fixture.get('score') or {}).get('fulltime') or {}
+
     return {
         'id_match_fk': match.id_match_fk if match else str(uuid4()),
         'id_fixture': id_fix,
@@ -77,7 +90,9 @@ def map_base_match(match, id_fix, fixture, league, season):
         'referee': fixture['fixture']['referee'],
         'round': fixture['league']['round'],
         'season': season,
-        'status': fixture['fixture']['status']['short']
+        'status': fixture['fixture']['status']['short'],
+        'score_home': score_fulltime.get('home'),
+        'score_away': score_fulltime.get('away'),
     }
 
 
