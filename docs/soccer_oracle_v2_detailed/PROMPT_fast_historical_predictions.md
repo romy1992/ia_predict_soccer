@@ -7,7 +7,7 @@ data** (non solo la prima volta) — la banca dati predizioni
 intercettate dal job mentre erano ancora `NS`, mai lo storico gia' passato
 ne' le partite appena finite fuori da quella finestra.
 
-## Stato: 3/4 completati
+## Stato: 4/4 completati (codice) - punto 3 ancora da LANCIARE sul DB reale
 
 ## 1. Niente ricalcolo al volo per le date storiche (vista lista) — ☑ Fatto (commit `ad50648`)
 
@@ -106,7 +106,7 @@ non e' ancora stato eseguito contro i dati veri). Consigliato un primo
 giro con `--limit 500` per verificare tempi/comportamento prima del giro
 completo su tutto lo storico.
 
-## 4. Bottone "Ricalcola previsione" nel dettaglio partita — ☐ Da fare
+## 4. Bottone "Ricalcola previsione" nel dettaglio partita — ☑ Fatto (commit `5ceba8b`)
 
 **Obiettivo**: forzatura puntuale, manuale, su una singola fixture - utile
 se il backfill ha saltato qualcosa o serve un refresh mirato.
@@ -126,6 +126,26 @@ se il backfill ha saltato qualcosa o serve un refresh mirato.
 - Test: nuovo caso in `prediction_snapshot_service_test.py` (`force=True` su
   una fixture finale gia' congelata produce una riga nuova, non riusa quella
   vecchia).
+
+**Fatto**: `force=True` implementato in `resolve_predictions` (bypassa sia
+il regime "congelato" per le finali sia il fingerprint-reuse per le NS, ha
+priorita' su `allow_compute`). Nuovo `DashboardService.recompute_predictions`
++ endpoint `POST /dashboard/matches/{fixture_id}/recompute-predictions` +
+schemi dedicati. Bottone "Ricalcola previsione" nel pannello di dettaglio
+partita (`MatchDetailPanel.jsx`), con stato di caricamento ed errore
+dedicati - ricarica il dettaglio dopo il ricalcolo. 7 nuovi test, suite
+completa (829 test) verde, build frontend verificata.
+
+## Riepilogo finale
+
+Tutti e 4 i punti sono COMPLETATI dal lato codice (commit `ad50648`,
+`caf12bb`, `d72b4f5`, `5ceba8b`, tutti su `feature/soccer-oracle-v2`).
+**Resta un solo passo operativo, non di codice**: lanciare
+`scripts/backfill_prediction_snapshots.py` UNA VOLTA contro il DB reale
+(sessione bridge locale) per chiudere il buco sullo storico gia' passato -
+da questo momento in poi (punto 2) e per il resto dell'esperienza utente
+(punti 1 e 4) il sistema e' gia' completo e in produzione sulla feature
+branch.
 
 ## Note trasversali
 
