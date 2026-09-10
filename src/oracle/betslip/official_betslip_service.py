@@ -14,6 +14,7 @@ from src.oracle.ledger.ledger_service import PredictionLedgerService
 from src.oracle.ledger.settlement_rules import outcome_wins
 from src.repository.base.repository_db import SessionLocal
 from src.repository.betting_slip_repository import BettingSlipRepository
+from src.repository.match_repository import MatchRepository
 from src.service_ia.model.match import BettingSlip, BettingSlipPick, Match, PredictionLedger
 
 
@@ -31,9 +32,11 @@ class OfficialBetslipService:
         self,
         repo: Optional[BettingSlipRepository] = None,
         ledger_service: Optional[PredictionLedgerService] = None,
+        match_repo: Optional[MatchRepository] = None,
     ):
         self.repo = repo or BettingSlipRepository()
         self.ledger_service = ledger_service or PredictionLedgerService()
+        self.match_repo = match_repo or MatchRepository()
 
     @staticmethod
     def _capture_key(reference_date: str, slip: GeneratedSlip) -> str:
@@ -205,10 +208,9 @@ class OfficialBetslipService:
                             pick.void_reason = "void_market_rule"
                         else:
                             pick.status = "WON" if won else "LOST"
-                    with SessionLocal() as session:
-                        match = session.query(Match).filter(Match.id_fixture == pick.fixture_id).first()
-                        if match and match.score_home is not None and match.score_away is not None:
-                            pick.final_score = f"{match.score_home}-{match.score_away}"
+                    match = self.match_repo.filter_by(dict_search={"id_fixture": pick.fixture_id}).first()
+                    if match and match.score_home is not None and match.score_away is not None:
+                        pick.final_score = f"{match.score_home}-{match.score_away}"
 
                 statuses = [pick.status for pick in slip.picks]
                 if "LOST" in statuses:

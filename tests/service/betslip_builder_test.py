@@ -88,8 +88,9 @@ class TestGenerateBetslipsBasics(unittest.TestCase):
 
     def test_low_probability_picks_excluded_from_safe_but_present_in_aggressive(self):
         candidates = [
-            _pick(fixture_id=1, market="h2h", outcome="Home", odd=3.5, p_model=0.30),
-            _pick(fixture_id=2, market="h2h", outcome="Away", odd=3.2, p_model=0.28),
+            _pick(fixture_id=1, market="h2h", outcome="Home", odd=3.5, p_model=0.34),
+            _pick(fixture_id=2, market="h2h", outcome="Away", odd=3.2, p_model=0.32),
+            _pick(fixture_id=3, market="goal_no_goal", outcome="Yes", odd=3.0, p_model=0.31),
         ]
         result = generate_betslips(candidates)
         self.assertEqual(result.profiles["SAFE"], [])  # p_model < 0.55 (soglia SAFE)
@@ -102,6 +103,31 @@ class TestGenerateBetslipsBasics(unittest.TestCase):
         ]
         result = generate_betslips(candidates)
         self.assertEqual(result.profiles["SAFE"], [])  # odd 6.0 > max_leg_odd SAFE (2.50)
+
+    def test_borderline_and_no_bet_never_enter_a_slip(self):
+        candidates = [
+            _pick(fixture_id=1, decision="PLAY"),
+            _pick(fixture_id=2, decision="BORDERLINE"),
+            _pick(fixture_id=3, decision="NO BET"),
+        ]
+        result = generate_betslips(candidates)
+        self.assertEqual(result.pool_considered, 1)
+        self.assertTrue(all(not slips for slips in result.profiles.values()))
+
+    def test_combined_value_metrics_use_adjusted_probability(self):
+        candidates = [
+            _pick(fixture_id=1, odd=1.8, p_model=0.60),
+            _pick(fixture_id=2, odd=1.5, p_model=0.70),
+        ]
+        slip = generate_betslips(candidates).profiles["SAFE"][0]
+        self.assertAlmostEqual(slip.combined_odd, 2.70)
+        self.assertAlmostEqual(slip.naive_probability, 0.42)
+        self.assertAlmostEqual(slip.adjusted_probability, 0.42)
+        self.assertAlmostEqual(slip.combined_model_void_odd, 1 / 0.42)
+        self.assertAlmostEqual(slip.combined_edge_absolute, 2.70 - (1 / 0.42))
+        self.assertAlmostEqual(slip.combined_expected_roi, 0.42 * 2.70 - 1)
+        self.assertAlmostEqual(slip.combined_expected_roi_percent, (0.42 * 2.70 - 1) * 100)
+        self.assertEqual(slip.situation, "PLAY")
 
 
 class TestCorrelationLimitsPerProfile(unittest.TestCase):
@@ -122,7 +148,7 @@ class TestCorrelationLimitsPerProfile(unittest.TestCase):
                     f"Combinazione EXCLUDE trovata nel profilo {profile_name}",
                 )
 
-    def test_penalty_pair_excluded_from_safe_but_allowed_in_balanced(self):
+    def test_same_fixture_pair_excluded_from_all_profiles_by_default(self):
         # Nested totals same-match: "Over 2.5" + "Over 3.5" -> PENALTY.
         # Probabilita'/quote scelte per superare comunque la soglia leg-level
         # di SAFE, cosi' l'esclusione e' dovuta SOLO a max_penalty_pairs=0.
@@ -135,16 +161,16 @@ class TestCorrelationLimitsPerProfile(unittest.TestCase):
         def _has_pair(slips):
             return any(len(s.legs) == 2 and s.penalty_pairs >= 1 for s in slips)
 
-        self.assertFalse(_has_pair(result.profiles["SAFE"]))  # max_penalty_pairs=0
-        self.assertTrue(_has_pair(result.profiles["BALANCED"]))  # max_penalty_pairs=1
-        self.assertTrue(_has_pair(result.profiles["AGGRESSIVE"]))
+        self.assertFalse(_has_pair(result.profiles["SAFE"]))
+        self.assertFalse(_has_pair(result.profiles["BALANCED"]))
+        self.assertFalse(_has_pair(result.profiles["AGGRESSIVE"]))
 
     def test_penalty_pair_adjusted_probability_uses_min_not_product(self):
         candidates = [
             _pick(fixture_id=1, market="under_over_2_5", outcome="Over 2.5", odd=1.6, p_model=0.60),
             _pick(fixture_id=1, market="under_over_3_5", outcome="Over 3.5", odd=2.2, p_model=0.45),
         ]
-        result = generate_betslips(candidates)
+        result = generate_betslips(candidates, one_pick_per_fixture=False)
         balanced = [s for s in result.profiles["BALANCED"] if s.n_legs == 2]
         self.assertEqual(len(balanced), 1)
         slip = balanced[0]
@@ -234,9 +260,9 @@ class TestCustomRuleset(unittest.TestCase):
             _pick(fixture_id=1, market="under_over_1_5", outcome="Over 1.5", odd=1.5, p_model=0.60),
             _pick(fixture_id=1, market="under_over_2_5", outcome="Under 2.5", odd=1.6, p_model=0.55),
         ]
-        default_result = generate_betslips(candidates)
+        default_result = generate_betslips(candidates, one_pick_per_fixture=False)
         tighter = CorrelationRuleSet(version="correlation_ruleset_test_tight", totals_narrow_band_max_gap=0.0)
-        custom_result = generate_betslips(candidates, ruleset=tighter)
+        custom_result = generate_betslips(candidates, ruleset=tighter, one_pick_per_fixture=False)
 
         default_two_leg = [s for s in default_result.profiles["BALANCED"] if s.n_legs == 2]
         custom_two_leg = [s for s in custom_result.profiles["BALANCED"] if s.n_legs == 2]
