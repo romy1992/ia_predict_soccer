@@ -19,7 +19,11 @@ from src.ml.markets.totals.totals_market import enforce_monotonic_over_probabili
 from src.ml.serving.prediction_snapshot_service import PredictionSnapshotService
 from src.jobs.api_quota_state import is_quota_exhausted_today
 from src.oracle.backtest.market_backtest import _canonical_outcome_for_prediction
-from src.oracle.decision_engine.decision_policy import evaluate_decision_from_fair_odds_outcome
+from src.oracle.decision_engine.decision_policy import (
+    compute_model_void_odd,
+    evaluate_decision,
+    evaluate_decision_from_fair_odds_outcome,
+)
 from src.oracle.decision_engine.over_signal_policy import evaluate_over_signal
 from src.oracle.fair_odds.fair_odds_engine import build_fair_odds_outcome
 from src.oracle.ledger.prediction_ledger import resolve_actual_outcome
@@ -591,6 +595,44 @@ class DashboardService:
     ) -> list[dict[str, Any]]:
         cards: list[dict[str, Any]] = []
         for market, payload in predictions.items():
+            multiclass_probabilities = payload.get("probabilities") if isinstance(payload, dict) else None
+            if market == "1x2" and isinstance(multiclass_probabilities, dict):
+                normalized_probabilities = {
+                    str(key).upper(): self._to_float(value)
+                    for key, value in multiclass_probabilities.items()
+                }
+                if all(normalized_probabilities.get(key) is not None for key in ("HOME", "DRAW", "AWAY")):
+                    outcome_probabilities = {
+                        "Home": normalized_probabilities["HOME"],
+                        "Draw": normalized_probabilities["DRAW"],
+                        "Away": normalized_probabilities["AWAY"],
+                    }
+                    cards.extend(
+                        self._build_multiclass_outcome_cards(
+                            decision_market="1x2",
+                            pricing_market="h2h",
+                            outcome_probabilities=outcome_probabilities,
+                            payload=payload,
+                            odds_summary=odds_summary,
+                            bookmaker_baseline=bookmaker_baseline or {},
+                        )
+                    )
+                    dc_probabilities = {
+                        "Home/Draw": outcome_probabilities["Home"] + outcome_probabilities["Draw"],
+                        "Draw/Away": outcome_probabilities["Draw"] + outcome_probabilities["Away"],
+                        "Home/Away": outcome_probabilities["Home"] + outcome_probabilities["Away"],
+                    }
+                    cards.extend(
+                        self._build_multiclass_outcome_cards(
+                            decision_market="dc",
+                            pricing_market="dc",
+                            outcome_probabilities=dc_probabilities,
+                            payload=payload,
+                            odds_summary=odds_summary,
+                            bookmaker_baseline=bookmaker_baseline or {},
+                        )
+                    )
+                continue
             prediction = int(payload.get("prediction", 0))
             class1_probability = float(payload.get("probability", 0.5))
             predicted_probability = class1_probability if prediction == 1 else (1.0 - class1_probability)
@@ -655,25 +697,135 @@ class DashboardService:
                     "predicted_probability": predicted_probability,
                     "bet_over_signal": bet_over_signal,
                     "odd": odd,
+                    "market_odd": odd,
                     "bookmaker_implied_raw": fair_odds_outcome.p_market_raw,
                     "bookmaker_fair_probability": fair_odds_outcome.p_market_fair,
                     # MATCH-01 ("fair market"): quota equivalente alla fair
                     # probability del bookmaker, gia' calcolata da BET-01
                     # (`fair_odd = 1/p_market_fair`) e finora NON esposta qui.
                     "fair_odd": fair_odds_outcome.fair_odd,
+                    "market_fair_odd": decision.market_fair_odd,
+                    "model_void_odd": decision.model_void_odd,
+                    "odds_edge_absolute": decision.odds_edge_absolute,
+                    "odds_edge_percent": decision.odds_edge_percent,
                     "bookmaker_overround": market_baseline.get("overround"),
                     "bookmakers_count": fair_odds_outcome.bookmakers,
                     "model_minus_fair": decision.prob_edge,
+                    "prob_edge": decision.prob_edge,
                     "edge": decision.prob_edge,
                     "ev": decision.ev,
+                    "expected_roi_percent": decision.expected_roi_percent,
+                    "play_threshold_odd": decision.play_threshold_odd,
+                    "min_edge_percent": decision.min_edge_percent,
+                    "line": (
+                        str(self._extract_line_point(pick))
+                        if self._extract_line_point(pick) is not None
+                        else None
+                    ),
                     "value_label": decision.decision,
                     "value_reason": decision.reason,
                     "policy_version": decision.policy_version,
+                    "is_official": False,
+                    "settlement_status": None,
+                    "pnl": None,
                 }
             )
 
-        cards.sort(key=lambda x: x.get("predicted_probability", 0), reverse=True)
+        self._mark_best_cards_by_market(cards)
+        cards.sort(key=self._decision_card_sort_key)
         return cards
+
+    def _build_multiclass_outcome_cards(
+        self,
+        *,
+        decision_market: str,
+        pricing_market: str,
+        outcome_probabilities: dict[str, float],
+        payload: dict[str, Any],
+        odds_summary: dict[str, list[dict[str, Any]]],
+        bookmaker_baseline: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        rows = odds_summary.get(pricing_market) or []
+        market_baseline = (bookmaker_baseline.get("markets") or {}).get(pricing_market) or {}
+        result: list[dict[str, Any]] = []
+        for outcome, probability in outcome_probabilities.items():
+            odds_row = next(
+                (
+                    row
+                    for row in rows
+                    if self._normalize_text(str(row.get("outcome") or "")) == self._normalize_text(outcome)
+                ),
+                None,
+            )
+            baseline_row = get_market_outcome_baseline(bookmaker_baseline, pricing_market, outcome)
+            odd = self._to_float((odds_row or {}).get("avg_odd"))
+            decision = evaluate_decision(
+                market=decision_market,
+                outcome=outcome,
+                p_model=probability,
+                p_market_fair=(baseline_row or {}).get("fair_probability"),
+                odd=odd,
+                samples=int((odds_row or {}).get("bookmakers") or 0),
+            )
+            result.append(
+                {
+                    "market": decision_market,
+                    "pick": outcome,
+                    "outcome": outcome,
+                    "line": (odds_row or {}).get("line"),
+                    "model_name": payload.get("model_name"),
+                    "run_id": payload.get("run_id"),
+                    "predicted_probability": probability,
+                    "market_odd": odd,
+                    "odd": odd,
+                    "bookmaker_implied_raw": (baseline_row or {}).get("raw_probability"),
+                    "bookmaker_fair_probability": (baseline_row or {}).get("fair_probability"),
+                    "market_fair_odd": decision.market_fair_odd,
+                    "fair_odd": decision.market_fair_odd,
+                    "model_void_odd": decision.model_void_odd,
+                    "odds_edge_absolute": decision.odds_edge_absolute,
+                    "odds_edge_percent": decision.odds_edge_percent,
+                    "prob_edge": decision.prob_edge,
+                    "edge": decision.prob_edge,
+                    "ev": decision.ev,
+                    "expected_roi_percent": decision.expected_roi_percent,
+                    "play_threshold_odd": decision.play_threshold_odd,
+                    "min_edge_percent": decision.min_edge_percent,
+                    "bookmaker_overround": market_baseline.get("overround"),
+                    "bookmakers_count": decision.samples,
+                    "value_label": decision.decision,
+                    "value_reason": decision.reason,
+                    "policy_version": decision.policy_version,
+                    "is_official": False,
+                    "settlement_status": None,
+                    "pnl": None,
+                }
+            )
+        return result
+
+    @staticmethod
+    def _decision_card_sort_key(card: dict[str, Any]) -> tuple[int, float]:
+        label = card.get("value_label")
+        metric = (
+            card.get("predicted_probability")
+            if label == "NO BET"
+            else card.get("expected_roi_percent")
+        )
+        return (
+            _DECISION_LABEL_PRIORITY.get(label, 99),
+            -(float(metric) if metric is not None else float("-inf")),
+        )
+
+    @classmethod
+    def _mark_best_cards_by_market(cls, cards: list[dict[str, Any]]) -> None:
+        for card in cards:
+            card["is_market_best"] = False
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        for card in cards:
+            grouped.setdefault(str(card.get("market") or ""), []).append(card)
+        for market_cards in grouped.values():
+            if market_cards:
+                min(market_cards, key=cls._decision_card_sort_key)["is_market_best"] = True
 
     @staticmethod
     def _select_best_decision_card(cards: list[dict[str, Any]]) -> Optional[dict[str, Any]]:
@@ -684,13 +836,100 @@ class DashboardService:
         piu' alta. `None` se non ci sono card (nessun modello/quota)."""
         if not cards:
             return None
-        return min(
-            cards,
-            key=lambda c: (
-                _DECISION_LABEL_PRIORITY.get(c.get("value_label"), 99),
-                -float(c.get("predicted_probability") or 0.0),
-            ),
-        )
+        return min(cards, key=DashboardService._decision_card_sort_key)
+
+    @staticmethod
+    def _official_card(row: Any) -> dict[str, Any]:
+        settlement = row.settlement_status
+        if not row.is_settled:
+            official_outcome = "PENDING"
+        elif settlement == "settled_win":
+            official_outcome = "WON"
+        elif settlement == "settled_loss":
+            official_outcome = "LOST"
+        elif str(settlement or "").startswith("void_"):
+            official_outcome = "VOID"
+        else:
+            official_outcome = str(settlement or "N/D").upper()
+        model_void_odd = row.model_void_odd or compute_model_void_odd(row.p_model)
+        market_fair_odd = row.market_fair_odd or row.fair_odd
+        odds_edge_absolute = row.odds_edge_absolute
+        if odds_edge_absolute is None and row.odd is not None and model_void_odd is not None:
+            odds_edge_absolute = float(row.odd) - model_void_odd
+        odds_edge_percent = row.odds_edge_percent
+        if odds_edge_percent is None and row.ev is not None:
+            odds_edge_percent = float(row.ev) * 100.0
+        expected_roi_percent = row.expected_roi_percent
+        if expected_roi_percent is None and row.ev is not None:
+            expected_roi_percent = float(row.ev) * 100.0
+        return {
+            "market": row.market,
+            "outcome": row.outcome,
+            "line": row.line,
+            "pick": row.outcome,
+            "predicted_probability": row.p_model,
+            "market_odd": row.odd,
+            "odd": row.odd,
+            "model_void_odd": model_void_odd,
+            "market_fair_odd": market_fair_odd,
+            "fair_odd": market_fair_odd,
+            "odds_edge_absolute": odds_edge_absolute,
+            "odds_edge_percent": odds_edge_percent,
+            "prob_edge": row.prob_edge,
+            "edge": row.prob_edge,
+            "ev": row.ev,
+            "expected_roi_percent": expected_roi_percent,
+            "play_threshold_odd": row.play_threshold_odd,
+            "min_edge_percent": row.min_edge_percent,
+            "value_label": row.value_label or row.decision,
+            "value_reason": row.value_reason or "PLAY ufficiale congelata al momento della cattura",
+            "policy_version": row.policy_version,
+            "bookmakers_count": row.bookmaker_count,
+            "model_name": row.model_name,
+            "run_id": row.model_run_id,
+            "is_official": True,
+            "settlement_status": settlement,
+            "official_outcome": official_outcome,
+            "pnl": row.pnl,
+            "captured_at": row.captured_at.isoformat() if row.captured_at else None,
+        }
+
+    def _merge_official_cards(self, cards: list[dict[str, Any]], ledger_rows: list[Any]) -> list[dict[str, Any]]:
+        merged = list(cards)
+        for ledger_row in ledger_rows:
+            official = self._official_card(ledger_row)
+            market_key = self._normalize_text(official["market"])
+            outcome_key = self._normalize_text(official["outcome"])
+            replaced = False
+            for index, card in enumerate(merged):
+                if (
+                    self._normalize_text(str(card.get("market") or "")) == market_key
+                    and self._normalize_text(str(card.get("outcome") or card.get("pick") or "")) == outcome_key
+                ):
+                    merged[index] = official
+                    replaced = True
+                    break
+            if not replaced:
+                merged.append(official)
+        self._mark_best_cards_by_market(merged)
+        merged.sort(key=self._decision_card_sort_key)
+        return merged
+
+    def _attach_official_cards(self, rows: list[dict[str, Any]]) -> None:
+        fixture_ids = [int(row["fixture_id"]) for row in rows if row.get("fixture_id") is not None]
+        try:
+            ledger_rows = self.ledger_repo.list_for_fixtures(fixture_ids, cohort="official_paper")
+        except (OperationalError, ProgrammingError):
+            return
+        by_fixture: dict[int, list[Any]] = {}
+        for ledger_row in ledger_rows:
+            by_fixture.setdefault(int(ledger_row.fixture_id), []).append(ledger_row)
+        for row in rows:
+            official_rows = by_fixture.get(int(row["fixture_id"])) if row.get("fixture_id") is not None else None
+            if not official_rows:
+                continue
+            row["decision_cards"] = self._merge_official_cards(row.get("decision_cards") or [], official_rows)
+            row["best_decision"] = self._select_best_decision_card(row["decision_cards"])
 
     def _decisions_for_row(
         self,
@@ -708,15 +947,12 @@ class DashboardService:
         una chiamata odds API-Sports per riga: la quota giornaliera e'
         limitata (vedi job history) e centinaia di righe la esaurirebbero
         subito. Se la fixture non e' ancora nel DB locale, resta
-        `([], None)`: aprendo il dettaglio (`get_match_detail`, che gia'
-        fa una fetch odds dedicata per singola fixture) il badge completo
-        resta comunque disponibile."""
+        `SENZA QUOTA`: la quota void IA resta calcolabile dalla probabilita'
+        e nessuna giocata viene registrata."""
         if not predictions or db_match is None:
             return [], None
 
         odds_summary = self._aggregate_odds_from_db(db_match)
-        if not odds_summary:
-            return [], None
 
         bookmaker_baseline = build_fixture_baseline(odds_summary)
         cards = self._build_decision_cards(
@@ -1223,6 +1459,7 @@ class DashboardService:
             if row.get("fixture_id") is not None:
                 seen_fixtures.add(row["fixture_id"])
 
+        self._attach_official_cards(rows)
         rows.sort(key=lambda x: (x.get("datetime") or "", x.get("league") or "", x.get("home") or ""))
         total_rows = len(rows)
         if limit > 0:
@@ -1466,6 +1703,15 @@ class DashboardService:
             odds_summary=odds_summary,
             bookmaker_baseline=bookmaker_baseline,
         )
+        try:
+            official_rows = [
+                row
+                for row in self.ledger_repo.list_for_fixture(fixture_id)
+                if row.cohort == "official_paper"
+            ]
+        except (OperationalError, ProgrammingError):
+            official_rows = []
+        decision_cards = self._merge_official_cards(decision_cards, official_rows)
 
         return {
             "fixture": fixture_row,

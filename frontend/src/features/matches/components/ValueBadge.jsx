@@ -1,4 +1,4 @@
-import { formatEdge, formatOdd, marketLabel, valueClass } from "../../shared/formatters";
+import { formatOdd, formatPercentagePoints, formatSignedNumber, marketLabel, valueClass } from "../../shared/formatters";
 
 /**
  * MATCH-01: badge decision (PLAY / BORDERLINE / NO BET) per la vista lista
@@ -21,7 +21,8 @@ export default function ValueBadge({ decision }) {
       <strong>{decision.value_label}</strong>
       <em>{marketLabel(decision.market)}</em>
       <small>
-        quota {formatOdd(decision.odd)} · fair {formatOdd(decision.fair_odd)} · edge {formatEdge(decision.edge)}
+        quota {formatOdd(decision.market_odd)} · void IA {formatOdd(decision.model_void_odd)} · edge{" "}
+        {formatSignedNumber(decision.odds_edge_absolute)} · ROI atteso {formatPercentagePoints(decision.expected_roi_percent)}
       </small>
     </span>
   );

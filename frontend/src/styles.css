@@ -669,6 +669,79 @@ th {
   color: #9b1414;
 }
 
+.value-unavailable {
+  background: #edf1f7;
+  color: #53627c;
+}
+
+.match-center-controls,
+.decision-counters {
+  display: flex;
+  gap: 10px;
+  align-items: end;
+  flex-wrap: wrap;
+  margin: 10px 0;
+}
+
+.match-center-controls label {
+  display: grid;
+  gap: 4px;
+  color: #53627c;
+  font-size: 12px;
+}
+
+.match-center-table {
+  min-width: 1450px;
+}
+
+.official-pnl {
+  display: block;
+  margin-top: 3px;
+}
+
+.match-center-mobile {
+  display: none;
+}
+
+.match-mobile-card {
+  border: 1px solid #dfe7f5;
+  border-radius: 12px;
+  padding: 12px;
+  background: #fff;
+}
+
+.match-mobile-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.match-mobile-card dl {
+  margin: 0 0 10px;
+}
+
+.match-mobile-card dl div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+  border-bottom: 1px dashed #e7ecf7;
+  padding: 5px 0;
+}
+
+.match-mobile-card dt {
+  color: #657aa0;
+}
+
+.match-mobile-card dd {
+  margin: 0;
+  text-align: right;
+  font-weight: 600;
+  color: #111d35;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 /* Segnale "Bet Over" (2026-09-08): INDIPENDENTE da .value-badge sopra -
    puo' comparire anche quando il pick mostrato e' "Under" (vedi
    over_signal_policy.py). Stessa palette verde di .value-play (segnale
@@ -878,6 +951,63 @@ th {
 
   .detail-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 760px) {
+  .content,
+  .panel,
+  .stack,
+  .match-center-mobile,
+  .match-mobile-card {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .content {
+    padding: 10px;
+  }
+
+  .match-center-desktop {
+    display: none;
+  }
+
+  .match-center-mobile {
+    display: grid;
+    gap: 10px;
+  }
+
+  .match-mobile-card .value-badge {
+    display: inline-block;
+    max-width: 100%;
+    white-space: normal;
+  }
+
+  .match-mobile-card dl div {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+  }
+
+  .match-mobile-card dd {
+    text-align: left;
+  }
+
+  .odds-market-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .odds-market-card,
+  .odds-market-card .table-wrap {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .odds-market-card .table-wrap {
+    overflow-x: auto;
+  }
+
+  .odds-market-card table {
+    min-width: 420px;
   }
 }
 

@@ -1,7 +1,8 @@
+import { useMemo, useState } from "react";
 import MatchTable from "../matches/components/MatchTable";
 import PhaseTabs from "../matches/components/PhaseTabs";
 import MarketTabs from "../matches/components/MarketTabs";
-import { phaseClass, phaseLabel } from "../shared/formatters";
+import { marketLabel, phaseClass, phaseLabel } from "../shared/formatters";
 
 export default function DashboardPage({
   overview,
@@ -18,6 +19,24 @@ export default function DashboardPage({
   isFilterLoading,
 }) {
   const safeRows = dayData?.rows || [];
+  const [situationFilter, setSituationFilter] = useState("all");
+  const counters = useMemo(() => {
+    const initial = { PLAY: 0, BORDERLINE: 0, "NO BET": 0, "SENZA QUOTA": 0, official: 0, WON: 0, LOST: 0, VOID: 0 };
+    return safeRows.reduce((acc, row) => {
+      const card = row.best_decision;
+      const label = card?.value_label || "SENZA QUOTA";
+      if (Object.prototype.hasOwnProperty.call(acc, label)) acc[label] += 1;
+      if (card?.is_official) acc.official += 1;
+      if (["WON", "LOST", "VOID"].includes(card?.official_outcome)) acc[card.official_outcome] += 1;
+      return acc;
+    }, initial);
+  }, [safeRows]);
+  const visibleRows = useMemo(
+    () => situationFilter === "all"
+      ? safeRows
+      : safeRows.filter((row) => (row.best_decision?.value_label || "SENZA QUOTA") === situationFilter),
+    [safeRows, situationFilter],
+  );
 
   return (
     <section className="stack">
@@ -70,9 +89,41 @@ export default function DashboardPage({
 
         <PhaseTabs phases={["all", "to_play", "live", "finished"]} value={phaseFilter} onChange={onChangePhaseFilter} />
         <MarketTabs markets={markets} value={selectedMarket} onChange={onChangeSelectedMarket} />
+        <div className="match-center-controls">
+          <label>
+            Mercato
+            <select value={selectedMarket} onChange={(event) => onChangeSelectedMarket(event.target.value)}>
+              {(markets || ["all"]).map((market) => (
+                <option key={market} value={market}>{market === "all" ? "Tutti i mercati" : marketLabel(market)}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Situazione
+            <select value={situationFilter} onChange={(event) => setSituationFilter(event.target.value)}>
+              <option value="all">Tutte</option>
+              <option value="PLAY">PLAY</option>
+              <option value="BORDERLINE">BORDERLINE</option>
+              <option value="NO BET">NO BET</option>
+              <option value="SENZA QUOTA">Senza quota</option>
+            </select>
+          </label>
+        </div>
+        <div className="decision-counters" aria-label="Contatori decisioni del mercato selezionato">
+          {[
+            ["PLAY", counters.PLAY],
+            ["BORDERLINE", counters.BORDERLINE],
+            ["NO BET", counters["NO BET"]],
+            ["SENZA QUOTA", counters["SENZA QUOTA"]],
+            ["UFFICIALI", counters.official],
+            ["WON", counters.WON],
+            ["LOST", counters.LOST],
+            ["VOID", counters.VOID],
+          ].map(([label, count]) => <span className="pill" key={label}>{label}: {count}</span>)}
+        </div>
 
         <MatchTable
-          rows={safeRows}
+          rows={visibleRows}
           selectedFixtureId={selectedFixtureId}
           onOpenMatch={onOpenMatch}
           onOpenOracleDetail={onOpenOracleDetail}

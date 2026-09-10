@@ -14,6 +14,9 @@ export function formatDateIt(iso) {
 }
 
 export function formatPercent(value) {
+  if (value === null || value === undefined) {
+    return "--";
+  }
   const num = Number(value);
   if (Number.isNaN(num)) {
     return "--";
@@ -134,12 +137,38 @@ export function formatEdge(value) {
   return `${sign}${pct.toFixed(1)}%`;
 }
 
+export function formatPercentagePoints(value) {
+  if (value === null || value === undefined) {
+    return "-";
+  }
+  const num = Number(value);
+  if (Number.isNaN(num)) {
+    return "-";
+  }
+  const sign = num > 0 ? "+" : "";
+  return `${sign}${num.toFixed(1)}%`;
+}
+
+export function formatSignedNumber(value, decimals = 2) {
+  if (value === null || value === undefined) {
+    return "-";
+  }
+  const num = Number(value);
+  if (Number.isNaN(num)) {
+    return "-";
+  }
+  return `${num > 0 ? "+" : ""}${num.toFixed(decimals)}`;
+}
+
 export function valueClass(valueLabel) {
   if (valueLabel === "PLAY") {
     return "value-play";
   }
   if (valueLabel === "BORDERLINE") {
     return "value-borderline";
+  }
+  if (valueLabel === "SENZA QUOTA" || valueLabel === "N/D") {
+    return "value-unavailable";
   }
   return "value-no-bet";
 }
@@ -179,7 +208,7 @@ export function filterRowByMarket(row, market) {
     ...row,
     predictions: filteredPredictions,
     decision_cards: decisionCards,
-    best_decision: decisionCards[0] || null,
+    best_decision: decisionCards.find((card) => card.is_market_best) || decisionCards[0] || null,
   };
 }
 

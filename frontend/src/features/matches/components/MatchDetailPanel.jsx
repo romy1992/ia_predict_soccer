@@ -1,4 +1,13 @@
-import { formatEdge, formatOdd, formatPercent, marketLabel, phaseClass, phaseLabel, valueClass } from "../../shared/formatters";
+import {
+  formatOdd,
+  formatPercent,
+  formatPercentagePoints,
+  formatSignedNumber,
+  marketLabel,
+  phaseClass,
+  phaseLabel,
+  valueClass,
+} from "../../shared/formatters";
 
 export default function MatchDetailPanel({
   selectedFixtureId,
@@ -91,12 +100,18 @@ export default function MatchDetailPanel({
                   )}
                   <div className="decision-metrics">
                     <span>Conf.: {formatPercent(card.predicted_probability)}</span>
-                    <span>Quota media: {formatOdd(card.odd)}</span>
-                    <span>Quota fair: {formatOdd(card.fair_odd)}</span>
-                    <span>Edge: {formatEdge(card.edge)}</span>
-                    <span>EV: {formatEdge(card.ev)}</span>
+                    <span>Quota mercato: {formatOdd(card.market_odd)}</span>
+                    <span title="Quota di pareggio economico ricavata dalla probabilità IA.">Quota void IA: {formatOdd(card.model_void_odd)}</span>
+                    <span>Quota fair mercato: {formatOdd(card.market_fair_odd)}</span>
+                    <span title={`Edge percentuale: ${formatPercentagePoints(card.odds_edge_percent)}`}>Edge quota: {formatSignedNumber(card.odds_edge_absolute)}</span>
+                    <span>Edge probabilistico: {formatPercent(card.prob_edge)}</span>
+                    <span title="Rendimento teorico della singola selezione; non è il ROI realmente ottenuto.">ROI atteso: {formatPercentagePoints(card.expected_roi_percent)}</span>
+                    <span>Soglia PLAY: {formatOdd(card.play_threshold_odd)}</span>
+                    <span>Bookmaker: {card.bookmakers_count ?? "-"}</span>
+                    {card.is_official && <span title="Stato di settlement, distinto dalla quota void IA.">Esito: {card.official_outcome}</span>}
+                    {card.is_official && card.pnl != null && <span>PnL: {formatSignedNumber(card.pnl)}</span>}
                   </div>
-                  <small>{card.value_reason}</small>
+                  <small>{card.value_reason} · Policy {card.policy_version || "N/D"}</small>
                 </div>
               ))}
             </div>

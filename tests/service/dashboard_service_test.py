@@ -1,6 +1,7 @@
 import unittest
 import uuid
 from datetime import date, time
+from types import SimpleNamespace
 from unittest import mock
 
 from sqlalchemy import create_engine
@@ -144,6 +145,10 @@ class TestDashboardService(unittest.TestCase):
         self.assertTrue(labels.issubset({"PLAY", "BORDERLINE", "NO BET"}))
         self.assertIn("bookmaker_fair_probability", payload["decision_cards"][0])
         self.assertIn("fair_odd", payload["decision_cards"][0])
+        self.assertIn("model_void_odd", payload["decision_cards"][0])
+        self.assertIn("market_fair_odd", payload["decision_cards"][0])
+        self.assertIn("odds_edge_absolute", payload["decision_cards"][0])
+        self.assertIn("expected_roi_percent", payload["decision_cards"][0])
 
     def test_get_match_detail_adds_correct_for_finished_match(self):
         """`get_match_detail` (2026-09-10, colorazione badge per esito
@@ -295,6 +300,91 @@ class TestDashboardService(unittest.TestCase):
 
         self.assertEqual(payload.rows[0]["decision_cards"], [])
         self.assertIsNone(payload.rows[0]["best_decision"])
+
+    def test_missing_odd_card_keeps_model_void_and_is_not_play(self):
+        service = DashboardService()
+        cards = service._build_decision_cards(
+            row_context={"home": "Inter", "away": "Milan"},
+            predictions={"under_over_2_5": {"prediction": 1, "probability": 0.60}},
+            odds_summary={},
+            bookmaker_baseline={},
+        )
+        self.assertEqual(len(cards), 1)
+        self.assertEqual(cards[0]["value_label"], "SENZA QUOTA")
+        self.assertAlmostEqual(cards[0]["model_void_odd"], 1.6666667, places=6)
+        self.assertIsNone(cards[0]["odds_edge_absolute"])
+        self.assertIsNone(cards[0]["ev"])
+
+    def test_multiclass_1x2_prices_each_matching_outcome_and_derives_dc(self):
+        service = DashboardService()
+        odds = {
+            "h2h": [
+                {"outcome": "Home", "avg_odd": 2.1, "bookmakers": 3},
+                {"outcome": "Draw", "avg_odd": 3.2, "bookmakers": 3},
+                {"outcome": "Away", "avg_odd": 3.8, "bookmakers": 3},
+            ],
+            "dc": [
+                {"outcome": "Home/Draw", "avg_odd": 1.3, "bookmakers": 3},
+                {"outcome": "Draw/Away", "avg_odd": 1.7, "bookmakers": 3},
+                {"outcome": "Home/Away", "avg_odd": 1.4, "bookmakers": 3},
+            ],
+        }
+        cards = service._build_decision_cards(
+            row_context={"home": "Inter", "away": "Milan"},
+            predictions={
+                "1x2": {
+                    "probabilities": {"HOME": 0.50, "DRAW": 0.30, "AWAY": 0.20},
+                    "model_name": "multiclass",
+                    "run_id": "run-1x2",
+                }
+            },
+            odds_summary=odds,
+            bookmaker_baseline=dashboard_service_module.build_fixture_baseline(odds),
+        )
+        one_x_two = {card["outcome"]: card for card in cards if card["market"] == "1x2"}
+        double_chance = {card["outcome"]: card for card in cards if card["market"] == "dc"}
+        self.assertEqual(set(one_x_two), {"Home", "Draw", "Away"})
+        self.assertEqual(one_x_two["Draw"]["market_odd"], 3.2)
+        self.assertEqual(one_x_two["Away"]["market_odd"], 3.8)
+        self.assertAlmostEqual(double_chance["Home/Draw"]["predicted_probability"], 0.8)
+        self.assertAlmostEqual(double_chance["Draw/Away"]["predicted_probability"], 0.5)
+        self.assertAlmostEqual(double_chance["Home/Away"]["predicted_probability"], 0.7)
+
+    def test_official_card_uses_frozen_ledger_values(self):
+        service = DashboardService()
+        frozen = SimpleNamespace(
+            market="under_over_2_5",
+            outcome="Over 2.5",
+            line="2.5",
+            p_model=0.64,
+            odd=1.80,
+            model_void_odd=1.5625,
+            market_fair_odd=1.91,
+            fair_odd=1.91,
+            odds_edge_absolute=0.2375,
+            odds_edge_percent=15.2,
+            prob_edge=0.08,
+            ev=0.152,
+            expected_roi_percent=15.2,
+            play_threshold_odd=1.59375,
+            min_edge_percent=2.0,
+            value_label="PLAY",
+            value_reason="Quota sopra la soglia PLAY",
+            decision="PLAY",
+            policy_version="decision_policy_v2_model_break_even",
+            bookmaker_count=4,
+            model_name="frozen-model",
+            model_run_id="frozen-run",
+            is_settled=True,
+            settlement_status="settled_win",
+            pnl=0.8,
+            captured_at=None,
+        )
+        card = service._official_card(frozen)
+        self.assertTrue(card["is_official"])
+        self.assertEqual(card["official_outcome"], "WON")
+        self.assertEqual(card["model_void_odd"], 1.5625)
+        self.assertEqual(card["policy_version"], "decision_policy_v2_model_break_even")
 
     def test_predict_fixture_delegates_to_snapshot_service_with_status(self):
         """`_predict_fixture` (2026-09-09, refactor cache persistita) non

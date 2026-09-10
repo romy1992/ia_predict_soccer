@@ -1,6 +1,12 @@
-import PredictionBadges from "./PredictionBadges";
-import ValueBadge from "./ValueBadge";
-import { phaseClass, phaseLabel } from "../../shared/formatters";
+import {
+  formatOdd,
+  formatPercent,
+  formatPercentagePoints,
+  formatSignedNumber,
+  phaseClass,
+  phaseLabel,
+  valueClass,
+} from "../../shared/formatters";
 
 export default function MatchTable({ rows, selectedFixtureId, onOpenMatch, onOpenOracleDetail, modelMarkets }) {
   if (!rows || rows.length === 0) {
@@ -8,22 +14,30 @@ export default function MatchTable({ rows, selectedFixtureId, onOpenMatch, onOpe
   }
 
   return (
-    <div className="table-wrap">
-      <table>
+    <>
+    <div className="table-wrap match-center-desktop">
+      <table className="match-center-table">
         <thead>
           <tr>
             <th>Ora</th>
             <th>Torneo</th>
-            <th>Match</th>
-            <th>Score</th>
-            <th>Stato</th>
-            <th>Previsioni</th>
-            <th>Value</th>
+            <th>Partita</th>
+            <th>Score/Stato</th>
+            <th>Pronostico</th>
+            <th>Probabilità IA</th>
+            <th>Quota mercato</th>
+            <th title="Quota di pareggio economico del modello: 1 / probabilità IA. Non è lo stato VOID di una giocata.">Quota void IA</th>
+            <th title="Differenza assoluta tra quota mercato e quota void IA. Nel dettaglio è disponibile anche l'edge percentuale.">Edge</th>
+            <th title="Rendimento teorico della singola selezione; non è il ROI realmente ottenuto.">ROI atteso</th>
+            <th>Situazione</th>
+            <th title="Stato di settlement della PLAY ufficiale: distinto dalla quota void IA.">Esito ufficiale</th>
             <th>Dettaglio</th>
           </tr>
         </thead>
         <tbody>
-          {rows.map((row) => (
+          {rows.map((row) => {
+            const decision = row.best_decision;
+            return (
             <tr
               key={`match-${row.fixture_id}`}
               className={selectedFixtureId === row.fixture_id ? "row-selected" : ""}
@@ -35,13 +49,26 @@ export default function MatchTable({ rows, selectedFixtureId, onOpenMatch, onOpe
                 <div className="match-sub">Fixture {row.fixture_id}</div>
               </td>
               <td>
-                {row.score?.home ?? "-"} - {row.score?.away ?? "-"}
-              </td>
-              <td>
+                <div>{row.score?.home ?? "-"} - {row.score?.away ?? "-"}</div>
                 <span className={`phase-badge ${phaseClass(row.phase)}`}>{phaseLabel(row.phase)}</span>
               </td>
-              <td><PredictionBadges row={row} modelMarkets={modelMarkets} /></td>
-              <td><ValueBadge decision={row.best_decision} /></td>
+              <td>{decision?.pick || "N/D"}</td>
+              <td>{decision?.predicted_probability == null ? "N/D" : formatPercent(decision.predicted_probability)}</td>
+              <td>{decision?.market_odd == null ? "N/D" : formatOdd(decision.market_odd)}</td>
+              <td>{decision?.model_void_odd == null ? "N/D" : formatOdd(decision.model_void_odd)}</td>
+              <td title={decision?.odds_edge_percent == null ? "" : `Edge percentuale: ${formatPercentagePoints(decision.odds_edge_percent)}`}>
+                {decision?.odds_edge_absolute == null ? "N/D" : formatSignedNumber(decision.odds_edge_absolute)}
+              </td>
+              <td>{decision?.expected_roi_percent == null ? "N/D" : formatPercentagePoints(decision.expected_roi_percent)}</td>
+              <td>
+                <span className={`value-badge ${valueClass(decision?.value_label || "SENZA QUOTA")}`} title={decision?.value_reason || "Quota mercato non disponibile"}>
+                  {decision?.value_label || "SENZA QUOTA"}
+                </span>
+              </td>
+              <td>
+                <strong>{decision?.is_official ? decision.official_outcome : "Non ufficiale"}</strong>
+                {decision?.is_official && decision?.pnl != null && <small className="official-pnl">PnL {formatSignedNumber(decision.pnl)}</small>}
+              </td>
               <td>
                 <div className="cell-actions">
                   <button className="btn-secondary" onClick={() => onOpenMatch(row.fixture_id)}>
@@ -55,9 +82,34 @@ export default function MatchTable({ rows, selectedFixtureId, onOpenMatch, onOpe
                 </div>
               </td>
             </tr>
-          ))}
+          )})}
         </tbody>
       </table>
     </div>
+    <div className="match-center-mobile">
+      {rows.map((row) => {
+        const decision = row.best_decision;
+        return (
+          <article className="match-mobile-card" key={`mobile-${row.fixture_id}`}>
+            <div className="match-mobile-head">
+              <strong>{row.home} vs {row.away}</strong>
+              <span className={`phase-badge ${phaseClass(row.phase)}`}>{phaseLabel(row.phase)}</span>
+            </div>
+            <dl>
+              <div><dt>Pronostico</dt><dd>{decision?.pick || "N/D"}</dd></div>
+              <div><dt>Probabilità IA</dt><dd>{decision?.predicted_probability == null ? "N/D" : formatPercent(decision.predicted_probability)}</dd></div>
+              <div><dt>Quota mercato</dt><dd>{decision?.market_odd == null ? "N/D" : formatOdd(decision.market_odd)}</dd></div>
+              <div><dt>Quota void IA</dt><dd>{decision?.model_void_odd == null ? "N/D" : formatOdd(decision.model_void_odd)}</dd></div>
+              <div><dt>Edge</dt><dd>{decision?.odds_edge_absolute == null ? "N/D" : formatSignedNumber(decision.odds_edge_absolute)}</dd></div>
+              <div><dt>ROI atteso</dt><dd>{decision?.expected_roi_percent == null ? "N/D" : formatPercentagePoints(decision.expected_roi_percent)}</dd></div>
+              <div><dt>Situazione</dt><dd><span className={`value-badge ${valueClass(decision?.value_label || "SENZA QUOTA")}`}>{decision?.value_label || "SENZA QUOTA"}</span></dd></div>
+              <div><dt>Esito ufficiale</dt><dd>{decision?.is_official ? decision.official_outcome : "Non ufficiale"}</dd></div>
+            </dl>
+            <button className="btn-secondary" onClick={() => onOpenMatch(row.fixture_id)}>Apri dettaglio</button>
+          </article>
+        );
+      })}
+    </div>
+    </>
   );
 }

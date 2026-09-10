@@ -73,6 +73,21 @@ class PredictionLedgerRepository:
                 query = query.filter(PredictionLedger.market == market)
             return query.order_by(PredictionLedger.created_at.asc()).all()
 
+    def list_for_fixtures(
+        self,
+        fixture_ids: list[int],
+        cohort: Optional[str] = None,
+    ) -> list[PredictionLedger]:
+        if not fixture_ids:
+            return []
+        with SessionLocal() as session:
+            query = session.query(PredictionLedger).filter(
+                PredictionLedger.fixture_id.in_([int(value) for value in fixture_ids])
+            )
+            if cohort is not None:
+                query = query.filter(PredictionLedger.cohort == cohort)
+            return query.order_by(PredictionLedger.captured_at.asc()).all()
+
     def list_pending_settlement(self, before: Optional[datetime] = None, limit: int = 500) -> list[PredictionLedger]:
         """Prediction NON ancora settled con kickoff gia' passato (rispetto a
         `before`, default now): candidate per `settle_pending` — mai una
