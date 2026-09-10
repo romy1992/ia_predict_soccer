@@ -7,9 +7,9 @@ data** (non solo la prima volta) — la banca dati predizioni
 intercettate dal job mentre erano ancora `NS`, mai lo storico gia' passato
 ne' le partite appena finite fuori da quella finestra.
 
-## Stato: 0/4 completati
+## Stato: 1/4 completati
 
-## 1. Niente ricalcolo al volo per le date storiche (vista lista) — ☐ Da fare
+## 1. Niente ricalcolo al volo per le date storiche (vista lista) — ☑ Fatto (commit `ad50648`)
 
 **Obiettivo**: la vista lista (`GET /dashboard/day`) per una data passata
 (`target_date < oggi`) non deve MAI ricalcolare una predizione al volo — se
@@ -35,6 +35,19 @@ aspettare. Cosi' la vista storica e' SEMPRE veloce, mai "quasi sempre".
   (`allow_compute=False` con/senza snapshot esistente) e
   `dashboard_service_test.py` (`get_day_matches` passa `allow_compute`
   corretto per date storiche vs oggi/future).
+
+**Fatto**: `allow_compute` implementato e threaded fino a
+`get_day_matches` (attivo SOLO per date storiche, MAI oggi/future, MAI
+`get_match_detail` - verificato leggendo anche `get_live_matches`, che
+resta correttamente sempre `allow_compute=True` di default). Frontend:
+`PredictionBadges.jsx` mostra ora un chip placeholder "In coda" (nuova
+classe `.prediction-pending`) per ogni mercato registrato (`model_markets`,
+gia' presente nella risposta di `/dashboard/day`) assente dal payload di
+previsioni - propagato da `DashboardPage` a `MatchTable` a
+`PredictionBadges`. 11 nuovi/aggiornati casi di test, suite completa
+(813 test) verde, build frontend verificata. Nessuna decisione ancora
+presa sul colore "corretta/sbagliata" del badge (feature separata,
+richiesta il 2026-09-10 ma non parte di questo piano a 4 punti).
 
 ## 2. Job esteso per le partite appena finite — ☐ Da fare
 
