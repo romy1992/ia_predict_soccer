@@ -1,4 +1,4 @@
-import { confidenceClass, formatPercent, marketLabel, outcomeClass, predictionLabel } from "../../shared/formatters";
+import { confidenceClass, formatPercent, marketLabel, outcomeClass, predictionLabel, valueClass } from "../../shared/formatters";
 
 export default function PredictionBadges({ row, modelMarkets }) {
   const predictions = row?.predictions || {};
@@ -28,6 +28,8 @@ export default function PredictionBadges({ row, modelMarkets }) {
         // confidenza di sempre.
         const settledClass = outcomeClass(payload.correct);
         const chipClass = settledClass || confidenceClass(payload.probability);
+        const marketDecisions = (row.decision_cards || []).filter((card) => card.market === marketKey);
+        const decision = marketDecisions.find((card) => card.is_market_best) || marketDecisions[0];
         return (
           <span
             className={`prediction-chip ${chipClass}`}
@@ -43,6 +45,9 @@ export default function PredictionBadges({ row, modelMarkets }) {
             <strong>{marketLabel(marketKey)}</strong>
             <em>{predictionLabel(marketKey, payload.prediction, row)}</em>
             <small>{formatPercent(payload.probability)}</small>
+            <small className={`prediction-value-label ${valueClass(decision?.value_label || "SENZA QUOTA")}`}>
+              {decision?.value_label || "SENZA QUOTA"}
+            </small>
           </span>
         );
       })}

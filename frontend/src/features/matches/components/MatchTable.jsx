@@ -7,11 +7,21 @@ import {
   phaseLabel,
   valueClass,
 } from "../../shared/formatters";
+import PredictionBadges from "./PredictionBadges";
 
-export default function MatchTable({ rows, selectedFixtureId, onOpenMatch, onOpenOracleDetail, modelMarkets }) {
+export default function MatchTable({
+  rows,
+  selectedFixtureId,
+  onOpenMatch,
+  onOpenOracleDetail,
+  modelMarkets,
+  selectedMarket,
+}) {
   if (!rows || rows.length === 0) {
     return <div className="empty-panel">Nessuna partita trovata per i filtri correnti.</div>;
   }
+
+  const showAllMarkets = !selectedMarket || selectedMarket === "all";
 
   return (
     <>
@@ -23,7 +33,8 @@ export default function MatchTable({ rows, selectedFixtureId, onOpenMatch, onOpe
             <th>Torneo</th>
             <th>Partita</th>
             <th>Score/Stato</th>
-            <th>Pronostico</th>
+            {showAllMarkets && <th>Tutti i mercati</th>}
+            <th>{showAllMarkets ? "Pronostico vincitore" : "Pronostico"}</th>
             <th>Probabilità IA</th>
             <th>Quota mercato</th>
             <th title="Quota di pareggio economico del modello: 1 / probabilità IA. Non è lo stato VOID di una giocata.">Quota void IA</th>
@@ -52,6 +63,7 @@ export default function MatchTable({ rows, selectedFixtureId, onOpenMatch, onOpe
                 <div>{row.score?.home ?? "-"} - {row.score?.away ?? "-"}</div>
                 <span className={`phase-badge ${phaseClass(row.phase)}`}>{phaseLabel(row.phase)}</span>
               </td>
+              {showAllMarkets && <td className="all-markets-cell"><PredictionBadges row={row} modelMarkets={modelMarkets} /></td>}
               <td>{decision?.pick || "N/D"}</td>
               <td>{decision?.predicted_probability == null ? "N/D" : formatPercent(decision.predicted_probability)}</td>
               <td>{decision?.market_odd == null ? "N/D" : formatOdd(decision.market_odd)}</td>
@@ -95,8 +107,14 @@ export default function MatchTable({ rows, selectedFixtureId, onOpenMatch, onOpe
               <strong>{row.home} vs {row.away}</strong>
               <span className={`phase-badge ${phaseClass(row.phase)}`}>{phaseLabel(row.phase)}</span>
             </div>
+            {showAllMarkets && (
+              <div className="match-mobile-all-markets">
+                <span>Tutti i mercati</span>
+                <PredictionBadges row={row} modelMarkets={modelMarkets} />
+              </div>
+            )}
             <dl>
-              <div><dt>Pronostico</dt><dd>{decision?.pick || "N/D"}</dd></div>
+              <div><dt>{showAllMarkets ? "Pronostico vincitore" : "Pronostico"}</dt><dd>{decision?.pick || "N/D"}</dd></div>
               <div><dt>Probabilità IA</dt><dd>{decision?.predicted_probability == null ? "N/D" : formatPercent(decision.predicted_probability)}</dd></div>
               <div><dt>Quota mercato</dt><dd>{decision?.market_odd == null ? "N/D" : formatOdd(decision.market_odd)}</dd></div>
               <div><dt>Quota void IA</dt><dd>{decision?.model_void_odd == null ? "N/D" : formatOdd(decision.model_void_odd)}</dd></div>

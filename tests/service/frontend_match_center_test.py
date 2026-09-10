@@ -59,3 +59,27 @@ def test_frontend_only_formats_backend_betting_metrics():
         "predicted_probability * market_odd",
     )
     assert not any(formula in frontend_source for formula in forbidden_formulas)
+
+
+def test_all_markets_keeps_prediction_chips_and_winning_pick_metrics():
+    table = (FRONTEND / "features/matches/components/MatchTable.jsx").read_text(encoding="utf-8")
+    badges = (FRONTEND / "features/matches/components/PredictionBadges.jsx").read_text(encoding="utf-8")
+    assert "showAllMarkets" in table
+    assert "Tutti i mercati" in table
+    assert "Pronostico vincitore" in table
+    assert "<PredictionBadges" in table
+    assert "prediction-value-label" in badges
+    assert "decision?.value_label" in badges
+
+
+def test_single_market_keeps_analytic_view():
+    table = (FRONTEND / "features/matches/components/MatchTable.jsx").read_text(encoding="utf-8")
+    assert 'showAllMarkets ? "Pronostico vincitore" : "Pronostico"' in table
+    for backend_field in (
+        "predicted_probability",
+        "market_odd",
+        "model_void_odd",
+        "odds_edge_absolute",
+        "expected_roi_percent",
+    ):
+        assert backend_field in table
