@@ -126,9 +126,9 @@ class SlipProfile:
 # coppie EXCLUDE, sempre vietate (vedi docstring di modulo).
 SAFE_PROFILE = SlipProfile(
     name="SAFE",
-    version="slip_profile_safe_v1",
+    version="slip_profile_safe_v2_play_only",
     min_legs=2,
-    max_legs=4,
+    max_legs=2,
     min_leg_probability=0.55,
     max_leg_odd=2.50,
     max_penalty_pairs=0,
@@ -138,9 +138,9 @@ SAFE_PROFILE = SlipProfile(
 
 BALANCED_PROFILE = SlipProfile(
     name="BALANCED",
-    version="slip_profile_balanced_v1",
+    version="slip_profile_balanced_v2_play_only",
     min_legs=2,
-    max_legs=4,
+    max_legs=3,
     min_leg_probability=0.40,
     max_leg_odd=4.50,
     max_penalty_pairs=1,
@@ -150,8 +150,8 @@ BALANCED_PROFILE = SlipProfile(
 
 AGGRESSIVE_PROFILE = SlipProfile(
     name="AGGRESSIVE",
-    version="slip_profile_aggressive_v1",
-    min_legs=2,
+    version="slip_profile_aggressive_v2_play_only",
+    min_legs=3,
     max_legs=4,
     min_leg_probability=0.25,
     max_leg_odd=8.00,
@@ -161,6 +161,19 @@ AGGRESSIVE_PROFILE = SlipProfile(
 )
 
 DEFAULT_SLIP_PROFILES: tuple[SlipProfile, ...] = (SAFE_PROFILE, BALANCED_PROFILE, AGGRESSIVE_PROFILE)
+
+
+@dataclass(frozen=True)
+class SlipDecisionPolicy:
+    version: str = "slip_decision_policy_v1"
+    min_edge_percent: float = 2.0
+
+    def __post_init__(self) -> None:
+        if self.min_edge_percent < 0:
+            raise ValueError("min_edge_percent non puo' essere negativo")
+
+
+DEFAULT_SLIP_DECISION_POLICY = SlipDecisionPolicy()
 
 
 # ---------------------------------------------------------------------------
@@ -186,11 +199,23 @@ class GeneratedSlip:
     naive_probability: Optional[float] = None
     adjusted_probability: Optional[float] = None
     combined_ev: Optional[float] = None
+    combined_model_void_odd: Optional[float] = None
+    combined_edge_absolute: Optional[float] = None
+    combined_edge_percent: Optional[float] = None
+    combined_expected_roi: Optional[float] = None
+    combined_expected_roi_percent: Optional[float] = None
+    combined_play_threshold: Optional[float] = None
+    slip_min_edge_percent: float = 0.0
+    decision_policy_version: str = ""
+    situation: str = "NO BET"
+    situation_reason: str = ""
     risk_score: Optional[float] = None
     penalty_pairs: int = 0
     correlation_ruleset_version: str = ""
     findings: list = field(default_factory=list)  # list[CorrelationFinding], solo non-INDEPENDENT
     explanation: str = ""
+    status: str = "PROPOSED"
+    is_official: bool = False
 
 
 @dataclass
@@ -225,7 +250,13 @@ def _is_eligible(candidate: CandidatePick) -> bool:
     valida (per la quota combinata) sia una probabilita' modello (per la
     probabilita' dichiarata) - senza le quali "metodo esplicito" non
     sarebbe rispettabile."""
-    return candidate.odd is not None and float(candidate.odd) > 0.0 and candidate.p_model is not None
+    return (
+        candidate.decision == "PLAY"
+        and candidate.odd is not None
+        and float(candidate.odd) > 0.0
+        and candidate.p_model is not None
+        and 0.0 < float(candidate.p_model) <= 1.0
+    )
 
 
 def _base_eligible_pool(candidates: list[CandidatePick]) -> list[CandidatePick]:
@@ -253,13 +284,78 @@ def _profile_eligible_pool(
     return filtered, warnings
 
 
-def _slip_id(profile_name: str, legs: list[CandidatePick]) -> str:
+def _slip_id(profile: SlipProfile, legs: list[CandidatePick], policy: SlipDecisionPolicy) -> str:
     """Hash deterministico dalle leg incluse (stesso principio di
     `pick_pool._pool_id`): stesso profilo + stesso insieme di leg -> stesso
     `slip_id` sempre, indipendentemente dall'ordine di iterazione."""
-    payload = sorted((leg.fixture_id, leg.market, leg.outcome) for leg in legs)
-    serialized = json.dumps({"profile": profile_name, "legs": payload}, sort_keys=True)
+    payload = sorted(
+        (
+            leg.fixture_id,
+            leg.market,
+            leg.outcome,
+            leg.model_run_id or "",
+            leg.policy_version or "",
+        )
+        for leg in legs
+    )
+    serialized = json.dumps(
+        {
+            "profile": profile.name,
+            "profile_version": profile.version,
+            "decision_policy": policy.version,
+            "legs": payload,
+        },
+        sort_keys=True,
+    )
     return hashlib.sha1(serialized.encode("utf-8")).hexdigest()[:16]
+
+
+def _combined_value_metrics(
+    combined_odd: float,
+    adjusted_probability: Optional[float],
+    policy: SlipDecisionPolicy,
+) -> dict[str, Optional[float]]:
+    if adjusted_probability is None or not 0.0 < adjusted_probability <= 1.0:
+        return {
+            "model_void_odd": None,
+            "edge_absolute": None,
+            "edge_percent": None,
+            "expected_roi": None,
+            "expected_roi_percent": None,
+            "play_threshold": None,
+        }
+    model_void = 1.0 / adjusted_probability
+    expected_roi = adjusted_probability * combined_odd - 1.0
+    return {
+        "model_void_odd": model_void,
+        "edge_absolute": combined_odd - model_void,
+        "edge_percent": ((combined_odd / model_void) - 1.0) * 100.0,
+        "expected_roi": expected_roi,
+        "expected_roi_percent": expected_roi * 100.0,
+        "play_threshold": model_void * (1.0 + policy.min_edge_percent / 100.0),
+    }
+
+
+def _classify_slip(
+    legs: list[CandidatePick],
+    metrics: dict[str, Optional[float]],
+    evaluation_valid: bool,
+) -> tuple[str, str]:
+    if not evaluation_valid:
+        return "NO BET", "Combinazione incompatibile"
+    if any(leg.decision == "NO BET" for leg in legs):
+        return "NO BET", "Almeno una selezione e' NO BET"
+    if any(leg.decision != "PLAY" for leg in legs):
+        return "BORDERLINE", "Almeno una selezione non e' PLAY"
+    if metrics["expected_roi"] is None or metrics["model_void_odd"] is None:
+        return "NO BET", "Dati necessari non disponibili"
+    if metrics["expected_roi"] <= 0.0:
+        return "NO BET", "Expected ROI combinato non positivo"
+    if metrics["play_threshold"] is not None and metrics["edge_absolute"] is not None:
+        combined_odd = metrics["model_void_odd"] + metrics["edge_absolute"]
+        if combined_odd >= metrics["play_threshold"]:
+            return "PLAY", "Tutte le selezioni sono PLAY e la soglia combinata e' superata"
+    return "BORDERLINE", "Valore positivo, ma margine combinato insufficiente"
 
 
 def _explanation(
@@ -304,6 +400,8 @@ def generate_betslips(
     max_pool_size: int = 14,
     max_slips_per_profile: int = 5,
     generated_at: Optional[datetime] = None,
+    decision_policy: SlipDecisionPolicy = DEFAULT_SLIP_DECISION_POLICY,
+    one_pick_per_fixture: bool = True,
 ) -> BetslipGenerationResult:
     """Funzione pura (nessun DB/IO): per ciascun profilo, combina le pick
     eligibili in schedine da `profilo.min_legs` a `profilo.max_legs` eventi,
@@ -327,6 +425,8 @@ def generate_betslips(
                 continue
             for combo in combinations(pool, size):
                 legs = list(combo)
+                if one_pick_per_fixture and len({leg.fixture_id for leg in legs}) != len(legs):
+                    continue
                 evaluation = evaluate_combination(legs, ruleset=ruleset)
                 if not evaluation.is_valid:
                     continue  # almeno una coppia EXCLUDE: schedina logicamente impossibile, vietata per QUALSIASI profilo
@@ -352,9 +452,11 @@ def generate_betslips(
                     continue
 
                 risk_score = (1.0 - adjusted) if adjusted is not None else None
+                metrics = _combined_value_metrics(combined_odd, adjusted, decision_policy)
+                situation, situation_reason = _classify_slip(legs, metrics, evaluation.is_valid)
                 generated.append(
                     GeneratedSlip(
-                        slip_id=_slip_id(profile.name, legs),
+                        slip_id=_slip_id(profile, legs, decision_policy),
                         profile_name=profile.name,
                         profile_version=profile.version,
                         risk_label=profile.risk_label,
@@ -364,6 +466,16 @@ def generate_betslips(
                         naive_probability=evaluation.naive_probability,
                         adjusted_probability=adjusted,
                         combined_ev=combined_ev,
+                        combined_model_void_odd=metrics["model_void_odd"],
+                        combined_edge_absolute=metrics["edge_absolute"],
+                        combined_edge_percent=metrics["edge_percent"],
+                        combined_expected_roi=metrics["expected_roi"],
+                        combined_expected_roi_percent=metrics["expected_roi_percent"],
+                        combined_play_threshold=metrics["play_threshold"],
+                        slip_min_edge_percent=decision_policy.min_edge_percent,
+                        decision_policy_version=decision_policy.version,
+                        situation=situation,
+                        situation_reason=situation_reason,
                         risk_score=risk_score,
                         penalty_pairs=penalty_count,
                         correlation_ruleset_version=evaluation.ruleset_version,
@@ -377,11 +489,14 @@ def generate_betslips(
         # Ranking (acceptance criteria "Ranking probability/EV/risk"): EV
         # decrescente, poi probabilita' aggiustata decrescente, poi rischio
         # crescente, poi slip_id per rompere i pareggi in modo deterministico.
+        situation_rank = {"PLAY": 0, "BORDERLINE": 1, "NO BET": 2}
         generated.sort(
             key=lambda s: (
+                situation_rank.get(s.situation, 99),
                 -_ev_sort_key(s.combined_ev),
                 -_ev_sort_key(s.adjusted_probability),
                 s.risk_score if s.risk_score is not None else float("inf"),
+                s.penalty_pairs,
                 s.slip_id,
             )
         )

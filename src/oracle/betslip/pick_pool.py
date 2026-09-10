@@ -140,6 +140,15 @@ class CandidatePick:
     model_name: Optional[str] = None
     policy_version: Optional[str] = None
     kickoff_at: Optional[str] = None
+    competition: Optional[str] = None
+    home_team: Optional[str] = None
+    away_team: Optional[str] = None
+    line: Optional[str] = None
+    model_void_odd: Optional[float] = None
+    market_fair_odd: Optional[float] = None
+    odds_edge_absolute: Optional[float] = None
+    odds_edge_percent: Optional[float] = None
+    expected_roi_percent: Optional[float] = None
 
 
 @dataclass(frozen=True)

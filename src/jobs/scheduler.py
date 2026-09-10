@@ -17,6 +17,7 @@ from src.data.quality_report_service import DataQualityService
 from src.jobs.job_history import JobHistory
 from src.jobs.job_settings import JOB_DEFINITIONS, is_job_enabled, resolve_job_schedule
 from src.ml.serving.prediction_snapshot_service import PredictionSnapshotService
+from src.oracle.betslip.official_betslip_service import OfficialBetslipService
 from src.oracle.ledger.ledger_service import PredictionLedgerService
 from src.oracle.ledger.official_capture_service import OfficialPredictionCaptureService
 from src.repository.base.repository_db import SessionLocal
@@ -321,13 +322,18 @@ def run_manual_settlement(
         ledger_start = time.perf_counter()
         ledger_report = PredictionLedgerService().settle_pending()
         ledger_duration = time.perf_counter() - ledger_start
+        betslip_start = time.perf_counter()
+        betslip_report = OfficialBetslipService().settle_pending()
+        betslip_duration = time.perf_counter() - betslip_start
         report["matches_updated"] = report.get("updated", 0)
         report["matches_complete"] = report.get("complete", 0)
         report["matches_incomplete"] = report.get("incomplete", 0)
         report.update(ledger_report)
+        report.update(betslip_report)
         report["phase_durations"] = {
             "match_settlement_seconds": data_phase_duration,
             "ledger_settlement_seconds": ledger_duration,
+            "betslip_settlement_seconds": betslip_duration,
         }
         report["duration_seconds"] = time.perf_counter() - start
         history.mark_success(job_id=job_id, summary=report)
@@ -365,6 +371,7 @@ def run_official_prediction_capture(job_id: Optional[str] = None) -> dict:
         report = OfficialPredictionCaptureService().capture(
             cutoff_minutes=cfg.official_capture_minutes_before_kickoff
         )
+        report.update(OfficialBetslipService().capture_from_official_ledger())
         report["duration_seconds"] = time.perf_counter() - start
         history.mark_success(job_id=job_id, summary=report)
         return {"job_id": job_id, **report}

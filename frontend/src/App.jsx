@@ -8,6 +8,8 @@ import {
   getDashboardMatchDetail,
   getDashboardOverview,
   getBetslipGenerate,
+  getOfficialBetslips,
+  getOfficialBetslipStatistics,
   getHealth,
   getJobs,
   getJobSettings,
@@ -246,9 +248,18 @@ export default function App() {
       setBetslipLoading(true);
       setBetslipError("");
       try {
-        const payload = await getBetslipGenerate({ targetDate: betslipDate, ...overrides });
-        setBetslipReport(payload);
-        return payload;
+        const [payload, official, officialStatistics] = await Promise.all([
+          getBetslipGenerate({ targetDate: betslipDate, ...overrides }),
+          getOfficialBetslips({ targetDate: betslipDate }),
+          getOfficialBetslipStatistics(),
+        ]);
+        const enriched = {
+          ...payload,
+          official_slips: official.rows || [],
+          official_statistics: officialStatistics.statistics || null,
+        };
+        setBetslipReport(enriched);
+        return enriched;
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         setBetslipError(message);
