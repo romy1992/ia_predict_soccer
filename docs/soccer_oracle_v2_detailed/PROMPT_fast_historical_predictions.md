@@ -7,7 +7,7 @@ data** (non solo la prima volta) — la banca dati predizioni
 intercettate dal job mentre erano ancora `NS`, mai lo storico gia' passato
 ne' le partite appena finite fuori da quella finestra.
 
-## Stato: 1/4 completati
+## Stato: 2/4 completati
 
 ## 1. Niente ricalcolo al volo per le date storiche (vista lista) — ☑ Fatto (commit `ad50648`)
 
@@ -49,7 +49,7 @@ previsioni - propagato da `DashboardPage` a `MatchTable` a
 presa sul colore "corretta/sbagliata" del badge (feature separata,
 richiesta il 2026-09-10 ma non parte di questo piano a 4 punti).
 
-## 2. Job esteso per le partite appena finite — ☐ Da fare
+## 2. Job esteso per le partite appena finite — ☑ Fatto (commit `caf12bb`)
 
 **Obiettivo**: da questo momento in poi, copertura automatica — nessuna
 manutenzione manuale richiesta per le partite nuove.
@@ -71,6 +71,14 @@ manutenzione manuale richiesta per le partite nuove.
   FINAL recente senza snapshot viene raccolta; fixture FINAL gia' coperta
   NON viene ricalcolata; fixture FINAL vecchia fuori dalla piccola finestra
   NON viene toccata da questo job - quella e' lo scope dello script punto 3).
+
+**Fatto**: `run_prediction_snapshot_refresh` ora interroga ANCHE le fixture
+con status finale concluse negli ultimi 3 giorni (`_RECENTLY_FINISHED_WINDOW_DAYS`,
+nuovo parametro opzionale `recently_finished_days`), con un anti-join via
+`MatchPredictionSnapshotRepository.get_latest_bulk` per saltare quelle gia'
+completamente coperte (nessuna chiamata a `resolve_predictions` sprecata).
+Aggiornate anche la description del job in Impostazioni e la docstring di
+`build_scheduler`. 5 nuovi test, suite completa (817 test) verde.
 
 ## 3. Script di backfill storico (una tantum) — ☐ Da fare
 
