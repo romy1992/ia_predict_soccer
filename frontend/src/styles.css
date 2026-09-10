@@ -503,6 +503,12 @@ th {
   color: #8a1f1f;
 }
 
+.prediction-pending {
+  background: #eef1f7;
+  color: #6e80a2;
+  border: 1px dashed #c7d0e3;
+}
+
 .inline-form {
   display: flex;
   gap: 8px;

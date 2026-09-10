@@ -97,6 +97,14 @@ export function getDashboardMatchDetail(fixtureId, { withPredictions = true, mar
   return request(`/dashboard/match/${fixtureId}?${params.toString()}`);
 }
 
+export function recomputeMatchPredictions(fixtureId, { markets } = {}) {
+  return request(`/dashboard/matches/${fixtureId}/recompute-predictions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ markets: markets && markets.length > 0 ? markets : null }),
+  });
+}
+
 export function getOracleMatchDetail(fixtureId, { markets } = {}) {
   const params = new URLSearchParams();
   if (markets && markets.length > 0) {

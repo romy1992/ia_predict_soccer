@@ -303,6 +303,128 @@ class TestPredictionSnapshotServiceResolvePredictions(unittest.TestCase):
         payload = service.resolve_predictions(fixture_id=1, markets=["h2h"], status="NS")
         self.assertEqual(payload, {})
 
+    # --- allow_compute=False (2026-09-10, vista storica sempre veloce) ---
+
+    def test_final_match_allow_compute_false_serves_only_existing_snapshot(self):
+        service = PredictionSnapshotService()
+        service.repo.save(
+            MatchPredictionSnapshot(
+                fixture_id=1,
+                market="h2h",
+                prediction=1,
+                probability=0.75,
+                model_name="logistic",
+                model_run_id="run_old",
+                feature_fingerprint="whatever",
+            )
+        )
+        service.filter_service = _ExplodingFilterService()
+        service.registry = mock.Mock()
+        service.registry.get_production = lambda market: (_ for _ in ()).throw(
+            AssertionError("registry non doveva essere consultato")
+        )
+
+        payload = service.resolve_predictions(
+            fixture_id=1, markets=["h2h", "goal_no_goal"], status="FT", allow_compute=False
+        )
+
+        self.assertEqual(payload["h2h"]["probability"], 0.75)
+        self.assertNotIn("goal_no_goal", payload)
+
+    def test_final_match_allow_compute_false_without_snapshot_skips_market_entirely(self):
+        service = PredictionSnapshotService()
+        service.filter_service = _ExplodingFilterService()
+        service.registry = mock.Mock()
+        service.registry.get_production = lambda market: (_ for _ in ()).throw(
+            AssertionError("registry non doveva essere consultato")
+        )
+
+        payload = service.resolve_predictions(fixture_id=1, markets=["h2h"], status="FT", allow_compute=False)
+
+        self.assertEqual(payload, {})
+        rows = service.repo.list_for_fixture(fixture_id=1, market="h2h")
+        self.assertEqual(len(rows), 0)
+
+    def test_ns_match_allow_compute_false_never_computes(self):
+        """Caso raro/difensivo: una data storica non dovrebbe mai avere
+        fixture NS/live, ma se capita non deve comunque mai calcolare."""
+        service = PredictionSnapshotService()
+        service.filter_service = _ExplodingFilterService()
+        service.registry = mock.Mock()
+        service.registry.get_production = lambda market: (_ for _ in ()).throw(
+            AssertionError("registry non doveva essere consultato")
+        )
+
+        payload = service.resolve_predictions(fixture_id=1, markets=["h2h"], status="NS", allow_compute=False)
+
+        self.assertEqual(payload, {})
+
+    # --- force=True (2026-09-10, bottone "Ricalcola previsione") ---
+
+    def test_force_on_frozen_final_match_produces_a_new_row_not_the_old_one(self):
+        frame = _frame_for(1, "h2h", odds_avg=1.8)
+        fake_model = _FakeModel(0.9)
+        service = self._service({"h2h": frame}, {"h2h": self._model_meta(run_id="run_new")}, fake_model)
+        service.repo.save(
+            MatchPredictionSnapshot(
+                fixture_id=1,
+                market="h2h",
+                prediction=0,
+                probability=0.3,
+                model_name="logistic",
+                model_run_id="run_old",
+                feature_fingerprint="fp_old",
+            )
+        )
+
+        payload = service.resolve_predictions(fixture_id=1, markets=["h2h"], status="FT", force=True)
+
+        self.assertAlmostEqual(payload["h2h"]["probability"], 0.9)
+        self.assertEqual(payload["h2h"]["run_id"], "run_new")
+        rows = service.repo.list_for_fixture(fixture_id=1, market="h2h")
+        self.assertEqual(len(rows), 2)
+
+    def test_force_on_ns_match_bypasses_fingerprint_reuse(self):
+        frame = _frame_for(1, "h2h", odds_avg=1.8)
+        X = frame.drop(columns=["market", "id_fixture", "season", "league", "prediction_at"])
+        fingerprint = compute_feature_fingerprint(X)
+
+        fake_model = _FakeModel(0.77)
+        service = self._service({"h2h": frame}, {"h2h": self._model_meta(run_id="run1")}, fake_model)
+        service.repo.save(
+            MatchPredictionSnapshot(
+                fixture_id=1,
+                market="h2h",
+                prediction=1,
+                probability=0.65,
+                model_name="logistic",
+                model_run_id="run1",
+                feature_fingerprint=fingerprint,  # fingerprint E modello IDENTICI: normalmente riuserebbe
+            )
+        )
+
+        payload = service.resolve_predictions(fixture_id=1, markets=["h2h"], status="NS", force=True)
+
+        self.assertAlmostEqual(payload["h2h"]["probability"], 0.77)
+        self.assertEqual(fake_model.calls, 1)
+        rows = service.repo.list_for_fixture(fixture_id=1, market="h2h")
+        self.assertEqual(len(rows), 2)
+
+    def test_force_ignores_allow_compute_false(self):
+        """`force=True` ha priorita' su `allow_compute` (docstring): anche
+        se il chiamante passa `allow_compute=False` per errore/legacy, un
+        `force=True` esplicito deve comunque calcolare."""
+        frame = _frame_for(1, "h2h", odds_avg=1.8)
+        fake_model = _FakeModel(0.55)
+        service = self._service({"h2h": frame}, {"h2h": self._model_meta()}, fake_model)
+
+        payload = service.resolve_predictions(
+            fixture_id=1, markets=["h2h"], status="FT", allow_compute=False, force=True
+        )
+
+        self.assertAlmostEqual(payload["h2h"]["probability"], 0.55)
+        self.assertEqual(fake_model.calls, 1)
+
     def test_model_cache_is_shared_across_instances(self):
         """`_model_cache` a livello di CLASSE (2026-09-09, fix "sempre
         lentissimo"): un secondo `PredictionSnapshotService()` NON deve

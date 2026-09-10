@@ -380,34 +380,68 @@ def run_data_quality_report(
         raise
 
 
+# Stesso insieme di `PredictionSnapshotService._FINAL_STATUSES` - duplicato
+# qui per lo stesso motivo li' documentato (niente dipendenza a ritroso tra
+# package, e scelta esplicita gia' presa in questa sessione di NON
+# consolidare le copie sparse nel progetto).
+_FINAL_STATUSES = {"FT", "AET", "PEN", "ABD", "CANC", "PST", "WO"}
+
+# Finestra "recenti" per le partite appena concluse (2026-09-10, punto 2/4
+# di `PROMPT_fast_historical_predictions.md`): piccola apposta - lo storico
+# gia' passato oltre questa finestra e' compito dello script di backfill
+# una tantum (punto 3 dello stesso piano), MAI di questo job ricorrente.
+_RECENTLY_FINISHED_WINDOW_DAYS = 3
+
+
 def run_prediction_snapshot_refresh(
     days_ahead: Optional[int] = None,
+    recently_finished_days: Optional[int] = None,
     job_id: Optional[str] = None,
 ) -> dict:
-    """Ricalcola in BACKGROUND le predizioni delle fixture NON ANCORA
-    disputate (status NS) nella finestra oggi -> oggi+`days_ahead` giorni
-    (default `cfg.daily_refresh_days_ahead`, la STESSA finestra gia'
-    tenuta sincronizzata da `data_daily_refresh`/`data_future_sync`),
-    riusando `PredictionSnapshotService` (2026-09-09, richiesto
-    esplicitamente dall'operatore: "salvare le predizioni... per le
-    partite di oggi o future, solo se cambia una delle feature").
+    """Ricalcola/popola in BACKGROUND la banca dati predizioni
+    (`match_prediction_snapshot`) per due categorie di fixture, riusando
+    `PredictionSnapshotService` (2026-09-09, richiesto esplicitamente
+    dall'operatore: "salvare le predizioni... per le partite di oggi o
+    future, solo se cambia una delle feature"):
 
-    Una riga viene RICALCOLATA solo se la fingerprint delle feature o il
-    modello in produzione sono cambiati dall'ultimo giro - la stragrande
-    maggioranza delle fixture in finestra e' quindi un no-op economico
-    (query + hash, nessuna inferenza). Popola `match_prediction_snapshot`
-    PRIMA che un utente apra la Dashboard, cosi' il percorso di serving
-    resta una pura lettura da DB (mai un caricamento modello nel path
-    della richiesta - la causa principale della lentezza percepita
-    indipendentemente dalla data, diagnosticata lo stesso giorno).
+    1. **NON ANCORA disputate** (status NS) nella finestra oggi ->
+       oggi+`days_ahead` giorni (default `cfg.daily_refresh_days_ahead`,
+       la STESSA finestra gia' tenuta sincronizzata da
+       `data_daily_refresh`/`data_future_sync`) - una riga viene
+       RICALCOLATA solo se la fingerprint delle feature o il modello in
+       produzione sono cambiati dall'ultimo giro.
+    2. **APPENA concluse** (status finale, `_FINAL_STATUSES`) negli ultimi
+       `recently_finished_days` giorni (default `_RECENTLY_FINISHED_WINDOW_DAYS`,
+       2026-09-10, punto 2/4 di `PROMPT_fast_historical_predictions.md`) -
+       CHIUSURA del buco di copertura per le partite che finiscono senza
+       mai essere state aperte in Dashboard ne' intercettate mentre erano
+       ancora NS: una volta congelata (`PredictionSnapshotService`, regime
+       partita conclusa) una riga per fixture+mercato non serve MAI piu'
+       essere ricalcolata, quindi qui viene fatto un ANTI-JOIN preventivo
+       (`MatchPredictionSnapshotRepository.get_latest_bulk`, una query sola
+       per l'intero batch) per scartare le fixture GIA' completamente
+       coperte - evita di richiamare `resolve_predictions` (che farebbe
+       comunque una query di verifica per mercato) per fixture che non ne
+       hanno bisogno. Lo storico OLTRE questa piccola finestra resta scoperto
+       da questo job apposta - e' lo scope dello script di backfill una
+       tantum (punto 3 dello stesso piano).
+
+    Popola `match_prediction_snapshot` PRIMA che un utente apra la
+    Dashboard, cosi' il percorso di serving resta una pura lettura da DB
+    (mai un caricamento modello nel path della richiesta - la causa
+    principale della lentezza percepita indipendentemente dalla data,
+    diagnosticata il 2026-09-09).
 
     Un fallimento su una SINGOLA fixture non blocca le altre (stesso
     principio "provider errors isolati" gia' applicato in LIVE-01) - finisce
     in `errors`, mai un'eccezione che interrompe l'intero giro."""
     cfg = load_app_config()
     days_ahead = days_ahead if days_ahead is not None else cfg.daily_refresh_days_ahead
+    recently_finished_days = (
+        recently_finished_days if recently_finished_days is not None else _RECENTLY_FINISHED_WINDOW_DAYS
+    )
     history = JobHistory()
-    params = {"days_ahead": days_ahead}
+    params = {"days_ahead": days_ahead, "recently_finished_days": recently_finished_days}
     if job_id:
         history.mark_running(job_id=job_id, params=params)
     else:
@@ -421,10 +455,12 @@ def run_prediction_snapshot_refresh(
         today = datetime.now(timezone.utc).date()
         window_start_iso = today.isoformat()
         window_end_iso = (today + timedelta(days=days_ahead + 1)).isoformat()
+        finished_window_start_iso = (today - timedelta(days=recently_finished_days)).isoformat()
+        finished_window_end_iso = (today + timedelta(days=1)).isoformat()
 
         try:
             with SessionLocal() as session:
-                matches = (
+                upcoming_matches = (
                     session.query(Match)
                     .options(selectinload(Match.statistics), selectinload(Match.odds))
                     .filter(Match.id_fixture.is_not(None))
@@ -433,16 +469,34 @@ def run_prediction_snapshot_refresh(
                     .filter(Match.date_match < window_end_iso)
                     .all()
                 )
+                finished_matches = (
+                    session.query(Match)
+                    .options(selectinload(Match.statistics), selectinload(Match.odds))
+                    .filter(Match.id_fixture.is_not(None))
+                    .filter(Match.status.in_(_FINAL_STATUSES))
+                    .filter(Match.date_match >= finished_window_start_iso)
+                    .filter(Match.date_match < finished_window_end_iso)
+                    .all()
+                )
         except (OperationalError, ProgrammingError):
-            matches = []
+            upcoming_matches = []
+            finished_matches = []
 
         markets = ModelRegistry().list_markets()
         service = PredictionSnapshotService()
+
+        existing_snapshots = service.repo.get_latest_bulk([m.id_fixture for m in finished_matches])
+        finished_matches_needing_snapshot = [
+            match
+            for match in finished_matches
+            if any((match.id_fixture, market) not in existing_snapshots for market in markets)
+        ]
+
         fixtures_considered = 0
         predictions_resolved = 0
         errors: list[dict] = []
 
-        for match in matches:
+        for match in [*upcoming_matches, *finished_matches_needing_snapshot]:
             fixtures_considered += 1
             try:
                 payload = service.resolve_predictions(
@@ -454,7 +508,10 @@ def run_prediction_snapshot_refresh(
 
         summary = {
             "days_ahead": days_ahead,
+            "recently_finished_days": recently_finished_days,
             "fixtures_considered": fixtures_considered,
+            "fixtures_upcoming": len(upcoming_matches),
+            "fixtures_recently_finished": len(finished_matches_needing_snapshot),
             "predictions_resolved": predictions_resolved,
             "errors": errors,
             "duration_seconds": time.perf_counter() - start,
@@ -662,9 +719,13 @@ def build_scheduler(cfg: Optional[AppConfig] = None) -> BlockingScheduler:
     2026-09-09 aggiunge un ultimo job, indipendente anch'esso:
     - `prediction_snapshot_refresh` (`schedule_kind="interval_minutes"`):
       ricalcola in background le predizioni delle fixture NS nella stessa
-      finestra di `data_daily_refresh`/`data_future_sync`, riusando
-      `PredictionSnapshotService` - solo dove la fingerprint delle feature
-      o il modello sono cambiati dall'ultimo giro (vedi
+      finestra di `data_daily_refresh`/`data_future_sync` (solo dove la
+      fingerprint delle feature o il modello sono cambiati dall'ultimo
+      giro), E (2026-09-10, punto 2/4 di
+      `PROMPT_fast_historical_predictions.md`) chiude in automatico il
+      buco di copertura per le fixture APPENA concluse (finestra piccola,
+      `_RECENTLY_FINISHED_WINDOW_DAYS` giorni) che non hanno ancora nessuna
+      riga salvata - riusando `PredictionSnapshotService` (vedi
       `run_prediction_snapshot_refresh`). Non chiama alcun provider
       esterno (solo dati gia' a DB + inferenza ML locale).
     """

@@ -799,6 +799,7 @@ class DashboardService:
         with_predictions: bool,
         markets: list[str],
         db_match: Optional[Match] = None,
+        allow_compute: bool = True,
     ) -> Optional[dict[str, Any]]:
         fixture_meta = fixture.get("fixture") or {}
         teams = fixture.get("teams") or {}
@@ -833,7 +834,7 @@ class DashboardService:
 
         if with_predictions and markets:
             predictions = self._predict_fixture(
-                fixture_id=fixture_id, markets=markets, db_match=db_match, status=status
+                fixture_id=fixture_id, markets=markets, db_match=db_match, status=status, allow_compute=allow_compute
             )
             row["predictions"] = predictions
             row["decision_cards"], row["best_decision"] = self._decisions_for_row(
@@ -848,6 +849,8 @@ class DashboardService:
         markets: list[str],
         db_match: Optional[Match] = None,
         status: Optional[str] = None,
+        allow_compute: bool = True,
+        force: bool = False,
     ) -> dict[str, Any]:
         """Delega la risoluzione della predizione grezza per mercato a
         `PredictionSnapshotService` (2026-09-09: cache persistita su DB,
@@ -857,17 +860,33 @@ class DashboardService:
         (sempre, sul payload GREZZO risolto - MAI persistita: e' una
         combinazione tra mercati diversi, non una proprieta' del singolo
         modello, va ricalcolata ad ogni lettura mantenendo la cache
-        semplice "un mercato alla volta")."""
+        semplice "un mercato alla volta").
+
+        `allow_compute=False` (2026-09-10): vietato qualunque calcolo
+        nuovo, serve SOLO cio' che e' gia' salvato - usato dalla vista
+        lista per le date storiche (`get_day_matches`), cosi' che scorrere
+        lo storico resti SEMPRE veloce, mai "quasi sempre" (vedi
+        `PredictionSnapshotService.resolve_predictions`).
+
+        `force=True` (2026-09-10, punto 4/4 di
+        `PROMPT_fast_historical_predictions.md`): ricalcolo ESPLICITO e
+        manuale, usato SOLO da `recompute_predictions` (bottone "Ricalcola
+        previsione" nel dettaglio partita) - MAI dalla vista lista."""
         if not markets:
             return {}
 
-        cache_key = f"{fixture_id}:{','.join(sorted(markets))}"
+        cache_key = f"{fixture_id}:{','.join(sorted(markets))}:{allow_compute}:{force}"
         cached = self._prediction_cache.get(cache_key)
         if cached is not None:
             return cached
 
         payload = self._snapshot_service.resolve_predictions(
-            fixture_id=fixture_id, markets=markets, db_match=db_match, status=status
+            fixture_id=fixture_id,
+            markets=markets,
+            db_match=db_match,
+            status=status,
+            allow_compute=allow_compute,
+            force=force,
         )
 
         self._apply_monotonic_projection(payload)
@@ -899,7 +918,9 @@ class DashboardService:
             payload[market]["probability"] = p
             payload[market]["prediction"] = int(p >= 0.5)
 
-    def _serialize_match(self, match: Match, with_predictions: bool, markets: list[str]) -> dict[str, Any]:
+    def _serialize_match(
+        self, match: Match, with_predictions: bool, markets: list[str], allow_compute: bool = True
+    ) -> dict[str, Any]:
         dt_value = self._parse_datetime(match.date_match)
         phase = self._classify_phase(match.status, dt_value)
 
@@ -925,7 +946,11 @@ class DashboardService:
 
         if with_predictions and match.id_fixture:
             predictions = self._predict_fixture(
-                fixture_id=match.id_fixture, markets=markets, db_match=match, status=match.status
+                fixture_id=match.id_fixture,
+                markets=markets,
+                db_match=match,
+                status=match.status,
+                allow_compute=allow_compute,
             )
             row["predictions"] = predictions
             # Riga gia' dal DB locale: `match.odds` e' gia' caricato via
@@ -1044,6 +1069,17 @@ class DashboardService:
         # stessa policy di tutti gli altri bottoni che chiamano API-Sports).
         skip_api = not force_refresh and is_historical_date and db_has_target_date
 
+        # Vista storica SEMPRE veloce (2026-09-10, richiesto esplicitamente
+        # dall'operatore dopo aver segnalato lentezza anche al secondo giro
+        # sulla stessa data): per una data passata, mai un calcolo nuovo di
+        # predizione nella lista - un mercato senza riga gia' salvata
+        # compare semplicemente come non disponibile invece di innescare un
+        # ricalcolo lento (vedi `PredictionSnapshotService.resolve_predictions`).
+        # Il dettaglio di una singola fixture (`get_match_detail`, un click
+        # deliberato) NON e' toccato da questo flag - resta sempre veloce
+        # tanto quanto completo.
+        allow_compute = not is_historical_date
+
         if not skip_api:
             for fixture in self._fetch_api_day_fixtures(target_date, force_refresh=force_refresh):
                 fixture_id = self._fixture_id_from_api(fixture)
@@ -1052,6 +1088,7 @@ class DashboardService:
                     with_predictions=with_predictions,
                     markets=model_markets,
                     db_match=db_by_fixture.get(fixture_id) if fixture_id is not None else None,
+                    allow_compute=allow_compute,
                 )
                 if not row:
                     continue
@@ -1072,7 +1109,9 @@ class DashboardService:
             if match.id_fixture in seen_fixtures:
                 continue
 
-            row = self._serialize_match(match, with_predictions=with_predictions, markets=model_markets)
+            row = self._serialize_match(
+                match, with_predictions=with_predictions, markets=model_markets, allow_compute=allow_compute
+            )
             if phase and row["phase"] != phase:
                 continue
             if not self._passes_search(row, search_text):
@@ -1332,6 +1371,43 @@ class DashboardService:
             "predictions": predictions,
             "model_markets": model_markets,
             "odds_updated_at": (odds_payload or {}).get("update") if odds_payload else None,
+        }
+
+    def recompute_predictions(self, fixture_id: int, markets: Optional[list[str]] = None) -> dict[str, Any]:
+        """Ricalcolo ESPLICITO e manuale di UNA fixture (2026-09-10, punto
+        4/4 di `PROMPT_fast_historical_predictions.md` - bottone "Ricalcola
+        previsione" nel dettaglio partita): forza
+        `PredictionSnapshotService.resolve_predictions` (via `_predict_fixture`,
+        `force=True`) a ignorare qualunque riga esistente - anche una
+        partita conclusa "congelata" - e a salvare sempre una riga nuova
+        per ogni mercato richiesto (o tutti i mercati registrati se
+        `markets` non specificato). MAI chiamato in automatico da nessun
+        job/vista lista - solo da questa azione utente deliberata."""
+        model_markets = self._normalize_market_request(markets) or self.registry.list_markets()
+
+        api_fixture = self._fetch_api_fixture_detail(fixture_id)
+        db_match = self._fetch_db_match_by_fixture(fixture_id)
+
+        if api_fixture:
+            fixture_row = self._serialize_api_fixture(api_fixture, with_predictions=False, markets=[])
+        elif db_match:
+            fixture_row = self._serialize_match(db_match, with_predictions=False, markets=[])
+        else:
+            return {"fixture_id": fixture_id, "found": False, "predictions": {}, "model_markets": model_markets}
+
+        predictions = self._predict_fixture(
+            fixture_id=fixture_id,
+            markets=model_markets,
+            db_match=db_match,
+            status=fixture_row.get("status"),
+            force=True,
+        )
+
+        return {
+            "fixture_id": fixture_id,
+            "found": True,
+            "predictions": predictions,
+            "model_markets": model_markets,
         }
 
 

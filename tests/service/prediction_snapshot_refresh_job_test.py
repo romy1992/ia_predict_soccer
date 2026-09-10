@@ -19,10 +19,24 @@ def _make_session_factory():
     return sessionmaker(bind=engine, autocommit=False, autoflush=False)
 
 
+class _FakeRepo:
+    """Stub di `MatchPredictionSnapshotRepository.get_latest_bulk` - simula
+    quali (fixture_id, market) hanno gia' una riga salvata, cosi' i test
+    possono verificare l'anti-join fatto da `run_prediction_snapshot_refresh`
+    PRIMA di richiamare `resolve_predictions` per le fixture concluse."""
+
+    def __init__(self, existing_snapshots=None):
+        self.existing_snapshots = existing_snapshots or {}
+
+    def get_latest_bulk(self, fixture_ids):
+        return {key: True for key in self.existing_snapshots if key[0] in fixture_ids}
+
+
 class _FakeSnapshotService:
-    def __init__(self, raise_for_fixture=None):
+    def __init__(self, raise_for_fixture=None, existing_snapshots=None):
         self.calls = []
         self.raise_for_fixture = raise_for_fixture
+        self.repo = _FakeRepo(existing_snapshots)
 
     def resolve_predictions(self, fixture_id, markets, db_match=None, status=None):
         self.calls.append(fixture_id)
@@ -85,7 +99,10 @@ class TestRunPredictionSnapshotRefresh(unittest.TestCase):
 
     def test_only_considers_ns_fixtures_within_window(self):
         self._seed_match(1, status="NS", days_from_today=1)
-        self._seed_match(2, status="FT", days_from_today=1)  # finale, escluso
+        # data FUTURA con status finale (caso sintetico): esclusa sia dalla
+        # finestra NS (status sbagliato) sia da quella "appena concluse"
+        # (guarda solo all'indietro, mai in avanti).
+        self._seed_match(2, status="FT", days_from_today=1)
         self._seed_match(3, status="NS", days_from_today=20)  # fuori finestra, escluso
 
         fake_service = _FakeSnapshotService()
@@ -95,6 +112,61 @@ class TestRunPredictionSnapshotRefresh(unittest.TestCase):
         self.assertEqual(fake_service.calls, [1])
         self.assertEqual(result["fixtures_considered"], 1)
         self.assertEqual(result["predictions_resolved"], 1)
+
+    # --- Punto 2/4 (2026-09-10): partite APPENA concluse ---
+
+    def test_recently_finished_fixture_without_snapshot_is_collected(self):
+        self._seed_match(10, status="FT", days_from_today=-1)  # ieri, nessuna riga salvata
+
+        fake_service = _FakeSnapshotService()
+        with mock.patch.object(scheduler_module, "PredictionSnapshotService", lambda: fake_service):
+            result = scheduler_module.run_prediction_snapshot_refresh(days_ahead=7)
+
+        self.assertEqual(fake_service.calls, [10])
+        self.assertEqual(result["fixtures_considered"], 1)
+        self.assertEqual(result["fixtures_recently_finished"], 1)
+        self.assertEqual(result["predictions_resolved"], 1)
+
+    def test_recently_finished_fixture_already_covered_is_skipped(self):
+        """Anti-join: una fixture conclusa con GIA' una riga per l'UNICO
+        mercato registrato (`h2h`, vedi il mock di `ModelRegistry` in
+        `setUp`) non deve mai richiamare `resolve_predictions` - la riga
+        congelata basta, nessuna query/inferenza aggiuntiva."""
+        self._seed_match(11, status="FT", days_from_today=-1)
+
+        fake_service = _FakeSnapshotService(existing_snapshots={(11, "h2h"): True})
+        with mock.patch.object(scheduler_module, "PredictionSnapshotService", lambda: fake_service):
+            result = scheduler_module.run_prediction_snapshot_refresh(days_ahead=7)
+
+        self.assertEqual(fake_service.calls, [])
+        self.assertEqual(result["fixtures_considered"], 0)
+        self.assertEqual(result["fixtures_recently_finished"], 0)
+
+    def test_old_finished_fixture_outside_window_is_not_touched(self):
+        """Storico oltre la piccola finestra "recenti": resta compito dello
+        script di backfill una tantum (punto 3 del piano), MAI di questo
+        job ricorrente."""
+        self._seed_match(12, status="FT", days_from_today=-30)
+
+        fake_service = _FakeSnapshotService()
+        with mock.patch.object(scheduler_module, "PredictionSnapshotService", lambda: fake_service):
+            result = scheduler_module.run_prediction_snapshot_refresh(days_ahead=7)
+
+        self.assertEqual(fake_service.calls, [])
+        self.assertEqual(result["fixtures_considered"], 0)
+
+    def test_recently_finished_window_is_configurable(self):
+        self._seed_match(13, status="FT", days_from_today=-5)
+
+        fake_service = _FakeSnapshotService()
+        with mock.patch.object(scheduler_module, "PredictionSnapshotService", lambda: fake_service):
+            result_default_window = scheduler_module.run_prediction_snapshot_refresh(days_ahead=7)
+            result_wide_window = scheduler_module.run_prediction_snapshot_refresh(
+                days_ahead=7, recently_finished_days=10
+            )
+
+        self.assertEqual(result_default_window["fixtures_recently_finished"], 0)
+        self.assertEqual(result_wide_window["fixtures_recently_finished"], 1)
 
     def test_isolates_per_fixture_errors_without_failing_the_whole_job(self):
         self._seed_match(1, status="NS", days_from_today=1)
