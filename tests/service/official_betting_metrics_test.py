@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from src.api.dashboard_service import DashboardService
 from src.oracle.decision_engine.decision_policy import evaluate_decision
 from src.oracle.ledger.ledger_service import PredictionLedgerService
 from src.oracle.ledger.official_performance_service import (
@@ -142,13 +143,20 @@ def test_only_voids_have_null_roi_and_hit_rate():
 
 
 class _Repo:
+    def __init__(self):
+        self.rows = {}
+        self.save_calls = 0
+
     def find_by_capture_key(self, _key):
-        return None
+        return self.rows.get(_key)
 
     def find_existing(self, **_kwargs):
         return None
 
     def save(self, row):
+        self.save_calls += 1
+        if row.capture_key:
+            self.rows[row.capture_key] = row
         return row
 
 
@@ -173,6 +181,33 @@ def test_official_play_cannot_be_registered_after_kickoff():
         )
 
 
+def test_official_capture_key_is_idempotent():
+    repo = _Repo()
+    service = PredictionLedgerService(repo=repo)
+    decision = evaluate_decision(
+        market="under_over_2_5",
+        outcome="Over 2.5",
+        p_model=0.75,
+        p_market_fair=0.5,
+        odd=2.0,
+        samples=5,
+    )
+    now = datetime.now(timezone.utc)
+    kwargs = {
+        "fixture_id": 10,
+        "decision": decision,
+        "kickoff_at": now + timedelta(minutes=60),
+        "captured_at": now,
+        "source": OFFICIAL_SOURCE,
+        "cohort": OFFICIAL_COHORT,
+        "capture_key": "10:under_over_2_5:Over2.5:60",
+    }
+    first = service.log_prediction(**kwargs)
+    second = service.log_prediction(**kwargs)
+    assert first is second
+    assert repo.save_calls == 1
+
+
 def test_missing_odd_is_not_a_void():
     record = PredictionRecord(
         fixture_id=1,
@@ -186,3 +221,38 @@ def test_missing_odd_is_not_a_void():
     assert settled.settlement_status == "not_placed_missing_odd"
     assert not settled.settlement_status.startswith("void_")
     assert settled.pnl == 0.0
+
+
+def test_rendering_dashboard_decisions_does_not_write_ledger(monkeypatch):
+    writes = []
+    monkeypatch.setattr(
+        "src.repository.prediction_ledger_repository.PredictionLedgerRepository.save",
+        lambda *_args, **_kwargs: writes.append(True),
+    )
+    service = DashboardService()
+    service._build_decision_cards(
+        row_context={"home": "A", "away": "B"},
+        predictions={"under_over_2_5": {"prediction": 1, "probability": 0.75}},
+        odds_summary={
+            "under_over_2_5": [
+                {"outcome": "Over 2.5", "avg_odd": 2.0, "bookmakers": 3},
+                {"outcome": "Under 2.5", "avg_odd": 1.9, "bookmakers": 3},
+            ]
+        },
+        bookmaker_baseline={
+            "markets": {
+                "under_over_2_5": {
+                    "outcomes": [
+                        {
+                            "outcome": "Over 2.5",
+                            "avg_odd": 2.0,
+                            "bookmakers": 3,
+                            "raw_probability": 0.5,
+                            "fair_probability": 0.487,
+                        }
+                    ]
+                }
+            }
+        },
+    )
+    assert writes == []
