@@ -303,6 +303,62 @@ class TestPredictionSnapshotServiceResolvePredictions(unittest.TestCase):
         payload = service.resolve_predictions(fixture_id=1, markets=["h2h"], status="NS")
         self.assertEqual(payload, {})
 
+    # --- allow_compute=False (2026-09-10, vista storica sempre veloce) ---
+
+    def test_final_match_allow_compute_false_serves_only_existing_snapshot(self):
+        service = PredictionSnapshotService()
+        service.repo.save(
+            MatchPredictionSnapshot(
+                fixture_id=1,
+                market="h2h",
+                prediction=1,
+                probability=0.75,
+                model_name="logistic",
+                model_run_id="run_old",
+                feature_fingerprint="whatever",
+            )
+        )
+        service.filter_service = _ExplodingFilterService()
+        service.registry = mock.Mock()
+        service.registry.get_production = lambda market: (_ for _ in ()).throw(
+            AssertionError("registry non doveva essere consultato")
+        )
+
+        payload = service.resolve_predictions(
+            fixture_id=1, markets=["h2h", "goal_no_goal"], status="FT", allow_compute=False
+        )
+
+        self.assertEqual(payload["h2h"]["probability"], 0.75)
+        self.assertNotIn("goal_no_goal", payload)
+
+    def test_final_match_allow_compute_false_without_snapshot_skips_market_entirely(self):
+        service = PredictionSnapshotService()
+        service.filter_service = _ExplodingFilterService()
+        service.registry = mock.Mock()
+        service.registry.get_production = lambda market: (_ for _ in ()).throw(
+            AssertionError("registry non doveva essere consultato")
+        )
+
+        payload = service.resolve_predictions(fixture_id=1, markets=["h2h"], status="FT", allow_compute=False)
+
+        self.assertEqual(payload, {})
+        rows = service.repo.list_for_fixture(fixture_id=1, market="h2h")
+        self.assertEqual(len(rows), 0)
+
+    def test_ns_match_allow_compute_false_never_computes(self):
+        """Caso raro/difensivo: una data storica non dovrebbe mai avere
+        fixture NS/live, ma se capita non deve comunque mai calcolare."""
+        service = PredictionSnapshotService()
+        service.filter_service = _ExplodingFilterService()
+        service.registry = mock.Mock()
+        service.registry.get_production = lambda market: (_ for _ in ()).throw(
+            AssertionError("registry non doveva essere consultato")
+        )
+
+        payload = service.resolve_predictions(fixture_id=1, markets=["h2h"], status="NS", allow_compute=False)
+
+        self.assertEqual(payload, {})
+
     def test_model_cache_is_shared_across_instances(self):
         """`_model_cache` a livello di CLASSE (2026-09-09, fix "sempre
         lentissimo"): un secondo `PredictionSnapshotService()` NON deve

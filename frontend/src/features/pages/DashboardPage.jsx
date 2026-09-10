@@ -71,7 +71,13 @@ export default function DashboardPage({
         <PhaseTabs phases={["all", "to_play", "live", "finished"]} value={phaseFilter} onChange={onChangePhaseFilter} />
         <MarketTabs markets={markets} value={selectedMarket} onChange={onChangeSelectedMarket} />
 
-        <MatchTable rows={safeRows} selectedFixtureId={selectedFixtureId} onOpenMatch={onOpenMatch} onOpenOracleDetail={onOpenOracleDetail} />
+        <MatchTable
+          rows={safeRows}
+          selectedFixtureId={selectedFixtureId}
+          onOpenMatch={onOpenMatch}
+          onOpenOracleDetail={onOpenOracleDetail}
+          modelMarkets={dayData?.model_markets}
+        />
       </section>
     </section>
   );
