@@ -10,6 +10,8 @@ logs/
 /backups/
 # log di output di test run manuali (non vanno versionati)
 *.log
+# database SQLite locale/runtime: può contenere dati reali e non va versionato
+/previsioni.db
 
 /alembic/__pycache__/
 /alembic/versions/__pycache__/
