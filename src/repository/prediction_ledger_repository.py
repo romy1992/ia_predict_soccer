@@ -115,9 +115,9 @@ class PredictionLedgerRepository:
             if is_settled is not None:
                 query = query.filter(PredictionLedger.is_settled.is_(bool(is_settled)))
             if since is not None:
-                query = query.filter(PredictionLedger.captured_at >= since)
+                query = query.filter(PredictionLedger.created_at >= since)
             if until is not None:
-                query = query.filter(PredictionLedger.captured_at <= until)
+                query = query.filter(PredictionLedger.created_at <= until)
             if cohort is not None:
                 query = query.filter(PredictionLedger.cohort == cohort)
             if outcome is not None:
