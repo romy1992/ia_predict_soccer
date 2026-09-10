@@ -29,7 +29,11 @@ def upgrade() -> None:
     op.add_column("prediction_ledger", sa.Column("league", sa.Integer(), nullable=True))
     op.add_column("prediction_ledger", sa.Column("capture_key", sa.String(length=160), nullable=True))
     op.execute("UPDATE prediction_ledger SET captured_at = created_at WHERE captured_at IS NULL")
-    op.alter_column("prediction_ledger", "captured_at", nullable=False)
+    if op.get_bind().dialect.name == "sqlite":
+        with op.batch_alter_table("prediction_ledger") as batch_op:
+            batch_op.alter_column("captured_at", nullable=False)
+    else:
+        op.alter_column("prediction_ledger", "captured_at", nullable=False)
     op.create_index("uq_prediction_ledger_capture_key", "prediction_ledger", ["capture_key"], unique=True)
     op.create_index(
         "ix_prediction_ledger_cohort_captured_at",

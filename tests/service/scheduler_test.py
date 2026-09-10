@@ -196,6 +196,37 @@ class TestJobTargetsAreCorrectAndIndependent(unittest.TestCase):
         self.assertNotIn(scheduler_module.run_daily_pipeline, targets)
 
 
+class TestSettlementIncludesLedger(unittest.TestCase):
+    def test_data_settlement_runs_prediction_ledger_settlement(self):
+        history = mock.Mock()
+        match_service = mock.Mock()
+        match_service.run_settlement.return_value = {
+            "final_matches_seen": 2,
+            "updated": 1,
+            "complete": 1,
+            "incomplete": 1,
+        }
+        ledger_service = mock.Mock()
+        ledger_service.settle_pending.return_value = {
+            "ledger_candidates": 1,
+            "ledger_settled_win": 1,
+            "ledger_settled_loss": 0,
+            "ledger_void": 0,
+            "ledger_still_pending": 0,
+            "errors": [],
+        }
+        with (
+            mock.patch.object(scheduler_module, "JobHistory", return_value=history),
+            mock.patch.object(scheduler_module, "SettlementService", return_value=match_service),
+            mock.patch.object(scheduler_module, "PredictionLedgerService", return_value=ledger_service),
+        ):
+            report = scheduler_module.run_manual_settlement(job_id="job-1")
+
+        ledger_service.settle_pending.assert_called_once_with()
+        self.assertEqual(report["ledger_settled_win"], 1)
+        self.assertIn("ledger_settlement_seconds", report["phase_durations"])
+
+
 class TestLastCompletedRun(unittest.TestCase):
     """`_last_completed_run` e' l'unica fonte di verita' per "quando e'
     girato l'ultima volta" un job - isolata da file reali tramite un
