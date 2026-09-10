@@ -132,6 +132,18 @@ JOB_DEFINITIONS: dict[str, dict[str, Any]] = {
         "job_history_type": "prediction_snapshot_refresh",
         "cfg_fields": {"interval_minutes": "prediction_snapshot_interval_minutes"},
     },
+    "official_prediction_capture": {
+        "label": "Cattura PLAY ufficiali",
+        "description": (
+            "Registra nel Prediction Ledger le sole decisioni PLAY con modello production "
+            "e quota snapshot valida, prima del kickoff. È idempotente e non dipende dalla Dashboard."
+        ),
+        "default_enabled": True,
+        "calls_api_sports": False,
+        "schedule_kind": "interval_minutes",
+        "job_history_type": "official_prediction_capture",
+        "cfg_fields": {"interval_minutes": "official_capture_interval_minutes"},
+    },
 }
 
 # Limiti di validazione per ciascun `schedule_kind` (Impostazioni, editor

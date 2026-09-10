@@ -364,16 +364,45 @@ class PredictionLedgerResponse(BaseModel):
 
 
 class PredictionSettlementResponse(BaseModel):
-    candidates: int
-    settled: int
-    still_pending: int
-    void_no_result: int
+    ledger_candidates: int
+    ledger_settled_win: int
+    ledger_settled_loss: int
+    ledger_void: int
+    ledger_still_pending: int
+    errors: list[dict[str, Any]] = []
 
 
 class PaperPnlResponse(BaseModel):
     market: Optional[str] = None
     raw_summary: dict[str, Any]
     report: dict[str, Any]
+
+
+class OfficialPerformanceResponse(BaseModel):
+    source: str
+    cohort: str
+    generated_at: str
+    filters: dict[str, Any]
+    sample_size: int
+    settled_count: int
+    void_count: int
+    pending_count: int
+    overall: dict[str, Any]
+    breakdowns: dict[str, Any]
+
+
+class OfficialClvResponse(BaseModel):
+    source: str
+    cohort: str
+    generated_at: str
+    filters: dict[str, Any]
+    sample_size: int
+    settled_count: int
+    void_count: int
+    pending_count: int
+    overall: dict[str, Any]
+    breakdowns: dict[str, Any]
+    rows: list[dict[str, Any]]
 
 
 class BetslipPoolResponse(BaseModel):

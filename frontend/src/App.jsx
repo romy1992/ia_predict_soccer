@@ -14,6 +14,7 @@ import {
   getMarkets,
   getMonitoringAlerts,
   getMonitoringOverview,
+  getOfficialPerformance,
   getPredictions,
   predict,
   recomputeMatchPredictions,
@@ -62,6 +63,8 @@ export default function App() {
   const [monitoringMarket, setMonitoringMarket] = useState("all");
   const [monitoringReport, setMonitoringReport] = useState(null);
   const [monitoringAlerts, setMonitoringAlerts] = useState([]);
+  const [officialPerformance, setOfficialPerformance] = useState(null);
+  const [officialDays, setOfficialDays] = useState(30);
   const [monitoringLoading, setMonitoringLoading] = useState(false);
   const [monitoringError, setMonitoringError] = useState("");
   const [predictOutput, setPredictOutput] = useState("");
@@ -261,12 +264,14 @@ export default function App() {
     setMonitoringError("");
     try {
       const marketFilter = monitoringMarket === "all" ? undefined : monitoringMarket;
-      const [overviewPayload, alertsPayload] = await Promise.all([
+      const [overviewPayload, alertsPayload, officialPayload] = await Promise.all([
         getMonitoringOverview({ market: marketFilter }),
         getMonitoringAlerts({ market: marketFilter }),
+        getOfficialPerformance({ market: marketFilter, days: officialDays }),
       ]);
       setMonitoringReport(overviewPayload);
       setMonitoringAlerts(alertsPayload?.alerts || []);
+      setOfficialPerformance(officialPayload);
       return overviewPayload;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -275,7 +280,7 @@ export default function App() {
     } finally {
       setMonitoringLoading(false);
     }
-  }, [monitoringMarket]);
+  }, [monitoringMarket, officialDays]);
   const loadEverything = useCallback(async (manual = true) => {
     // Ricarica SOLO dati gia' presenti a DB (health/markets/jobs/dashboard) -
     // NESSUNA sync col provider esterno API-Sports qui (per quello vedi
@@ -755,6 +760,9 @@ export default function App() {
       onChangeMarket: setMonitoringMarket,
       markets,
       report: monitoringReport,
+      officialPerformance,
+      officialDays,
+      onChangeOfficialDays: setOfficialDays,
       alerts: monitoringAlerts,
       isLoading: monitoringLoading,
       error: monitoringError,

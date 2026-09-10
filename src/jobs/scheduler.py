@@ -17,6 +17,8 @@ from src.data.quality_report_service import DataQualityService
 from src.jobs.job_history import JobHistory
 from src.jobs.job_settings import JOB_DEFINITIONS, is_job_enabled, resolve_job_schedule
 from src.ml.serving.prediction_snapshot_service import PredictionSnapshotService
+from src.oracle.ledger.ledger_service import PredictionLedgerService
+from src.oracle.ledger.official_capture_service import OfficialPredictionCaptureService
 from src.repository.base.repository_db import SessionLocal
 from src.service_ia.config.app_config import AppConfig, load_app_config
 from src.service_ia.model.match import Match
@@ -315,6 +317,18 @@ def run_manual_settlement(
             seasons=seasons,
             leagues=leagues,
         )
+        data_phase_duration = time.perf_counter() - start
+        ledger_start = time.perf_counter()
+        ledger_report = PredictionLedgerService().settle_pending()
+        ledger_duration = time.perf_counter() - ledger_start
+        report["matches_updated"] = report.get("updated", 0)
+        report["matches_complete"] = report.get("complete", 0)
+        report["matches_incomplete"] = report.get("incomplete", 0)
+        report.update(ledger_report)
+        report["phase_durations"] = {
+            "match_settlement_seconds": data_phase_duration,
+            "ledger_settlement_seconds": ledger_duration,
+        }
         report["duration_seconds"] = time.perf_counter() - start
         history.mark_success(job_id=job_id, summary=report)
         report["job_id"] = job_id
@@ -327,6 +341,37 @@ def run_manual_settlement(
                 "duration_seconds": time.perf_counter() - start,
                 "params": params,
             },
+        )
+        raise
+
+
+def run_official_prediction_capture(job_id: Optional[str] = None) -> dict:
+    """Cattura deterministica delle PLAY ufficiali, indipendente dal frontend."""
+    cfg = load_app_config()
+    history = JobHistory()
+    params = {"cutoff_minutes": cfg.official_capture_minutes_before_kickoff}
+    if job_id:
+        history.mark_running(job_id=job_id, params=params)
+    else:
+        started = history.create_job(
+            job_type="official_prediction_capture",
+            status="running",
+            params=params,
+            started_at=JobHistory._now_iso(),
+        )
+        job_id = started["job_id"]
+    start = time.perf_counter()
+    try:
+        report = OfficialPredictionCaptureService().capture(
+            cutoff_minutes=cfg.official_capture_minutes_before_kickoff
+        )
+        report["duration_seconds"] = time.perf_counter() - start
+        history.mark_success(job_id=job_id, summary=report)
+        return {"job_id": job_id, **report}
+    except Exception as exc:
+        history.mark_failed(
+            job_id=job_id,
+            error={"message": str(exc), "duration_seconds": time.perf_counter() - start, "params": params},
         )
         raise
 
@@ -800,6 +845,13 @@ def build_scheduler(cfg: Optional[AppConfig] = None) -> BlockingScheduler:
         functools.partial(_run_if_due, "prediction_snapshot_refresh", run_prediction_snapshot_refresh, cfg=cfg),
         trigger=heartbeat,
         job_id="prediction_snapshot_refresh",
+        misfire_grace_time=_MISFIRE_GRACE_SECONDS,
+    )
+    _add_job(
+        scheduler,
+        functools.partial(_run_if_due, "official_prediction_capture", run_official_prediction_capture, cfg=cfg),
+        trigger=heartbeat,
+        job_id="official_prediction_capture",
         misfire_grace_time=_MISFIRE_GRACE_SECONDS,
     )
 

@@ -386,8 +386,13 @@ class DashboardService:
             "home/draw": "Home/Draw",
             "draw/away": "Draw/Away",
             "home/away": "Home/Away",
+            "1x": "Home/Draw",
+            "x2": "Draw/Away",
+            "12": "Home/Away",
             "yes": "Yes",
             "no": "No",
+            "goal": "Yes",
+            "no_goal": "No",
         }
         key = val.lower()
         if key in mapping:
@@ -524,7 +529,8 @@ class DashboardService:
             return ("Goal" if pick == "Yes" else "No Goal"), odd
 
         if market == "dc":
-            pick = "Home/Draw" if prediction == 1 else "Draw/Away"
+            # Il modello legacy è P(1X) vs P(2), non 1X vs X2.
+            pick = "Home/Draw" if prediction == 1 else "Away"
             odd = normalized.get(self._normalize_text(pick))
             return pick, odd
 
@@ -533,13 +539,10 @@ class DashboardService:
                 pick = row_context.get("home") or "Home"
                 odd = normalized.get(self._normalize_text("Home"))
             else:
-                # BET-02 ("Usare outcome corretto"): NON usare la quota
-                # "Draw" come fallback per il pick "Away" — sono due
-                # outcome diversi, mixarli produrrebbe un edge/EV calcolato
-                # sulla quota sbagliata. Se manca la quota "Away", l'odd
-                # resta None (gestito esplicitamente dal Value Engine).
-                pick = row_context.get("away") or "Away"
-                odd = normalized.get(self._normalize_text("Away"))
+                # Il binario legacy stima Not Home (Draw + Away): non può
+                # essere prezzato con la sola quota Away.
+                pick = "Non casa"
+                odd = None
             return pick, odd
 
         if market in {"corners", "cards"}:
@@ -569,11 +572,11 @@ class DashboardService:
     @staticmethod
     def _baseline_outcome_for_prediction(market: str, prediction: int, pick_label: str) -> str:
         if market == "h2h":
-            return "Home" if prediction == 1 else "Away"
+            return "Home" if prediction == 1 else "Not Home"
         if market == "goal_no_goal":
             return "Yes" if prediction == 1 else "No"
         if market == "dc":
-            return "Home/Draw" if prediction == 1 else "Draw/Away"
+            return "Home/Draw" if prediction == 1 else "Away"
         if market.startswith("under_over_"):
             threshold = market.replace("under_over_", "").replace("_", ".")
             return f"Over {threshold}" if prediction == 1 else f"Under {threshold}"
@@ -644,6 +647,7 @@ class DashboardService:
                 {
                     "market": market,
                     "pick": pick,
+                    "outcome": baseline_outcome,
                     "prediction": prediction,
                     "model_name": payload.get("model_name"),
                     "run_id": payload.get("run_id"),

@@ -68,7 +68,7 @@ class TestBuildSchedulerJobsSeparation(unittest.TestCase):
     job SEPARATI per data sync (frequenti) e training (indipendente) - mai
     un job unico che incatena import+retrain."""
 
-    def test_registers_exactly_eight_independent_jobs(self):
+    def test_registers_exactly_nine_independent_jobs(self):
         sched = scheduler_module.build_scheduler(cfg=_cfg())
         job_ids = {job.id for job in sched.get_jobs()}
         self.assertEqual(
@@ -82,12 +82,13 @@ class TestBuildSchedulerJobsSeparation(unittest.TestCase):
                 "ml_training",
                 "data_sync_live",
                 "prediction_snapshot_refresh",
+                "official_prediction_capture",
             },
         )
 
     def test_build_scheduler_uses_default_config_when_none_given(self):
         sched = scheduler_module.build_scheduler()
-        self.assertEqual(len(sched.get_jobs()), 8)
+        self.assertEqual(len(sched.get_jobs()), 9)
 
 
 class TestMaxInstancesAndCoalesce(unittest.TestCase):
@@ -97,7 +98,7 @@ class TestMaxInstancesAndCoalesce(unittest.TestCase):
     def test_every_job_has_max_instances_one_and_coalesce_true(self):
         sched = scheduler_module.build_scheduler(cfg=_cfg())
         jobs = sched.get_jobs()
-        self.assertEqual(len(jobs), 8)
+        self.assertEqual(len(jobs), 9)
         for job in jobs:
             self.assertEqual(job.max_instances, 1, f"{job.id} deve avere max_instances=1")
             self.assertTrue(job.coalesce, f"{job.id} deve avere coalesce=True")
@@ -182,6 +183,10 @@ class TestJobTargetsAreCorrectAndIndependent(unittest.TestCase):
         snapshot_job = sched.get_job("prediction_snapshot_refresh")
         self.assertIs(_target_func(snapshot_job), scheduler_module.run_prediction_snapshot_refresh)
         self.assertIsNot(_target_func(snapshot_job), scheduler_module.run_manual_retrain)
+
+    def test_official_capture_job_targets_correct_function(self):
+        job = scheduler_module.build_scheduler(cfg=_cfg()).get_job("official_prediction_capture")
+        self.assertIs(_target_func(job), scheduler_module.run_official_prediction_capture)
 
     def test_no_single_job_bundles_import_and_retrain(self):
         # Nessuno dei job registrati deve puntare a `run_daily_pipeline`

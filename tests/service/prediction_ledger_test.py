@@ -26,6 +26,8 @@ from src.oracle.decision_engine.decision_policy import evaluate_decision
 from src.oracle.ledger.ledger_service import PredictionLedgerService
 from src.oracle.ledger.prediction_ledger import (
     SETTLED,
+    SETTLED_LOSS,
+    SETTLED_WIN,
     VOID_MISSING_ODD,
     VOID_NO_RESULT,
     build_prediction_record,
@@ -79,7 +81,12 @@ class TestResolveActualOutcome(unittest.TestCase):
     def test_h2h_away_win(self):
         stat_home = {"score_ft": 0}
         stat_away = {"score_ft": 3}
-        self.assertEqual(resolve_actual_outcome("h2h", stat_home, stat_away), "Away")
+        self.assertEqual(resolve_actual_outcome("h2h", stat_home, stat_away), "Not Home")
+
+    def test_h2h_draw_is_not_away(self):
+        stat_home = {"score_ft": 1}
+        stat_away = {"score_ft": 1}
+        self.assertEqual(resolve_actual_outcome("h2h", stat_home, stat_away), "Not Home")
 
     def test_under_over_2_5_over(self):
         stat_home = {"score_ft": 2}
@@ -99,7 +106,7 @@ class TestResolveActualOutcome(unittest.TestCase):
     def test_dc(self):
         stat_home = {"score_ft": 1}
         stat_away = {"score_ft": 1}
-        self.assertEqual(resolve_actual_outcome("dc", stat_home, stat_away), "1X")
+        self.assertEqual(resolve_actual_outcome("dc", stat_home, stat_away), "Draw")
 
     def test_none_when_scores_missing(self):
         self.assertIsNone(resolve_actual_outcome("h2h", {"score_ft": None}, {"score_ft": 1}))
@@ -143,7 +150,7 @@ class TestSettlePredictionRecord(unittest.TestCase):
         settled = settle_prediction_record(record=record, actual_outcome="Home")
 
         self.assertTrue(settled.is_settled)
-        self.assertEqual(settled.settlement_status, SETTLED)
+        self.assertEqual(settled.settlement_status, SETTLED_WIN)
         self.assertTrue(settled.won)
         self.assertEqual(settled.actual_outcome, "Home")
         self.assertAlmostEqual(settled.pnl, 1.0)  # stake 1.0 * (odd 2.0 - 1)
@@ -152,7 +159,7 @@ class TestSettlePredictionRecord(unittest.TestCase):
         record = self._record()
         settled = settle_prediction_record(record=record, actual_outcome="Away")
 
-        self.assertEqual(settled.settlement_status, SETTLED)
+        self.assertEqual(settled.settlement_status, SETTLED_LOSS)
         self.assertFalse(settled.won)
         self.assertAlmostEqual(settled.pnl, -1.0)
 
@@ -161,8 +168,8 @@ class TestSettlePredictionRecord(unittest.TestCase):
         settled = settle_prediction_record(record=record, actual_outcome="Home")
 
         self.assertEqual(settled.settlement_status, VOID_MISSING_ODD)
-        self.assertTrue(settled.won)  # l'esito resta calcolabile (utile per hit-rate)
-        self.assertIsNone(settled.pnl)
+        self.assertIsNone(settled.won)
+        self.assertEqual(settled.pnl, 0.0)
 
     def test_void_no_result(self):
         record = self._record()
@@ -170,7 +177,7 @@ class TestSettlePredictionRecord(unittest.TestCase):
 
         self.assertEqual(settled.settlement_status, VOID_NO_RESULT)
         self.assertIsNone(settled.won)
-        self.assertIsNone(settled.pnl)
+        self.assertEqual(settled.pnl, 0.0)
 
     def test_does_not_mutate_original_record(self):
         """Immutabilita' logica (acceptance criteria BET-06): l'oggetto
