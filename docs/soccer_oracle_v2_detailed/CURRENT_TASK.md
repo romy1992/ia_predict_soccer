@@ -1,5 +1,35 @@
 # CURRENT TASK
 
+## Task correttivo: quota void IA e decisioni per partita (2026-09-10)
+
+Intervento incrementale sul percorso betting ufficiale già completato. La
+**quota void IA** è ora formalizzata come quota di pareggio economico del
+modello (`model_void_odd = 1 / p_model`) e resta distinta sia dalla quota fair
+di mercato (`market_fair_odd = 1 / p_market_fair`) sia dallo stato di
+settlement `VOID`.
+
+La Decision Policy `decision_policy_v2_model_break_even` applica una soglia
+economica minima versionata del 2%:
+
+- `market_odd < model_void_odd`: `NO BET`;
+- `model_void_odd <= market_odd < play_threshold_odd`: `BORDERLINE`;
+- oltre la soglia: `PLAY` solo se anche gli altri vincoli della policy sono
+  soddisfatti;
+- quota mancante: `SENZA QUOTA`; probabilità non valida: `N/D`.
+
+Il backend restituisce edge assoluto sulla quota, edge percentuale, EV e ROI
+atteso. Il ROI atteso è ex-ante (`ev * 100`), mentre il ROI ufficiale resta il
+consuntivo delle sole PLAY registrate e settled. Dashboard, cattura ufficiale
+e Ledger usano lo stesso motore server-side; i nuovi record conservano anche
+soglia, motivazione e metriche economiche. I record storici non vengono
+modificati.
+
+Il Match Center mostra per ogni partita e mercato pronostico, probabilità,
+quota mercato, quota void IA, edge, ROI atteso, situazione ed eventuale esito
+ufficiale. Per partite concluse con una PLAY ufficiale usa i valori congelati
+nel Ledger; senza record mostra “Non ufficiale”. Sono disponibili filtro
+Situazione e contatori per mercato, con vista mobile dedicata.
+
 ## Task corrente
 **AGGIORNAMENTO 2026-09-10: vista storica Dashboard sempre veloce + copertura completa banca dati predizioni**. Richiesto esplicitamente dall'operatore dopo aver segnalato che il cambio data restava lento ANCHE al secondo giro sulla STESSA data storica (non solo la prima volta): la banca dati `match_prediction_snapshot` (introdotta il giorno prima) copriva solo le fixture viste in Dashboard o intercettate dal job mentre erano ancora `NS`, mai lo storico gia' passato ne' le partite finite fuori da quella finestra. Piano a 4 punti (documentato e aggiornato ad ogni punto, su richiesta esplicita dell'operatore, in `docs/soccer_oracle_v2_detailed/PROMPT_fast_historical_predictions.md`), tutti e 4 completati dal lato codice:
 

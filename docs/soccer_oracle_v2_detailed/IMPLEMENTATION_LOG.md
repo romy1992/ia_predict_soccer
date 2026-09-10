@@ -1,3 +1,26 @@
+## 2026-09-10 — Correzione quota void IA e Match Center per mercato
+
+- Introdotta `decision_policy_v2_model_break_even`, senza modificare la v1
+  storica: `model_void_odd = 1 / p_model`, soglia PLAY configurabile tramite
+  `min_edge_percent` (default 2%), classificazioni `PLAY`, `BORDERLINE`,
+  `NO BET`, `SENZA QUOTA` e `N/D` con motivazione esplicita.
+- Distinte le grandezze `model_void_odd` e `market_fair_odd`; aggiunti edge
+  quota assoluto/percentuale, EV, ROI atteso e soglia PLAY. L'edge
+  probabilistico preesistente resta invariato.
+- Esteso il Prediction Ledger in modo additivo per congelare le nuove
+  metriche e la motivazione al momento della cattura. Nessun record
+  preesistente viene aggiornato retroattivamente.
+- Dashboard e cattura ufficiale continuano a usare lo stesso entry point
+  della Decision Policy. Il dettaglio supporta inoltre output 1X2
+  multiclass Home/Draw/Away e Double Chance derivata, prezzando ogni outcome
+  soltanto con la propria quota.
+- Match Center esteso con selettore mercato, filtro Situazione, contatori,
+  colonne separate per quota mercato/quota void/edge/ROI atteso/stato
+  ufficiale e card mobile. Le NO BET restano visibili.
+- Per fixture con Ledger ufficiale, Match Center usa i valori congelati e
+  mostra PENDING/WON/LOST/VOID e PnL; in assenza di record mostra
+  “Non ufficiale”.
+
 # Soccer Oracle V2 - Implementation Log
 
 ## Baseline (SOCCER-00)
