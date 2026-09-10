@@ -161,7 +161,7 @@ class PredictionLedgerService:
         if is_official and kickoff_at is None:
             raise ValueError("kickoff_at obbligatorio per registrare una giocata")
         captured_aware = captured_at if captured_at.tzinfo else captured_at.replace(tzinfo=timezone.utc)
-        if kickoff_at is not None:
+        if is_official and kickoff_at is not None:
             kickoff_aware = kickoff_at if kickoff_at.tzinfo else kickoff_at.replace(tzinfo=timezone.utc)
             if captured_aware >= kickoff_aware:
                 raise ValueError("Una giocata non può essere registrata al o dopo il kickoff")
