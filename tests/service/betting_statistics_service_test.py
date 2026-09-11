@@ -124,14 +124,20 @@ class FakeOfficialService:
 
 
 def test_unified_statistics_keep_proposals_and_official_performance_separate():
+    proposal_repo = FakeProposalRepo()
+    BetslipProposalSnapshotService(repo=proposal_repo).save_generation(
+        reference_date="2099-01-01",
+        generation=_generation(),
+    )
     service = BettingStatisticsService(
         ledger_repo=FakeLedgerRepo(),
-        proposal_repo=FakeProposalRepo(),
+        proposal_repo=proposal_repo,
         official_betslip_service=FakeOfficialService(),
     )
     report = service.report(days=30)
 
     assert report["overview"]["official_predictions"]["wins"] == 1
     assert report["overview"]["official_slips"]["total"] == 1
-    assert report["overview"]["proposals"]["generated"] == 0
+    assert report["overview"]["proposals"]["generated"] == 1
+    assert report["slips"]["proposals_daily"][0]["date"] == "2099-01-01"
     assert report["markets"]["daily"][0]["market"] == "1x2"

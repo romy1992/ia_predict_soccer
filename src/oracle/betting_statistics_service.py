@@ -74,11 +74,14 @@ class BettingStatisticsService:
             for (day, market), rows in sorted(market_groups.items(), reverse=True)
         ]
 
-        proposals = [
-            row
-            for row in self.proposal_repo.list_all(limit=1_000_000)
-            if since_date <= row.reference_date <= until_date
-        ]
+        # La finestra riguarda QUANDO la proposta è stata generata, non la
+        # data dell'evento: così una schedina futura salvata oggi compare
+        # subito nelle statistiche di attività.
+        proposals = self.proposal_repo.list_all(
+            since=since,
+            until=now,
+            limit=1_000_000,
+        )
         latest_proposals = [row for row in proposals if row.is_latest]
         proposal_daily_groups: dict[str, list[Any]] = defaultdict(list)
         proposal_profile_groups: dict[str, list[Any]] = defaultdict(list)
