@@ -86,19 +86,24 @@ class TestDashboardService(unittest.TestCase):
         service.get_day_matches = mock.Mock(
             return_value=dashboard_service_module.DashboardDayData(
                 date="2099-09-01",
-                total=2,
-                returned=2,
+                total=1,
+                returned=1,
                 model_markets=["h2h"],
                 rows=[
                     {"fixture_id": 2001, "phase": "live", "datetime": "2099-09-01T18:45:00+00:00", "league": "Serie A", "home": "Napoli"},
-                    {"fixture_id": 2002, "phase": "to_play", "datetime": "2099-09-01T20:45:00+00:00", "league": "Serie A", "home": "Juventus"},
                 ],
             )
         )
 
         payload = service.get_live_matches(target_date=date(2099, 9, 1), limit=50)
 
-        service.get_day_matches.assert_called_once()
+        service.get_day_matches.assert_called_once_with(
+            target_date=date(2099, 9, 1),
+            limit=0,
+            with_predictions=True,
+            markets=["h2h"],
+            phase="live",
+        )
         self.assertEqual(payload["total"], 1)
         self.assertEqual(payload["returned"], 1)
         self.assertEqual(payload["rows"][0]["home"], "Napoli")
@@ -305,7 +310,12 @@ class TestDashboardService(unittest.TestCase):
             ]
         }
 
-        payload = service.get_day_matches(target_date=date(2026, 9, 1), limit=50, with_predictions=True)
+        payload = service.get_day_matches(
+            target_date=date(2026, 9, 1),
+            limit=50,
+            with_predictions=True,
+            force_refresh=True,
+        )
 
         self.assertEqual(payload.returned, 1)
         row = payload.rows[0]
@@ -330,7 +340,12 @@ class TestDashboardService(unittest.TestCase):
             "h2h": {"prediction": 1, "probability": 0.72, "model_name": "logistic", "run_id": "run-test"}
         }
 
-        payload = service.get_day_matches(target_date=date(2026, 9, 1), limit=50, with_predictions=True)
+        payload = service.get_day_matches(
+            target_date=date(2026, 9, 1),
+            limit=50,
+            with_predictions=True,
+            force_refresh=True,
+        )
 
         self.assertEqual(payload.rows[0]["decision_cards"], [])
         self.assertIsNone(payload.rows[0]["best_decision"])
@@ -888,6 +903,57 @@ class TestFetchMatchesDateFilter(unittest.TestCase):
             dashboard_service_module.SessionLocal = original_session_local
 
         self.assertEqual(rows, [])
+
+    def test_finished_match_correctness_uses_only_eager_statistics_columns(self):
+        session_factory = self._make_session_factory()
+        match_id = str(uuid.uuid4())
+        with session_factory() as session:
+            session.add(
+                Match(
+                    id_match_fk=match_id,
+                    id_fixture=10,
+                    id_team_home=100,
+                    id_team_away=200,
+                    date_match="2026-09-03T18:00:00+00:00",
+                    status="FT",
+                )
+            )
+            session.add_all(
+                [
+                    Statistics(
+                        id_match=match_id,
+                        statistics_team_id=100,
+                        score_ht=1,
+                        score_ft=2,
+                        corners=7,
+                        yellow_cards=2,
+                        red_cards=0,
+                    ),
+                    Statistics(
+                        id_match=match_id,
+                        statistics_team_id=200,
+                        score_ht=0,
+                        score_ft=1,
+                        corners=4,
+                        yellow_cards=3,
+                        red_cards=1,
+                    ),
+                ]
+            )
+            session.commit()
+
+        original_session_local = dashboard_service_module.SessionLocal
+        dashboard_service_module.SessionLocal = session_factory
+        try:
+            service = DashboardService.__new__(DashboardService)
+            match = service._fetch_matches(target_date=date(2026, 9, 3))[0]
+        finally:
+            dashboard_service_module.SessionLocal = original_session_local
+
+        home, away, complete = service._resolve_final_stat_dicts(match)
+        self.assertTrue(complete)
+        self.assertEqual(home, {"score_ft": 2, "score_ht": 1, "corners": 7, "yellow_cards": 2, "red_cards": 0})
+        self.assertEqual(away, {"score_ft": 1, "score_ht": 0, "corners": 4, "yellow_cards": 3, "red_cards": 1})
 
 
 class TestQuotaExhaustedGuard(unittest.TestCase):

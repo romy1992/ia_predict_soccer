@@ -1102,9 +1102,23 @@ class DashboardService:
             by_team = {s.statistics_team_id: s for s in stats}
             home_stat = by_team.get(match.id_team_home)
             away_stat = by_team.get(match.id_team_away)
+
+            def required_values(stat: Optional[Statistics]) -> Optional[dict[str, Any]]:
+                if stat is None:
+                    return None
+                # `to_dict()` toccherebbe tutte le colonne deferite da
+                # `load_only`, generando una query lazy per riga.
+                return {
+                    "score_ft": stat.score_ft,
+                    "score_ht": stat.score_ht,
+                    "corners": stat.corners,
+                    "yellow_cards": stat.yellow_cards,
+                    "red_cards": stat.red_cards,
+                }
+
             return (
-                home_stat.to_dict() if home_stat else None,
-                away_stat.to_dict() if away_stat else None,
+                required_values(home_stat),
+                required_values(away_stat),
                 True,
             )
 
@@ -1378,6 +1392,7 @@ class DashboardService:
                         selectinload(Match.statistics).load_only(
                             Statistics.statistics_team_id,
                             Statistics.score_ft,
+                            Statistics.score_ht,
                             Statistics.corners,
                             Statistics.yellow_cards,
                             Statistics.red_cards,
