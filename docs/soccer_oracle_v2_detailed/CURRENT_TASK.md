@@ -193,10 +193,16 @@ il backend rifiuta ogni tentativo di generazione retroattiva. Per oggi
 vengono salvate soltanto combinazioni le cui selezioni hanno tutte kickoff
 futuro; fixture iniziate o prive di un kickoff valido vengono escluse.
 
-La policy `betslip_diversification_v1` stratifica il pool per famiglia di
-mercato (`RESULT`, `TOTALS`, `BTTS`, `CORNERS`, `CARDS`), limita la
-concentrazione della stessa famiglia e scarta dal risultato schedine troppo
-simili. I profili sono versionati `*_v3_diversified`.
+La policy `betslip_diversification_v2_soft_fallback` stratifica il pool per
+famiglia di mercato (`RESULT`, `TOTALS`, `BTTS`, `CORNERS`, `CARDS`) e
+preferisce combinazioni con famiglie differenti e poca sovrapposizione.
+La diversificazione non azzera più la giornata quando il pool valido espone
+una sola famiglia: in quel caso genera un fallback tracciato dal warning
+`limited_market_diversification`. I profili sono versionati
+`*_v4_soft_diversification`. La vista completa seleziona in modo
+deterministico fino a 18 proposte complessive (obiettivo operativo minimo
+10); se i candidati validi non bastano, espone un warning invece di
+inventare quote o probabilità.
 
 Le proposte sono divise in `PLAY`, `BORDERLINE` e `NO BET`. Tutte vengono
 salvate pre-kickoff e liquidate dal job settlement in portafogli simulati

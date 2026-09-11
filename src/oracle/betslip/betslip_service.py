@@ -136,12 +136,66 @@ class BetslipService:
             only(borderline, "NO BET"),
             only(no_bet, "NO BET"),
         )
-        play.profiles = play_only
-        play.decision_groups = {
+        groups = {
             "PLAY": play_only,
             "BORDERLINE": borderline_only,
             "NO BET": no_bet_only,
         }
+
+        def round_robin(group: dict) -> list:
+            ordered = []
+            offset = 0
+            profile_names = [profile.name for profile in profiles]
+            while True:
+                added = False
+                for profile_name in profile_names:
+                    rows = group.get(profile_name, [])
+                    if offset < len(rows):
+                        ordered.append(rows[offset])
+                        added = True
+                if not added:
+                    break
+                offset += 1
+            return ordered
+
+        ordered_groups = {label: round_robin(group) for label, group in groups.items()}
+        preferred_quota = {"PLAY": 10, "BORDERLINE": 4, "NO BET": 4}
+        selected_groups = {
+            label: rows[: preferred_quota[label]]
+            for label, rows in ordered_groups.items()
+        }
+        total_budget = 18
+        while sum(len(rows) for rows in selected_groups.values()) < total_budget:
+            added = False
+            for label in ("PLAY", "BORDERLINE", "NO BET"):
+                selected = selected_groups[label]
+                available = ordered_groups[label]
+                if len(selected) < len(available):
+                    selected.append(available[len(selected)])
+                    added = True
+                    if sum(len(rows) for rows in selected_groups.values()) >= total_budget:
+                        break
+            if not added:
+                break
+
+        def by_profile(rows: list) -> dict:
+            grouped = {profile.name: [] for profile in profiles}
+            for slip in rows:
+                grouped.setdefault(slip.profile_name, []).append(slip)
+            return grouped
+
+        groups = {
+            label: by_profile(rows)
+            for label, rows in selected_groups.items()
+        }
+        generated_total = sum(len(rows) for rows in selected_groups.values())
+        if generated_total < 10:
+            play.warnings.append(
+                f"target_slips_not_reached:{generated_total}/10:"
+                "candidati_validi_insufficienti"
+            )
+        play.profiles = groups["PLAY"]
+        play.decision_groups = groups
         play.warnings.extend(f"borderline:{item}" for item in borderline.warnings)
         play.warnings.extend(f"no_bet:{item}" for item in no_bet.warnings)
         return pool_result, play

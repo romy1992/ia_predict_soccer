@@ -325,10 +325,14 @@ Prima di ogni task viene applicata la premessa in `AI_MASTER_PROMPT.md`:
   alla modalità “Solo consultazione” quando viene selezionata una data
   precedente a oggi.
 
-  Estensione diversificazione/shadow tracking: nuova policy
-  `betslip_diversification_v1` e profili `*_v3_diversified`. Il pool è
-  stratificato per famiglia di mercato, con limiti per famiglia dentro la
-  schedina e penalizzazione delle combinazioni troppo sovrapposte. Il
+  Estensione diversificazione/shadow tracking: policy
+  `betslip_diversification_v2_soft_fallback` e profili
+  `*_v4_soft_diversification`. Il pool è stratificato per famiglia di
+  mercato; il ranking preferisce famiglie diverse e combinazioni poco
+  sovrapposte, ma una sola famiglia disponibile attiva un fallback
+  esplicitamente segnalato invece di produrre zero schedine. La risposta è
+  limitata in modo deterministico a 18 proposte complessive, con obiettivo
+  minimo 10 e warning se i candidati validi non sono sufficienti. Il
   generatore espone tre gruppi distinti: Consigliate (`PLAY`), Sperimentali
   (`BORDERLINE`) e Non consigliate (`NO BET`).
 

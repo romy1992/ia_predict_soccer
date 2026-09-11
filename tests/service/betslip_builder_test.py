@@ -17,9 +17,6 @@ RELAXED_DIVERSIFICATION = BetslipDiversificationPolicy(
     version="test_relaxed_diversification",
     max_candidates_per_family=20,
     max_overlap_ratio=1.0,
-    safe_max_legs_per_family=4,
-    balanced_max_legs_per_family=4,
-    aggressive_max_legs_per_family=4,
 )
 
 
@@ -170,8 +167,28 @@ class TestGenerateBetslipsBasics(unittest.TestCase):
             )
             self.assertEqual(
                 slip.diversification_policy_version,
-                "betslip_diversification_v1",
+                "betslip_diversification_v2_soft_fallback",
             )
+
+    def test_single_market_family_uses_soft_fallback_instead_of_zero_slips(self):
+        candidates = [
+            _pick(
+                fixture_id=index,
+                market="under_over_3_5",
+                outcome="Under 3.5",
+                odd=1.8,
+                p_model=0.60,
+            )
+            for index in range(1, 15)
+        ]
+
+        result = generate_betslips(candidates)
+        total = sum(len(slips) for slips in result.profiles.values())
+
+        self.assertGreaterEqual(total, 10)
+        self.assertTrue(
+            any("limited_market_diversification" in item for item in result.warnings)
+        )
 
     def test_combined_value_metrics_use_adjusted_probability(self):
         candidates = [

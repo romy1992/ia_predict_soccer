@@ -126,7 +126,7 @@ class SlipProfile:
 # coppie EXCLUDE, sempre vietate (vedi docstring di modulo).
 SAFE_PROFILE = SlipProfile(
     name="SAFE",
-    version="slip_profile_safe_v3_diversified",
+    version="slip_profile_safe_v4_soft_diversification",
     min_legs=2,
     max_legs=2,
     min_leg_probability=0.55,
@@ -138,7 +138,7 @@ SAFE_PROFILE = SlipProfile(
 
 BALANCED_PROFILE = SlipProfile(
     name="BALANCED",
-    version="slip_profile_balanced_v3_diversified",
+    version="slip_profile_balanced_v4_soft_diversification",
     min_legs=2,
     max_legs=3,
     min_leg_probability=0.40,
@@ -150,7 +150,7 @@ BALANCED_PROFILE = SlipProfile(
 
 AGGRESSIVE_PROFILE = SlipProfile(
     name="AGGRESSIVE",
-    version="slip_profile_aggressive_v3_diversified",
+    version="slip_profile_aggressive_v4_soft_diversification",
     min_legs=3,
     max_legs=4,
     min_leg_probability=0.25,
@@ -178,19 +178,9 @@ DEFAULT_SLIP_DECISION_POLICY = SlipDecisionPolicy()
 
 @dataclass(frozen=True)
 class BetslipDiversificationPolicy:
-    version: str = "betslip_diversification_v1"
+    version: str = "betslip_diversification_v2_soft_fallback"
     max_candidates_per_family: int = 4
     max_overlap_ratio: float = 0.5
-    safe_max_legs_per_family: int = 1
-    balanced_max_legs_per_family: int = 1
-    aggressive_max_legs_per_family: int = 2
-
-    def max_legs_for_family(self, profile_name: str) -> int:
-        return {
-            "SAFE": self.safe_max_legs_per_family,
-            "BALANCED": self.balanced_max_legs_per_family,
-            "AGGRESSIVE": self.aggressive_max_legs_per_family,
-        }.get(profile_name, 1)
 
 
 DEFAULT_DIVERSIFICATION_POLICY = BetslipDiversificationPolicy()
@@ -515,15 +505,6 @@ def generate_betslips(
                 legs = list(combo)
                 if one_pick_per_fixture and len({leg.fixture_id for leg in legs}) != len(legs):
                     continue
-                family_counts: dict[str, int] = {}
-                for leg in legs:
-                    family = _market_family(leg.market)
-                    family_counts[family] = family_counts.get(family, 0) + 1
-                if any(
-                    count > diversification_policy.max_legs_for_family(profile.name)
-                    for count in family_counts.values()
-                ):
-                    continue
                 evaluation = evaluate_combination(legs, ruleset=ruleset)
                 if not evaluation.is_valid:
                     continue  # almeno una coppia EXCLUDE: schedina logicamente impossibile, vietata per QUALSIASI profilo
@@ -591,6 +572,17 @@ def generate_betslips(
         generated.sort(
             key=lambda s: (
                 situation_rank.get(s.situation, 99),
+                max(
+                    (
+                        sum(
+                            _market_family(other.market) == _market_family(leg.market)
+                            for other in s.legs
+                        )
+                        for leg in s.legs
+                    ),
+                    default=0,
+                ),
+                -len({_market_family(leg.market) for leg in s.legs}),
                 -_ev_sort_key(s.combined_ev),
                 -_ev_sort_key(s.adjusted_probability),
                 s.risk_score if s.risk_score is not None else float("inf"),
@@ -624,6 +616,10 @@ def generate_betslips(
         profiles_result[profile.name] = selected
 
     generated_at = generated_at or datetime.now(timezone.utc)
+    if base_pool and len({_market_family(item.market) for item in base_pool}) < 2:
+        warnings.append(
+            f"limited_market_diversification:{diversification_policy.version}"
+        )
     return BetslipGenerationResult(
         generated_at=generated_at.isoformat(),
         correlation_ruleset_version=ruleset.version,
