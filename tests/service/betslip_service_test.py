@@ -168,6 +168,32 @@ class TestBetslipService(unittest.TestCase):
             self.assertTrue(rows, label)
             self.assertTrue(all(slip.situation == label for slip in rows))
 
+    def test_exploration_caps_total_and_keeps_single_family_fallback(self):
+        picks = [
+            _pool_pick(
+                fixture_id=index,
+                market="under_over_3_5",
+                outcome="Under 3.5",
+                odd=1.8,
+                p_model=0.60,
+            )
+            for index in range(1, 15)
+        ]
+        service, _ = self._service_with_pool(picks)
+
+        _, generation = service.generate_exploration_for_day(date(2026, 9, 12))
+
+        total = sum(
+            len(slips)
+            for profiles in generation.decision_groups.values()
+            for slips in profiles.values()
+        )
+        self.assertGreaterEqual(total, 10)
+        self.assertLessEqual(total, 18)
+        self.assertTrue(
+            any("limited_market_diversification" in item for item in generation.warnings)
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
