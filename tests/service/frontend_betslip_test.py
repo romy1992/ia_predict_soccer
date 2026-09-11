@@ -41,3 +41,38 @@ def test_frontend_does_not_duplicate_betslip_formulas():
     source = (FRONTEND / "features/betslip/BetslipPage.jsx").read_text(encoding="utf-8")
     for formula in ("1 / p_model", "adjusted_probability * combined_odd", "market_odd - model_void_odd"):
         assert formula not in source
+
+
+def test_betslip_uses_compact_coupon_structure():
+    source = (FRONTEND / "features/betslip/BetslipPage.jsx").read_text(encoding="utf-8")
+    styles = (FRONTEND / "styles.css").read_text(encoding="utf-8")
+    for label in (
+        "Simula puntata",
+        "Schedine",
+        "Ufficiali",
+        "Solo PLAY",
+        "Prudenti",
+        "Bilanciate",
+        "Spinte",
+        "Vincita potenziale",
+        "Profitto potenziale",
+        "Copia schedina",
+        "Stampa / PDF",
+    ):
+        assert label in source
+    for css_class in (
+        ".betslip-toolbar",
+        ".betslip-view-tabs",
+        ".betslip-legend",
+        ".betslip-list",
+        ".slip-card-header",
+        ".slip-footer",
+    ):
+        assert css_class in styles
+
+
+def test_betslip_settlement_is_not_color_only():
+    source = (FRONTEND / "features/betslip/BetslipPage.jsx").read_text(encoding="utf-8")
+    for label in ("Vinta", "Persa", "In corso", "Rimborsata", "Proposta"):
+        assert label in source
+    assert "legStatusLabel(leg.status, slip.is_official)" in source

@@ -26,12 +26,12 @@ const PROFILE_HELP = {
 
 function riskClass(riskLabel) {
   if (riskLabel === "LOW") {
-    return "risk-low";
+    return "slip-risk-low";
   }
   if (riskLabel === "HIGH") {
-    return "risk-high";
+    return "slip-risk-high";
   }
-  return "risk-medium";
+  return "slip-risk-medium";
 }
 
 function legMatchLabel(leg, fixtureIndex) {
@@ -52,6 +52,12 @@ function statusClass(status) {
   return "value-unavailable";
 }
 
+function legStatusLabel(status, isOfficial) {
+  if (!isOfficial) return "Proposta";
+  const labels = { PENDING: "In corso", WON: "Vinta", LOST: "Persa", VOID: "Rimborsata" };
+  return labels[status] || status || "In corso";
+}
+
 export default function BetslipPage({
   targetDate,
   onChangeTargetDate,
@@ -61,7 +67,10 @@ export default function BetslipPage({
   onLoadReport,
   dayData,
 }) {
-  const [activeProfile, setActiveProfile] = useState("SAFE");
+  const [activeView, setActiveView] = useState("proposals");
+  const [activeFilter, setActiveFilter] = useState("all");
+  const [stake, setStake] = useState(10);
+  const [copiedSlipId, setCopiedSlipId] = useState(null);
 
   const fixtureIndex = useMemo(() => {
     const map = {};
@@ -72,86 +81,176 @@ export default function BetslipPage({
   }, [dayData]);
 
   const profiles = report?.profiles || {};
-  const activeSlips = profiles[activeProfile] || [];
+  const proposedSlips = useMemo(
+    () =>
+      PROFILE_ORDER.flatMap((profile) =>
+        (profiles[profile] || []).map((slip) => ({
+          ...slip,
+          profile_name: slip.profile_name || profile,
+          is_official: false,
+        }))
+      ),
+    [profiles]
+  );
+  const officialSlips = useMemo(
+    () =>
+      (report?.official_slips || []).map((slip) => ({
+        ...slip,
+        profile_name: slip.profile_name || slip.profile,
+        is_official: true,
+        legs: slip.picks || slip.legs || [],
+      })),
+    [report?.official_slips]
+  );
+  const sourceSlips = activeView === "official" ? officialSlips : proposedSlips;
+  const visibleSlips = useMemo(() => {
+    if (activeFilter === "play") {
+      return sourceSlips.filter((slip) => (slip.situation || slip.initial_situation) === "PLAY");
+    }
+    if (activeFilter === "settled") {
+      return sourceSlips.filter((slip) => ["WON", "LOST", "VOID"].includes(slip.status));
+    }
+    if (PROFILE_ORDER.includes(activeFilter)) {
+      return sourceSlips.filter((slip) => (slip.profile_name || slip.profile) === activeFilter);
+    }
+    return sourceSlips;
+  }, [activeFilter, sourceSlips]);
+
+  async function copySlip(slip) {
+    const text = [
+      `Schedina ${PROFILE_LABELS[slip.profile_name || slip.profile] || slip.profile || ""}`,
+      ...(slip.legs || []).map(
+        (leg) =>
+          `${legMatchLabel(leg, fixtureIndex)} | ${marketLabel(leg.market)} | ${leg.outcome} @ ${formatOdd(leg.odd ?? leg.market_odd)}`
+      ),
+      `Quota combinata: ${formatOdd(slip.combined_odd)}`,
+    ].join("\n");
+    await navigator.clipboard.writeText(text);
+    const id = slip.slip_id || slip.id;
+    setCopiedSlipId(id);
+    window.setTimeout(() => setCopiedSlipId(null), 1800);
+  }
 
   return (
-    <section className="stack">
-      <section className="panel">
-        <div className="panel-header">
-          <h3>Schedina Oracle</h3>
+    <section className="stack betslip-workspace">
+      <section className="panel betslip-toolbar">
+        <div className="betslip-toolbar-main">
+          <div>
+            <h3>Schedina Oracle</h3>
+            <p className="muted">Combinazioni calcistiche validate dal motore centrale, senza mercati incompatibili.</p>
+          </div>
           <div className="panel-header-actions">
-            <input
-              type="date"
-              value={targetDate}
-              onChange={(e) => onChangeTargetDate(e.target.value)}
-            />
+            <label className="betslip-date">
+              Data
+              <input type="date" value={targetDate} onChange={(e) => onChangeTargetDate(e.target.value)} />
+            </label>
             <button className="btn-primary" onClick={() => onLoadReport()} disabled={isLoading}>
               Genera schedine
             </button>
           </div>
         </div>
-
-        <p className="muted">
-          Combinazioni di 2/3/4 eventi dal Pick Pool (solo PLAY), validate dal Correlation Engine:
-          nessuna schedina con esiti logicamente incompatibili nella stessa partita. Quota combinata e
-          probabilita' sono sempre dichiarate con il metodo di calcolo esplicito (vedi spiegazione su ogni schedina).
-        </p>
-
-        {error && <div className="error-box">Errore: {error}</div>}
-        {isLoading && <div className="info-box">Generazione schedine in corso...</div>}
-        {!isLoading && !error && !report && (
-          <div className="empty-state">Nessuna schedina generata ancora: premi "Genera schedine".</div>
-        )}
-
-        {report && (
-          <div className="detail-head-meta">
-            <span>Generato: {new Date(report.generated_at).toLocaleString("it-IT")}</span>
-            <span>Pick nel pool: {report.pool_considered}</span>
-            <span>Ruleset correlazione: {report.correlation_ruleset_version}</span>
-            {report.pool_policy_version && <span>Policy pool: {report.pool_policy_version}</span>}
-          </div>
-        )}
-
-        {report?.warnings?.length > 0 && (
-          <div className="info-box">
-            {report.warnings.map((warning) => (
-              <div key={warning}>{warning}</div>
-            ))}
-          </div>
-        )}
-      </section>
-
-      {report && (
-        <section className="panel">
-          <div className="tabs">
-            {PROFILE_ORDER.map((name) => (
+        <div className="stake-simulator">
+          <label>
+            Simula puntata
+            <input
+              type="number"
+              min="1"
+              step="1"
+              value={stake}
+              onChange={(event) => setStake(Math.max(1, Number(event.target.value) || 1))}
+            />
+          </label>
+          <div className="stake-presets">
+            {[1, 5, 10, 25, 50].map((value) => (
               <button
-                key={name}
-                className={activeProfile === name ? "tab active" : "tab"}
-                onClick={() => setActiveProfile(name)}
+                key={value}
+                className={stake === value ? "stake-chip active" : "stake-chip"}
+                onClick={() => setStake(value)}
               >
-                {PROFILE_LABELS[name]} ({(profiles[name] || []).length})
+                {value} €
               </button>
             ))}
           </div>
-          <p className="muted">{PROFILE_HELP[activeProfile]}</p>
+        </div>
+        {error && <div className="error-box">Errore: {error}</div>}
+        {isLoading && <div className="info-box">Generazione schedine in corso...</div>}
+      </section>
 
-          {activeSlips.length === 0 && (
-            <div className="empty-state">
-              Nessuna schedina generata per il profilo {PROFILE_LABELS[activeProfile]} con le pick disponibili oggi.
-            </div>
-          )}
+      <section className="panel betslip-browser">
+        <div className="betslip-view-tabs" role="tablist" aria-label="Vista schedine">
+          <button className={activeView === "proposals" ? "tab active" : "tab"} onClick={() => setActiveView("proposals")}>
+            Schedine <span>{proposedSlips.length}</span>
+          </button>
+          <button className={activeView === "official" ? "tab active" : "tab"} onClick={() => setActiveView("official")}>
+            Ufficiali <span>{officialSlips.length}</span>
+          </button>
+        </div>
 
-          <div className="decision-grid">
-            {activeSlips.map((slip) => (
-              <SlipCard key={slip.slip_id} slip={slip} fixtureIndex={fixtureIndex} />
-            ))}
-          </div>
-        </section>
-      )}
+        <div className="betslip-filter-tabs">
+          {[
+            ["all", "Tutte"],
+            ["play", "Solo PLAY"],
+            ["SAFE", "Prudenti"],
+            ["BALANCED", "Bilanciate"],
+            ["AGGRESSIVE", "Spinte"],
+            ["settled", "Concluse"],
+          ].map(([value, label]) => (
+            <button
+              key={value}
+              className={activeFilter === value ? "tab active" : "tab"}
+              onClick={() => setActiveFilter(value)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        <p className="muted betslip-filter-help">
+          {activeFilter === "all"
+            ? "Tutte le schedine disponibili per la data selezionata."
+            : activeFilter === "play"
+              ? "Mostra soltanto le schedine che superano tutti i vincoli della policy."
+              : PROFILE_HELP[activeFilter] || "Mostra soltanto le schedine già concluse."}
+        </p>
+
+        <div className="betslip-legend">
+          <span><i className="status-dot status-won" />Vinta</span>
+          <span><i className="status-dot status-lost" />Persa</span>
+          <span><i className="status-dot status-pending" />In corso</span>
+          <span><i className="status-dot status-void" />Rimborsata</span>
+          <span><i className="status-dot status-proposal" />Proposta</span>
+        </div>
+
+        {!isLoading && !error && !report && (
+          <div className="empty-state">Nessuna schedina generata: premi “Genera schedine”.</div>
+        )}
+        {report && visibleSlips.length === 0 && (
+          <div className="empty-state">Nessuna schedina disponibile per questo filtro.</div>
+        )}
+
+        <div className="betslip-list">
+          {visibleSlips.map((slip) => (
+            <SlipCard
+              key={slip.slip_id || slip.id}
+              slip={slip}
+              fixtureIndex={fixtureIndex}
+              stake={stake}
+              copied={copiedSlipId === (slip.slip_id || slip.id)}
+              onCopy={() => copySlip(slip)}
+            />
+          ))}
+        </div>
+
+        {report?.warnings?.length > 0 && (
+          <details className="betslip-warnings">
+            <summary>Avvisi di generazione ({report.warnings.length})</summary>
+            {report.warnings.map((warning) => <div key={warning}>{warning}</div>)}
+          </details>
+        )}
+      </section>
 
       {report?.official_statistics && (
-        <section className="panel">
+        <section className="panel betslip-statistics">
           <h3>Rendimento schedine ufficiali</h3>
           <div className="decision-counters">
             <span>Totali: {report.official_statistics.total}</span>
@@ -165,70 +264,55 @@ export default function BetslipPage({
           <p className="muted">Calcolato esclusivamente sulle schedine congelate dal job server-side.</p>
         </section>
       )}
-
-      {report?.official_slips?.length > 0 && (
-        <section className="panel">
-          <h3>Schedine ufficiali del giorno</h3>
-          <div className="decision-grid">
-            {report.official_slips.map((slip) => (
-              <SlipCard key={slip.id} slip={{ ...slip, is_official: true, legs: slip.picks }} fixtureIndex={fixtureIndex} />
-            ))}
-          </div>
-        </section>
-      )}
     </section>
   );
 }
 
-function SlipCard({ slip, fixtureIndex }) {
+function SlipCard({ slip, fixtureIndex, stake, copied, onCopy }) {
   const legs = slip.legs || [];
   const situation = slip.situation || slip.initial_situation || "N/D";
   const status = slip.status || "PROPOSTA";
+  const profile = slip.profile_name || slip.profile;
+  const simulatedReturn = Number(stake) * Number(slip.combined_odd || 0);
+  const simulatedProfit = simulatedReturn - Number(stake);
   return (
-    <article className={`decision-card slip-card ${riskClass(slip.risk_label)}`}>
-      <div className="decision-head">
-        <span className={`value-badge ${statusClass(situation)}`}>
-          {situation}
-        </span>
-        <strong>{slip.is_official ? "UFFICIALE" : "PROPOSTA"} · {status}</strong>
-      </div>
-
-      <div className="decision-metrics slip-summary">
-        <span>Profilo: {PROFILE_LABELS[slip.profile_name || slip.profile] || slip.profile}</span>
-        <span>Eventi: {slip.n_legs || slip.event_count}</span>
-        <span>Quota combinata: {formatOdd(slip.combined_odd)}</span>
-        <span title="Quota teorica di pareggio ricavata dalla probabilità combinata corretta.">
-          Quota void combinata: {formatOdd(slip.combined_model_void_odd)}
-        </span>
-        <span>Edge combinato: {formatNumber(slip.combined_edge_absolute, 3)} ({formatPercent(slip.combined_edge_percent == null ? null : slip.combined_edge_percent / 100)})</span>
-        <span title="Rendimento teorico pre-partita; non è il ROI realizzato.">
-          Expected ROI: {formatPercent(slip.combined_expected_roi)}
-        </span>
-        <span title="Probabilità aggregata restituita dal motore centrale delle correlazioni.">
-          Probabilità corretta: {formatPercent(slip.adjusted_probability)}
-        </span>
-        <span>Rischio: {formatPercent(slip.risk_score)}</span>
-        <span>Policy: {slip.decision_policy_version || slip.policy_version}</span>
-        <span>Correlazioni: {slip.correlation_ruleset_version || slip.correlation_version}</span>
+    <article className={`slip-card ${riskClass(slip.risk_label)}`}>
+      <div className="slip-card-header">
+        <div>
+          <strong>{situation === "PLAY" ? "Play" : "Valutazione"} · {PROFILE_LABELS[profile] || profile || "Generica"}</strong>
+          <small>{PROFILE_HELP[profile] || slip.situation_reason || slip.initial_reason}</small>
+        </div>
+        <div className="slip-card-status">
+          <span className={`value-badge ${statusClass(situation)}`}>{situation}</span>
+          <span className={`settlement-label ${statusClass(status)}`}>{slip.is_official ? status : "PROPOSTA"}</span>
+          <small>{legs.length} eventi</small>
+        </div>
       </div>
 
       <div className="table-wrap">
         <table className="slip-picks-table">
           <thead>
             <tr>
-              <th>Partita</th><th>Mercato</th><th>Selezione</th><th>Probabilità</th>
+              <th>Esito</th><th>Ora</th><th>Torneo</th><th>Partita</th><th>Mercato</th><th>Pick</th><th>Probabilità</th>
               <th>Quota</th><th title="Quota teorica di pareggio: 1 / probabilità modello.">Quota void modello</th>
               <th title="Differenza tra quota bookmaker e quota void modello.">Edge</th>
-              <th title="Rendimento teorico della selezione, non quello realizzato.">Expected ROI</th>
-              <th>Situazione</th><th>Esito</th>
+              <th title="Rendimento teorico della selezione, non quello realizzato.">Expected ROI</th><th>Situazione</th>
             </tr>
           </thead>
           <tbody>
             {legs.map((leg, index) => (
               <tr key={`${slip.slip_id || slip.id}-${index}`}>
+                <td title={leg.status === "VOID" ? `Esito rimborsato: ${leg.void_reason || "evento void"}` : ""}>
+                  <span className="pick-status">
+                    <i className={`status-dot status-${(slip.is_official ? leg.status || "pending" : "proposal").toLowerCase()}`} />
+                    {legStatusLabel(leg.status, slip.is_official)}
+                  </span>
+                </td>
+                <td>{leg.kickoff_at ? new Date(leg.kickoff_at).toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit" }) : "—"}</td>
+                <td>{leg.competition || "—"}</td>
                 <td>
                   <strong>{legMatchLabel(leg, fixtureIndex)}</strong>
-                  <small>{leg.competition ? `${leg.competition} · ` : ""}{leg.kickoff_at ? new Date(leg.kickoff_at).toLocaleString("it-IT") : ""}</small>
+                  {leg.final_score && <small>Finale: {leg.final_score}</small>}
                 </td>
                 <td>{marketLabel(leg.market)}{leg.line ? ` · ${leg.line}` : ""}</td>
                 <td>{leg.outcome}</td>
@@ -240,17 +324,35 @@ function SlipCard({ slip, fixtureIndex }) {
                 </td>
                 <td>{formatPercent(leg.ev ?? leg.expected_roi)}</td>
                 <td><span className={`value-badge ${statusClass(leg.decision || leg.situation)}`}>{leg.decision || leg.situation}</span></td>
-                <td title={leg.status === "VOID" ? `Esito rimborsato: ${leg.void_reason || "evento void"}` : ""}>
-                  <span className={`value-badge ${statusClass(leg.status || "PENDING")}`}>{leg.status || "PENDING"}</span>
-                  {leg.final_score && <small>{leg.final_score}</small>}
-                </td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
 
-      <p className="muted slip-explanation">{slip.explanation || slip.initial_reason}</p>
+      <div className="slip-footer">
+        <div className="slip-footer-metrics">
+          <span><small>Quota combinata</small><strong>{formatOdd(slip.combined_odd)}</strong></span>
+          <span title="Quota teorica di pareggio ricavata dalla probabilità combinata corretta."><small>Quota void combinata</small><strong>{formatOdd(slip.combined_model_void_odd)}</strong></span>
+          <span><small>Edge combinato</small><strong>{formatNumber(slip.combined_edge_absolute, 3)}</strong></span>
+          <span title="Rendimento teorico pre-partita; non è il ROI realizzato."><small>Expected ROI</small><strong>{formatPercent(slip.combined_expected_roi)}</strong></span>
+          <span title="Probabilità aggregata restituita dal motore centrale delle correlazioni."><small>Probabilità corretta</small><strong>{formatPercent(slip.adjusted_probability)}</strong></span>
+          <span><small>Puntata simulata</small><strong>{formatNumber(stake, 2)} €</strong></span>
+          <span><small>Vincita potenziale</small><strong>{formatNumber(simulatedReturn, 2)} €</strong></span>
+          <span><small>Profitto potenziale</small><strong>{formatNumber(simulatedProfit, 2)} €</strong></span>
+        </div>
+        <div className="slip-actions">
+          <button className="btn-secondary" onClick={onCopy}>{copied ? "Copiata!" : "Copia schedina"}</button>
+          <button className="btn-secondary" onClick={() => window.print()}>Stampa / PDF</button>
+        </div>
+      </div>
+
+      <details className="slip-technical">
+        <summary>Dettagli tecnici e correlazioni</summary>
+        <p>{slip.explanation || slip.initial_reason || "Nessuna nota aggiuntiva."}</p>
+        <span>Policy: {slip.decision_policy_version || slip.policy_version || "N/D"}</span>
+        <span> · Correlazioni: {slip.correlation_ruleset_version || slip.correlation_version || "N/D"}</span>
+      </details>
     </article>
   );
 }

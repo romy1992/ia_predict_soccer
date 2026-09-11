@@ -980,51 +980,207 @@ th {
 }
 
 .slip-card {
+  overflow: hidden;
+  border: 1px solid #dbe3f2;
   border-left-width: 4px;
-  border-left-style: solid;
+  border-radius: 12px;
+  background: #ffffff;
+  box-shadow: 0 4px 12px rgba(18, 40, 78, 0.06);
   min-width: 0;
-  grid-column: 1 / -1;
 }
 
-.slip-card.risk-low {
+.slip-card.slip-risk-low {
   border-left-color: #0d6630;
 }
 
-.slip-card.risk-medium {
+.slip-card.slip-risk-medium {
   border-left-color: #8d5d00;
 }
 
-.slip-card.risk-high {
+.slip-card.slip-risk-high {
   border-left-color: #9b1414;
 }
 
-.slip-legs {
-  list-style: none;
-  margin: 8px 0;
-  padding: 0;
+.betslip-toolbar {
+  padding: 14px 16px;
+}
+
+.betslip-toolbar-main {
   display: flex;
-  flex-direction: column;
-  gap: 6px;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
 }
 
-.slip-legs li {
-  border-bottom: 1px dashed #eef2fb;
-  padding-bottom: 6px;
+.betslip-toolbar-main h3,
+.betslip-toolbar-main p {
+  margin-top: 0;
 }
 
-.slip-explanation {
-  margin: 8px 0 0;
-  font-style: italic;
-}
-
-.slip-summary {
+.betslip-date {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
-  margin: 10px 0;
+  gap: 4px;
+  color: #64779d;
+  font-size: 12px;
+}
+
+.stake-simulator {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid #e4e9f3;
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+}
+
+.stake-simulator label {
+  display: grid;
+  gap: 4px;
+  color: #64779d;
+  font-size: 12px;
+}
+
+.stake-simulator input {
+  width: 110px;
+}
+
+.stake-presets {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.stake-chip {
+  min-width: 42px;
+  padding: 8px 10px;
+  border-radius: 999px;
+  background: #f1f5fb;
+  color: #33486e;
+}
+
+.stake-chip.active {
+  border-color: #294a82;
+  background: #294a82;
+  color: #ffffff;
+}
+
+.betslip-browser {
+  display: grid;
+  gap: 12px;
+}
+
+.betslip-view-tabs,
+.betslip-filter-tabs {
+  display: flex;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+
+.betslip-view-tabs .tab {
+  font-weight: 700;
+}
+
+.betslip-view-tabs .tab span {
+  margin-left: 5px;
+  opacity: 0.75;
+}
+
+.betslip-filter-help {
+  margin: 0;
+}
+
+.betslip-legend {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  color: #586b8d;
+  font-size: 12px;
+}
+
+.betslip-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #95a2b8;
+}
+
+.status-won {
+  background: #22ad5c;
+}
+
+.status-lost {
+  background: #dc4d57;
+}
+
+.status-pending {
+  background: #4d78c8;
+}
+
+.status-void {
+  background: #8d98aa;
+}
+
+.status-proposal {
+  background: #d59a22;
+}
+
+.pick-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+  font-size: 11px;
+}
+
+.betslip-list {
+  display: grid;
+  gap: 12px;
+}
+
+.slip-card-header {
+  padding: 12px 14px;
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  border-bottom: 1px solid #e5eaf3;
+  background: #fbfcff;
+}
+
+.slip-card-header > div:first-child {
+  display: grid;
+  gap: 4px;
+}
+
+.slip-card-header small {
+  color: #687895;
+}
+
+.slip-card-status {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+
+.settlement-label {
+  padding: 3px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
 }
 
 .slip-picks-table {
-  min-width: 1180px;
+  min-width: 1240px;
+  margin: 0;
 }
 
 .slip-picks-table td small {
@@ -1033,13 +1189,106 @@ th {
   color: #687895;
 }
 
+.slip-footer {
+  padding: 12px 14px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 14px;
+  border-top: 1px solid #e5eaf3;
+}
+
+.slip-footer-metrics {
+  flex: 1;
+  display: grid;
+  grid-template-columns: repeat(8, minmax(105px, 1fr));
+  gap: 12px;
+}
+
+.slip-footer-metrics span {
+  display: grid;
+  gap: 3px;
+}
+
+.slip-footer-metrics small {
+  color: #687895;
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.slip-footer-metrics strong {
+  font-size: 14px;
+}
+
+.slip-actions {
+  display: flex;
+  gap: 7px;
+  flex-shrink: 0;
+}
+
+.slip-technical {
+  margin: 0 14px 12px;
+  color: #687895;
+  font-size: 12px;
+}
+
+.slip-technical summary,
+.betslip-warnings summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.slip-technical p {
+  margin: 7px 0;
+}
+
+.betslip-warnings {
+  padding: 10px;
+  border-radius: 9px;
+  background: #f7f9fd;
+  color: #687895;
+  font-size: 12px;
+}
+
 @media (max-width: 700px) {
-  .slip-summary {
+  .betslip-toolbar-main,
+  .stake-simulator,
+  .slip-card-header,
+  .slip-footer {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .panel-header-actions {
+    align-items: stretch;
+  }
+
+  .stake-simulator input {
+    width: 100%;
+  }
+
+  .slip-card-status {
+    justify-content: flex-start;
+  }
+
+  .slip-footer-metrics {
     grid-template-columns: 1fr 1fr;
   }
 
-  .slip-card {
-    padding: 10px;
+  .slip-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (min-width: 701px) and (max-width: 1380px) {
+  .slip-footer {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .slip-footer-metrics {
+    grid-template-columns: repeat(4, minmax(120px, 1fr));
   }
 }
 
