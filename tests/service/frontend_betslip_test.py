@@ -77,7 +77,7 @@ def test_betslip_settlement_is_not_color_only():
     source = (FRONTEND / "features/betslip/BetslipPage.jsx").read_text(encoding="utf-8")
     for label in ("Vinta", "Persa", "In corso", "Rimborsata", "Proposta"):
         assert label in source
-    assert "legStatusLabel(leg.status, slip.is_official)" in source
+    assert "legStatusLabel(leg.status, slip.is_official, hasShadowStatus)" in source
 
 
 def test_betslip_unifies_daily_market_and_slip_statistics():

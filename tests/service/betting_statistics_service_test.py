@@ -120,6 +120,14 @@ def test_saved_proposals_are_returned_without_regeneration():
             "reference_date": "2026-09-10",
             "saved_at": saved_at.isoformat(),
             "is_latest": True,
+            "shadow_status": "PENDING",
+            "shadow_stake": 1.0,
+            "shadow_effective_odd": None,
+            "shadow_return": None,
+            "shadow_profit": None,
+            "shadow_settlement": None,
+            "shadow_settled_at": None,
+            "staking_policy_version": "shadow_flat_unit_v1",
         }
     ]
 

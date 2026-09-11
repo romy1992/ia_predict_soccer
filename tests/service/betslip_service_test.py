@@ -56,7 +56,7 @@ class TestBetslipService(unittest.TestCase):
     def test_generate_for_day_reuses_pick_pool_service(self):
         picks = [
             _pool_pick(1, "h2h", "Home", 1.8, 0.60),
-            _pool_pick(2, "h2h", "Away", 1.9, 0.58),
+            _pool_pick(2, "goal_no_goal", "Yes", 1.9, 0.58),
         ]
         service, pick_pool_service = self._service_with_pool(picks)
 
@@ -119,8 +119,8 @@ class TestBetslipService(unittest.TestCase):
             ),
             _pool_pick(
                 2,
-                "h2h",
-                "Away",
+                "goal_no_goal",
+                "Yes",
                 1.9,
                 0.58,
                 kickoff_at=(now - timedelta(minutes=1)).isoformat(),
