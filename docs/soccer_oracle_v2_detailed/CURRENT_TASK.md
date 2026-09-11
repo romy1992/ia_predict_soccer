@@ -164,6 +164,29 @@ di cattura prima del kickoff. Lo stato `VOID` indica un esito rimborsato ed
 è distinto dalla quota void modello. Expected ROI è una stima pre-partita;
 ROI realizzato e PnL sono calcolati solo sulle schedine ufficiali concluse.
 
+## Storico proposte e statistiche betting unificate (2026-09-11)
+
+Ogni schedina proposta viene ora salvata come snapshot append-only nella
+tabella `betting_slip_proposal_snapshots`. Lo stesso output del generatore
+costituisce il payload persistito: nessun secondo motore e nessuna formula
+frontend. Una generazione identica è idempotente; una variazione di quota,
+probabilità, combinazione o versione crea una revisione collegata alla
+precedente.
+
+La pagina Schedina Oracle riunisce tre viste:
+
+- Panoramica di pronostici ufficiali, proposte salvate e schedine ufficiali;
+- statistiche giornaliere per singolo mercato;
+- attività giornaliera delle proposte e performance giornaliera delle
+  schedine ufficiali.
+
+La separazione semantica resta vincolante: le proposte misurano l'attività
+del generatore; profitto, ROI realizzato e bankroll includono soltanto
+snapshot ufficiali congelati prima del kickoff. Il job di refresh delle
+predizioni salva automaticamente le proposte per le giornate future; la GET
+di apertura pagina resta read-only, mentre “Genera e salva” usa un POST
+esplicito.
+
 ## Task completati (vedi IMPLEMENTATION_LOG.md)
 SOCCER-00, SOCCER-01, SOCCER-02, DATA-01..08, ML-01..07, FE-01..03, EXP-01..05 (fase ORACLE EXPERTS completata), MARKET-01..06 (fase MARKETS completata), ORACLE-01..04 (fase ENSEMBLE completata), BET-01..06 (fase BETTING completata), MATCH-01..02 (fase MATCH CENTER completata), SLIP-01..03 (fase SCHEDINA completata), OPS-01..03 (fase OPERATIONS completata), LIVE-01..03 (fase LIVE ORACLE completata)
 

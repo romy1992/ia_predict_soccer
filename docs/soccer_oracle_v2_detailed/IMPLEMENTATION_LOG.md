@@ -297,6 +297,27 @@ Prima di ogni task viene applicata la premessa in `AI_MASTER_PROMPT.md`:
   build Vite riuscita; migration verificata con ciclo
   upgrade/downgrade/upgrade su database isolato.
 
+- **Persistenza proposte e statistiche betting unificate (2026-09-11)**:
+  introdotta la migration additiva
+  `d9b4f6a21c73_betslip_proposal_snapshots.py`. Ogni proposta generata viene
+  salvata come snapshot append-only con chiave idempotente, lineage logica,
+  indicatore di revisione corrente, metriche combinate, versioni e payload
+  completo delle selezioni. Quote o metriche immutate non producono righe
+  duplicate; una variazione reale crea una nuova revisione senza modificare
+  la precedente.
+
+  Aggiunti `POST /betslip/generate/snapshot` per l'azione manuale esplicita
+  e `GET /betting/statistics` per la vista aggregata. Il job
+  `prediction_snapshot_refresh` salva automaticamente le proposte delle
+  giornate future dopo aver aggiornato le prediction. La GET storica
+  `/betslip/generate` resta read-only.
+
+  La Schedina Oracle espone ora le viste Panoramica, Mercati e Schedine:
+  tabella giornaliera per mercato, attività generata e performance
+  giornaliera delle schedine ufficiali. Proposte e performance ufficiale
+  sono deliberatamente separate: ROI, profitto e bankroll continuano a
+  derivare soltanto dalle schedine ufficiali congelate pre-kickoff.
+
 ## Connessione DB runtime
 - **AGGIORNATO 2026-09-04**: sorgente runtime ora fissata sul DB dev remoto Railway: `DATABASE_URL=postgresql://postgres:...@sakura.proxy.rlwy.net:18862/railway` (credenziali complete in `properties/config.env`), unica per locale/Docker/Alembic - vedi entry INFRA sopra. Il valore storico sotto (`localhost:5432/match_db`) e la narrazione del fix Docker restano come riferimento della situazione PRECEDENTE al cambio Railway.
 - vecchio runtime locale (fino al 2026-09-03): `DATABASE_URL=postgresql://postgres:postgres@localhost:5432/match_db`
