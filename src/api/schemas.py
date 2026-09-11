@@ -440,6 +440,7 @@ class BetslipGenerateResponse(BaseModel):
     pool_considered: int
     profiles: dict[str, list[dict[str, Any]]] = {}
     warnings: list[str] = []
+    snapshot_report: Optional[dict[str, int]] = None
 
 
 class OfficialBetslipListResponse(BaseModel):
@@ -449,6 +450,14 @@ class OfficialBetslipListResponse(BaseModel):
 
 class OfficialBetslipStatisticsResponse(BaseModel):
     statistics: dict[str, Any]
+
+
+class BettingStatisticsResponse(BaseModel):
+    generated_at: str
+    filters: dict[str, Any]
+    overview: dict[str, Any]
+    markets: dict[str, Any]
+    slips: dict[str, Any]
 
 
 class ModelRegistryOverviewResponse(BaseModel):

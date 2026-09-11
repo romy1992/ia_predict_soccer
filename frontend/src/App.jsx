@@ -5,6 +5,7 @@ import {
   getDashboardAvailableDates,
   getDashboardBundle,
   getDashboardMatchDetail,
+  getBettingStatistics,
   getBetslipGenerate,
   getOfficialBetslips,
   getOfficialBetslipStatistics,
@@ -19,6 +20,7 @@ import {
   predict,
   recomputeMatchPredictions,
   refreshApiQuota,
+  saveBetslipGeneration,
   triggerDailyRefresh,
   triggerDataQualityReport,
   triggerFutureSync,
@@ -60,6 +62,8 @@ export default function App() {
   const [betslipReport, setBetslipReport] = useState(null);
   const [betslipLoading, setBetslipLoading] = useState(false);
   const [betslipError, setBetslipError] = useState("");
+  const [bettingStatistics, setBettingStatistics] = useState(null);
+  const [bettingStatsDays, setBettingStatsDays] = useState(30);
   const [monitoringMarket, setMonitoringMarket] = useState("all");
   const [monitoringReport, setMonitoringReport] = useState(null);
   const [monitoringAlerts, setMonitoringAlerts] = useState([]);
@@ -238,18 +242,24 @@ export default function App() {
       setBetslipLoading(true);
       setBetslipError("");
       try {
-        const payload = await getBetslipGenerate({ targetDate: betslipDate, ...overrides });
-        const [officialResult, statisticsResult] = await Promise.allSettled([
+        const { persist = false, ...generationOverrides } = overrides;
+        const payload = persist
+          ? await saveBetslipGeneration({ targetDate: betslipDate, ...generationOverrides })
+          : await getBetslipGenerate({ targetDate: betslipDate, ...generationOverrides });
+        const [officialResult, statisticsResult, unifiedResult] = await Promise.allSettled([
           getOfficialBetslips({ targetDate: betslipDate }),
           getOfficialBetslipStatistics(),
+          getBettingStatistics({ days: bettingStatsDays }),
         ]);
         const official = officialResult.status === "fulfilled" ? officialResult.value : { rows: [] };
         const officialStatistics = statisticsResult.status === "fulfilled" ? statisticsResult.value : { statistics: null };
+        const unifiedStatistics = unifiedResult.status === "fulfilled" ? unifiedResult.value : null;
         const enriched = {
           ...payload,
           official_slips: official.rows || [],
           official_statistics: officialStatistics.statistics || null,
         };
+        if (unifiedStatistics) setBettingStatistics(unifiedStatistics);
         setBetslipReport(enriched);
         return enriched;
       } catch (err) {
@@ -260,8 +270,15 @@ export default function App() {
         setBetslipLoading(false);
       }
     },
-    [betslipDate]
+    [betslipDate, bettingStatsDays]
   );
+  const loadBettingStatistics = useCallback(async (days) => {
+    const selectedDays = Number(days || bettingStatsDays);
+    setBettingStatsDays(selectedDays);
+    const payload = await getBettingStatistics({ days: selectedDays });
+    setBettingStatistics(payload);
+    return payload;
+  }, [bettingStatsDays]);
   const loadMonitoring = useCallback(async () => {
     setMonitoringLoading(true);
     setMonitoringError("");
@@ -762,8 +779,11 @@ export default function App() {
       report: betslipReport,
       isLoading: betslipLoading,
       error: betslipError,
-      onLoadReport: loadBetslip,
+      onLoadReport: (overrides = {}) => loadBetslip({ ...overrides, persist: true }),
       dayData,
+      bettingStatistics,
+      bettingStatsDays,
+      onLoadStatistics: loadBettingStatistics,
     },
     monitoring: {
       market: monitoringMarket,

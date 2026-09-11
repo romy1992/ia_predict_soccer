@@ -324,6 +324,64 @@ class BettingSlipPick(Base):
         return payload
 
 
+class BettingSlipProposalSnapshot(Base):
+    """Snapshot append-only di una schedina proposta dal generatore.
+
+    Le performance economiche ufficiali restano nelle tabelle
+    ``betting_slips``/``betting_slip_picks``. Questa tabella conserva invece
+    ogni revisione realmente diversa di una proposta, senza trasformarla in
+    una giocata ufficiale e senza introdurre hindsight nel ROI.
+    """
+
+    __tablename__ = "betting_slip_proposal_snapshots"
+    __table_args__ = (
+        Index(
+            "ix_betting_slip_proposal_reference_profile",
+            "reference_date",
+            "profile",
+        ),
+        Index(
+            "ix_betting_slip_proposal_lineage_latest",
+            "logical_slip_id",
+            "is_latest",
+        ),
+    )
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    snapshot_key = Column(String(64), nullable=False, unique=True)
+    logical_slip_id = Column(String(64), nullable=False)
+    supersedes_id = Column(
+        String(36),
+        ForeignKey("betting_slip_proposal_snapshots.id"),
+        nullable=True,
+    )
+    reference_date = Column(String(10), nullable=False)
+    profile = Column(String(24), nullable=False)
+    situation = Column(String(16), nullable=False)
+    event_count = Column(Integer, nullable=False)
+    combined_odd = Column(Float, nullable=False)
+    adjusted_probability = Column(Float, nullable=True)
+    combined_model_void_odd = Column(Float, nullable=True)
+    combined_edge_absolute = Column(Float, nullable=True)
+    combined_expected_roi = Column(Float, nullable=True)
+    model_version = Column(String, nullable=True)
+    policy_version = Column(String, nullable=False)
+    correlation_version = Column(String, nullable=False)
+    payload = Column(JSON, nullable=False)
+    is_latest = Column(Boolean, nullable=False, default=True)
+    generated_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+
+    def to_dict(self):
+        payload = {column.name: getattr(self, column.name) for column in self.__table__.columns}
+        if payload.get("generated_at") is not None:
+            payload["generated_at"] = payload["generated_at"].isoformat()
+        return payload
+
+
 class MatchPredictionSnapshot(Base):
     """Log APPEND-ONLY delle predizioni ML calcolate per fixture+mercato
     (2026-09-09, richiesto esplicitamente dall'operatore: "salvare le

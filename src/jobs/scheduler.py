@@ -17,6 +17,7 @@ from src.data.quality_report_service import DataQualityService
 from src.jobs.job_history import JobHistory
 from src.jobs.job_settings import JOB_DEFINITIONS, is_job_enabled, resolve_job_schedule
 from src.ml.serving.prediction_snapshot_service import PredictionSnapshotService
+from src.oracle.betslip.betslip_service import BetslipService
 from src.oracle.betslip.official_betslip_service import OfficialBetslipService
 from src.oracle.ledger.ledger_service import PredictionLedgerService
 from src.oracle.ledger.official_capture_service import OfficialPredictionCaptureService
@@ -558,6 +559,33 @@ def run_prediction_snapshot_refresh(
             except Exception as exc:
                 errors.append({"fixture_id": match.id_fixture, "message": str(exc)})
 
+        # Dopo l'aggiornamento delle predizioni salva automaticamente le
+        # proposte per ogni giornata futura. Lo snapshot è idempotente:
+        # nessuna nuova riga se quote/probabilità/combinazioni sono immutate.
+        proposal_report = {
+            "dates_considered": 0,
+            "proposals_seen": 0,
+            "proposals_created": 0,
+            "proposals_unchanged": 0,
+            "errors": [],
+        }
+        for target_date in sorted(
+            {
+                datetime.fromisoformat(match.date_match).date()
+                for match in upcoming_matches
+                if match.date_match
+            }
+        ):
+            proposal_report["dates_considered"] += 1
+            try:
+                _, _, saved = BetslipService().generate_and_snapshot_for_day(target_date)
+                for key in ("proposals_seen", "proposals_created", "proposals_unchanged"):
+                    proposal_report[key] += saved[key]
+            except Exception as exc:
+                proposal_report["errors"].append(
+                    {"reference_date": target_date.isoformat(), "message": str(exc)}
+                )
+
         summary = {
             "days_ahead": days_ahead,
             "recently_finished_days": recently_finished_days,
@@ -565,6 +593,7 @@ def run_prediction_snapshot_refresh(
             "fixtures_upcoming": len(upcoming_matches),
             "fixtures_recently_finished": len(finished_matches_needing_snapshot),
             "predictions_resolved": predictions_resolved,
+            "betslip_proposals": proposal_report,
             "errors": errors,
             "duration_seconds": time.perf_counter() - start,
         }

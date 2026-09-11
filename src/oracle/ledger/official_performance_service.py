@@ -117,6 +117,11 @@ def compute_official_performance(rows: Iterable[Any]) -> dict[str, Any]:
         if _value(row, "source") == OFFICIAL_SOURCE and _value(row, "cohort") == OFFICIAL_COHORT
     ]
     dimensions = {
+        "day": lambda row: (
+            _value(row, "kickoff_at").date().isoformat()
+            if isinstance(_value(row, "kickoff_at"), datetime)
+            else str(_value(row, "kickoff_at") or _value(row, "created_at") or "unknown")[:10]
+        ),
         "market": lambda row: _value(row, "market") or "unknown",
         "outcome": lambda row: _value(row, "outcome") or "unknown",
         "league": lambda row: str(_value(row, "league") or "unknown"),

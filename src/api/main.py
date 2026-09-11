@@ -17,6 +17,7 @@ from src.api.schemas import (
     DataQualityResponse,
     DatabaseHealthResponse,
     ApiQuotaResponse,
+    BettingStatisticsResponse,
     BetslipGenerateResponse,
     BetslipPoolResponse,
     DashboardAvailableDatesResponse,
@@ -76,6 +77,7 @@ from src.oracle.betslip.pick_pool import PickPoolPolicy
 from src.oracle.betslip.pick_pool_service import PickPoolService
 from src.oracle.betslip.betslip_service import BetslipService
 from src.oracle.betslip.official_betslip_service import OfficialBetslipService
+from src.oracle.betting_statistics_service import BettingStatisticsService
 from src.oracle.decision_engine.decision_policy import DEFAULT_DECISION_POLICY, evaluate_decision
 from src.oracle.ledger.ledger_service import PredictionLedgerService
 from src.oracle.ledger.official_clv_service import OfficialClvService
@@ -1102,6 +1104,35 @@ def betslip_generate(
     return BetslipGenerateResponse(**payload)
 
 
+@app.post("/betslip/generate/snapshot", response_model=BetslipGenerateResponse)
+def betslip_generate_snapshot(
+    target_date: Optional[str] = None,
+    include_borderline: bool = False,
+    min_odd: Optional[float] = None,
+    max_odd: Optional[float] = None,
+    min_ev: Optional[float] = None,
+    markets: Optional[str] = None,
+) -> BetslipGenerateResponse:
+    """Genera e salva una revisione solo se i dati della proposta cambiano."""
+    selected_markets = [item.strip() for item in markets.split(",")] if markets else None
+    policy = PickPoolPolicy.with_overrides(
+        include_borderline=include_borderline,
+        min_odd=min_odd,
+        max_odd=max_odd,
+        min_ev=min_ev,
+    )
+    pool_result, generation, snapshot_report = BetslipService().generate_and_snapshot_for_day(
+        target_date=_parse_iso_date(target_date),
+        pool_policy=policy,
+        markets=selected_markets,
+    )
+    payload = dataclasses.asdict(generation)
+    payload["pool_id"] = pool_result.pool_id
+    payload["pool_policy_version"] = pool_result.policy_version
+    payload["snapshot_report"] = snapshot_report
+    return BetslipGenerateResponse(**payload)
+
+
 @app.get("/betslip/official", response_model=OfficialBetslipListResponse)
 def betslip_official(
     reference_date: Optional[str] = None,
@@ -1120,6 +1151,14 @@ def betslip_official(
 @app.get("/betslip/official/statistics", response_model=OfficialBetslipStatisticsResponse)
 def betslip_official_statistics() -> OfficialBetslipStatisticsResponse:
     return OfficialBetslipStatisticsResponse(statistics=OfficialBetslipService().statistics())
+
+
+@app.get("/betting/statistics", response_model=BettingStatisticsResponse)
+def betting_statistics(days: int = 30) -> BettingStatisticsResponse:
+    try:
+        return BettingStatisticsResponse(**BettingStatisticsService().report(days=days))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/monitoring/overview", response_model=MonitoringOverviewResponse)

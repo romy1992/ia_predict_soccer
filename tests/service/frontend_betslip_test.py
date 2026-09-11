@@ -76,3 +76,30 @@ def test_betslip_settlement_is_not_color_only():
     for label in ("Vinta", "Persa", "In corso", "Rimborsata", "Proposta"):
         assert label in source
     assert "legStatusLabel(leg.status, slip.is_official)" in source
+
+
+def test_betslip_unifies_daily_market_and_slip_statistics():
+    source = (FRONTEND / "features/betslip/BetslipPage.jsx").read_text(encoding="utf-8")
+    for label in (
+        "Statistiche Betting",
+        "Panoramica",
+        "Mercati",
+        "Schedine",
+        "Attività generata",
+        "Performance schedine ufficiali",
+        "Proposte salvate",
+        "Revisioni",
+    ):
+        assert label in source
+    assert "report?.markets?.daily" in source
+    assert "report?.official_daily" in source
+
+
+def test_manual_generation_is_explicitly_persisted_but_page_load_remains_read_only():
+    api = (FRONTEND / "api.js").read_text(encoding="utf-8")
+    assert 'request(`/betslip/generate?${params.toString()}`)' in api
+    assert "/betslip/generate/snapshot" in api
+    assert 'method: "POST"' in api.split("export function saveBetslipGeneration", 1)[1].split(
+        "export function getOfficialBetslips",
+        1,
+    )[0]

@@ -1250,6 +1250,54 @@ th {
   font-size: 12px;
 }
 
+.betslip-statistics .panel-header {
+  align-items: flex-end;
+}
+
+.betslip-statistics .panel-header label {
+  display: grid;
+  gap: 4px;
+  color: #64779d;
+  font-size: 12px;
+}
+
+.betting-overview-grid {
+  margin-top: 14px;
+}
+
+.betting-statistics-table {
+  min-width: 1040px;
+}
+
+.statistics-split {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin-top: 14px;
+}
+
+.statistics-split > section {
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid #e1e7f1;
+  border-radius: 10px;
+  background: #fbfcff;
+}
+
+.statistics-split h4 {
+  margin: 0 0 4px;
+}
+
+.statistics-split table {
+  min-width: 760px;
+}
+
+.statistics-boundary {
+  margin-top: 14px;
+  padding-top: 10px;
+  border-top: 1px solid #e1e7f1;
+}
+
 @media (max-width: 700px) {
   .betslip-toolbar-main,
   .stake-simulator,
@@ -1278,6 +1326,10 @@ th {
   .slip-actions {
     display: grid;
     grid-template-columns: 1fr 1fr;
+  }
+
+  .betslip-statistics .panel-header {
+    align-items: stretch;
   }
 }
 
@@ -1308,6 +1360,10 @@ th {
   }
 
   .detail-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .statistics-split {
     grid-template-columns: 1fr;
   }
 }
