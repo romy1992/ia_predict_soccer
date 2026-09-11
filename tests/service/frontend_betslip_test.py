@@ -30,11 +30,13 @@ def test_betslip_has_distinct_decision_and_settlement_badges():
 
 def test_opening_page_uses_read_only_get_requests():
     api = (FRONTEND / "api.js").read_text(encoding="utf-8")
-    section = api.split("export function getBetslipGenerate", 1)[1].split("function normalizeJobBody", 1)[0]
+    section = api.split("export function getBetslipGenerate", 1)[1].split(
+        "export function saveBetslipGeneration",
+        1,
+    )[0]
     assert "method:" not in section
     assert "/betslip/generate" in section
-    assert "/betslip/official" in section
-    assert "/betslip/official/statistics" in section
+    assert 'request(`/betslip/generate?${params.toString()}`)' in section
 
 
 def test_frontend_does_not_duplicate_betslip_formulas():
