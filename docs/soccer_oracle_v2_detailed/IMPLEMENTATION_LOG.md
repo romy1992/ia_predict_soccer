@@ -265,6 +265,30 @@ Prima di ogni task viene applicata la premessa in `AI_MASTER_PROMPT.md`:
   metriche aggregate e tutte le metriche di ogni selezione, distinguendo
   quota void modello da esito VOID.
 
+- **Ottimizzazione end-to-end Dashboard (2026-09-11)**:
+  eliminato il collo di bottiglia N×M degli snapshot con
+  `MatchPredictionSnapshotRepository.get_latest_bulk`, che usa una window
+  function per leggere soltanto l'ultima riga di ogni coppia
+  fixture/mercato. `DashboardService.get_day_matches` carica quella mappa
+  una volta e la riusa per tutte le righe senza consentire inferenza inline.
+  La vista è DB-first per passato, oggi e futuro; API-Sports viene consultata
+  soltanto da refresh esplicito o dai job dedicati.
+
+  Aggiunto `GET /dashboard/bundle`: overview, live e day derivano dallo
+  stesso dataset anziché eseguire fino a quattro letture del giorno. La
+  query ORM usa il giorno esatto, limita le colonne di `statistics` e non
+  carica `odds_snapshots`. Le fetch API concorrenti con la stessa cache key
+  sono serializzate in single-flight e il recupero multi-lega è parallelo.
+  Il frontend usa una sola richiesta bundle, filtra fase/mercato in memoria,
+  protegge il mount iniziale duplicato e sospende il polling quando la
+  Dashboard non è attiva.
+
+  Migration additiva `c3a7e2f91d44_dashboard_query_indexes.py`: indici su
+  `statistics.id_match`, `odds.id_match`,
+  `prediction_ledger(cohort, fixture_id)` e
+  `prediction_ledger.created_at`. Nessun dato o contratto API precedente è
+  stato rimosso.
+
 ## Connessione DB runtime
 - **AGGIORNATO 2026-09-04**: sorgente runtime ora fissata sul DB dev remoto Railway: `DATABASE_URL=postgresql://postgres:...@sakura.proxy.rlwy.net:18862/railway` (credenziali complete in `properties/config.env`), unica per locale/Docker/Alembic - vedi entry INFRA sopra. Il valore storico sotto (`localhost:5432/match_db`) e la narrazione del fix Docker restano come riferimento della situazione PRECEDENTE al cambio Railway.
 - vecchio runtime locale (fino al 2026-09-03): `DATABASE_URL=postgresql://postgres:postgres@localhost:5432/match_db`

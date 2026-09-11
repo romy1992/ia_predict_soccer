@@ -20,6 +20,7 @@ from src.api.schemas import (
     BetslipGenerateResponse,
     BetslipPoolResponse,
     DashboardAvailableDatesResponse,
+    DashboardBundleResponse,
     DashboardDayResponse,
     DashboardLiveResponse,
     DashboardMatchDetailResponse,
@@ -245,6 +246,22 @@ def dashboard_overview(target_date: Optional[str] = None) -> DashboardOverviewRe
     service = DashboardService()
     payload = service.get_overview(target_date=_parse_iso_date(target_date))
     return DashboardOverviewResponse(**payload)
+
+
+@app.get("/dashboard/bundle", response_model=DashboardBundleResponse)
+def dashboard_bundle(
+    target_date: Optional[str] = None,
+    limit: int = 400,
+    search: Optional[str] = None,
+    force_refresh: bool = False,
+) -> DashboardBundleResponse:
+    payload = DashboardService().get_dashboard_bundle(
+        target_date=_parse_iso_date(target_date),
+        limit=limit,
+        search_text=search,
+        force_refresh=force_refresh,
+    )
+    return DashboardBundleResponse(**payload)
 
 
 @app.get("/dashboard/available-dates", response_model=DashboardAvailableDatesResponse)

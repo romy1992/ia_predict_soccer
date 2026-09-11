@@ -72,7 +72,7 @@ class Match(Base):
 class Statistics(Base):
     __tablename__ = 'statistics'
     id_statistics_fk = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    id_match = Column(String(36), ForeignKey("match.id_match_fk"))  # 👈 Foreign Key
+    id_match = Column(String(36), ForeignKey("match.id_match_fk"), index=True)  # 👈 Foreign Key
     match = relationship("Match", back_populates="statistics")  # 👈 Many-to-One
     statistics_team_id = Column(Integer)  # Discriminante per capire di che team si parla
     score_ht = Column(Integer)  # Risultato primo tempo
@@ -103,7 +103,7 @@ class Statistics(Base):
 class Odds(Base):
     __tablename__ = 'odds'
     id_odds_fk = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    id_match = Column(String(36), ForeignKey("match.id_match_fk"))  # 👈 Foreign Key
+    id_match = Column(String(36), ForeignKey("match.id_match_fk"), index=True)  # 👈 Foreign Key
     match = relationship("Match", back_populates="odds")  # 👈 Many-to-One
     odds_from = Column(String)  # Da che API proviene la quota
     h2h = Column(JSON, nullable=True)  # Fisse(1X2)
@@ -159,6 +159,10 @@ class PredictionLedger(Base):
     """
 
     __tablename__ = 'prediction_ledger'
+    __table_args__ = (
+        Index("ix_prediction_ledger_cohort_fixture", "cohort", "fixture_id"),
+        Index("ix_prediction_ledger_created_at", "created_at"),
+    )
 
     id_prediction = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
 

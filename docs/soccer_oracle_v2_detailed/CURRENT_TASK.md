@@ -31,6 +31,22 @@ nel Ledger; senza record mostra “Non ufficiale”. Sono disponibili filtro
 Situazione e contatori per mercato, con vista mobile dedicata.
 
 ## Task corrente
+**AGGIORNAMENTO 2026-09-11: percorso di lettura Dashboard consolidato**.
+La Dashboard è ora rigorosamente DB-first: una richiesta passiva non chiama
+API-Sports e non ricostruisce feature o modelli. Il nuovo endpoint
+`GET /dashboard/bundle` produce tabella, riepilogo e sezione live da un solo
+caricamento del giorno. Gli snapshot delle predizioni vengono caricati con
+una sola query bulk per tutte le fixture e tutti i mercati richiesti, quindi
+non esiste più il precedente schema N fixture × M mercati.
+
+La query match usa il giorno esatto, carica soltanto le colonne statistiche
+necessarie e non idrata lo storico `odds_snapshots`. Gli accessi concorrenti
+alla stessa chiave della cache API usano single-flight; il fetch manuale
+multi-lega resta parallelo. Il frontend effettua una sola richiesta bundle,
+impedisce il doppio caricamento iniziale e limita il polling alla pagina
+Dashboard. Una migrazione additiva aggiunge indici alle foreign key lette
+più spesso; non modifica né cancella dati.
+
 **AGGIORNAMENTO 2026-09-10: vista storica Dashboard sempre veloce + copertura completa banca dati predizioni**. Richiesto esplicitamente dall'operatore dopo aver segnalato che il cambio data restava lento ANCHE al secondo giro sulla STESSA data storica (non solo la prima volta): la banca dati `match_prediction_snapshot` (introdotta il giorno prima) copriva solo le fixture viste in Dashboard o intercettate dal job mentre erano ancora `NS`, mai lo storico gia' passato ne' le partite finite fuori da quella finestra. Piano a 4 punti (documentato e aggiornato ad ogni punto, su richiesta esplicita dell'operatore, in `docs/soccer_oracle_v2_detailed/PROMPT_fast_historical_predictions.md`), tutti e 4 completati dal lato codice:
 
 1. **Niente ricalcolo al volo per le date storiche** (commit `ad50648`): nuovo `allow_compute: bool` su `PredictionSnapshotService.resolve_predictions` — `False` disabilita qualunque calcolo nuovo, serve solo cio' che e' gia' salvato. Attivo SOLO per `get_day_matches` su date storiche (mai oggi/future, mai il dettaglio di una singola fixture). Frontend: placeholder "In coda" per i mercati non ancora coperti.

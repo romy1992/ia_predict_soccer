@@ -3,10 +3,8 @@ import {
   API_BASE_URL,
   getApiQuota,
   getDashboardAvailableDates,
-  getDashboardDay,
-  getDashboardLive,
+  getDashboardBundle,
   getDashboardMatchDetail,
-  getDashboardOverview,
   getBetslipGenerate,
   getOfficialBetslips,
   getOfficialBetslipStatistics,
@@ -75,6 +73,8 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [isInitialLoading, setIsInitialLoading] = useState(true);
   const [isFilterLoading, setIsFilterLoading] = useState(false);
+  const initialLoadStartedRef = useRef(false);
+  const lastFilterQueryRef = useRef(`${todayIso()}|`);
   const [jobSettingsRows, setJobSettingsRows] = useState([]);
   const [jobSettingsLoading, setJobSettingsLoading] = useState(false);
   const [jobSettingsError, setJobSettingsError] = useState("");
@@ -162,6 +162,11 @@ export default function App() {
   }, []);
   const loadDashboardData = useCallback(
     async (mode = "full", { forceRefresh = false } = {}) => {
+      const queryKey = `${selectedDate}|${searchFilter}`;
+      if (mode === "filter" && !forceRefresh && lastFilterQueryRef.current === queryKey) {
+        return null;
+      }
+      lastFilterQueryRef.current = queryKey;
       if (mode === "full") {
         setIsLoading(true);
       } else if (mode === "filter") {
@@ -174,30 +179,15 @@ export default function App() {
         // data/ricerca) - i tab Fase/Mercato filtrano poi istantaneamente
         // in memoria (vedi `dashboardDayData` sotto), senza rifare la
         // fetch/ricalcolare le predizioni ML ad ogni click sul tab.
-        const [overviewData, livePayload, dayPayload] = await Promise.all([
-          getDashboardOverview(selectedDate),
-          getDashboardLive({
-            targetDate: selectedDate,
-            limit: 30,
-            // La preview "Partite in diretta" non mostra previsioni/badge:
-            // nessun bisogno di calcolarle qui (risparmio lato backend).
-            withPredictions: false,
-          }),
-          getDashboardDay({
-            targetDate: selectedDate,
-            limit: 400,
-            withPredictions: true,
-            search: searchFilter || undefined,
-            // Bottone "Forza aggiornamento" (TopFilters): per i rari casi in
-            // cui serve ri-sincronizzare a mano anche una data storica gia'
-            // a DB (es. correzione tardiva quote/risultato dal provider) -
-            // vedi `DashboardService.get_day_matches::force_refresh`.
-            forceRefresh,
-          }),
-        ]);
-        setOverview(overviewData);
-        setLiveData(livePayload);
-        setDayData(dayPayload);
+        const payload = await getDashboardBundle({
+          targetDate: selectedDate,
+          limit: 400,
+          search: searchFilter || undefined,
+          forceRefresh,
+        });
+        setOverview(payload.overview);
+        setLiveData(payload.live);
+        setDayData(payload.day);
         setLastRefresh(new Date().toLocaleString("it-IT"));
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
@@ -555,6 +545,10 @@ export default function App() {
     setActivePage(previousPage || "dashboard");
   }, [previousPage]);
   useEffect(() => {
+    if (initialLoadStartedRef.current) {
+      return;
+    }
+    initialLoadStartedRef.current = true;
     loadEverything(false);
     // Solo al mount, con manual=false: NON deve comparire "Aggiornamento in
     // corso..." sul bottone Sidebar al semplice reload della pagina (quello
@@ -567,6 +561,9 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   useEffect(() => {
+    if (activePage !== "dashboard") {
+      return undefined;
+    }
     const timer = setInterval(() => {
       // Fix (2026-09-07): se la quota e' gia' segnalata esaurita, richiamare
       // l'intera dashboard ogni 60s non serve a nulla (il backend rifiuta
@@ -588,7 +585,7 @@ export default function App() {
       getApiQuota().then(setApiQuota).catch(() => {});
     }, 60000);
     return () => clearInterval(timer);
-  }, [isQuotaExhausted, loadDashboardData, loadMatchDetail, selectedFixtureId]);
+  }, [activePage, isQuotaExhausted, loadDashboardData, loadMatchDetail, selectedFixtureId]);
   useEffect(() => {
     // Ricarica dal backend SOLO quando cambiano data o testo di ricerca
     // (esplicito click "Cerca") - NON piu' su phaseFilter/selectedMarket,

@@ -154,6 +154,34 @@ class TestPredictionSnapshotServiceResolvePredictions(unittest.TestCase):
         self.assertEqual(payload["h2h"]["probability"], 0.75)
         self.assertEqual(payload["h2h"]["run_id"], "run_old")
 
+    def test_preloaded_snapshot_avoids_repository_lookup(self):
+        service = PredictionSnapshotService()
+        snapshot = MatchPredictionSnapshot(
+            fixture_id=1,
+            market="h2h",
+            prediction=1,
+            probability=0.75,
+            model_name="logistic",
+            model_run_id="run_old",
+            feature_fingerprint="whatever",
+        )
+        service.repo.get_latest = mock.Mock(
+            side_effect=AssertionError("get_latest non deve essere chiamato con snapshot pre-caricati")
+        )
+        service.filter_service = _ExplodingFilterService()
+        service.registry = mock.Mock()
+
+        payload = service.resolve_predictions(
+            fixture_id=1,
+            markets=["h2h"],
+            status="FT",
+            allow_compute=False,
+            preloaded_snapshots={(1, "h2h"): snapshot},
+        )
+
+        service.repo.get_latest.assert_not_called()
+        self.assertEqual(payload["h2h"]["probability"], 0.75)
+
     def test_final_match_stays_frozen_even_if_production_model_changed(self):
         service = PredictionSnapshotService()
         from src.service_ia.model.match import MatchPredictionSnapshot
