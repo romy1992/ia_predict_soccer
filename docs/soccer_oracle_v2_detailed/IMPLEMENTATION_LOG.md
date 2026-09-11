@@ -325,6 +325,21 @@ Prima di ogni task viene applicata la premessa in `AI_MASTER_PROMPT.md`:
   alla modalità “Solo consultazione” quando viene selezionata una data
   precedente a oggi.
 
+  Estensione diversificazione/shadow tracking: nuova policy
+  `betslip_diversification_v1` e profili `*_v3_diversified`. Il pool è
+  stratificato per famiglia di mercato, con limiti per famiglia dentro la
+  schedina e penalizzazione delle combinazioni troppo sovrapposte. Il
+  generatore espone tre gruppi distinti: Consigliate (`PLAY`), Sperimentali
+  (`BORDERLINE`) e Non consigliate (`NO BET`).
+
+  Migration additiva `e4c8a17d5b92_shadow_betslip_settlement.py`: gli
+  snapshot delle tre coorti ricevono settlement simulato
+  `PENDING/WON/LOST/VOID`, stake unitario, quota effettiva, ritorno e PnL.
+  Il job settlement riusa le regole centrali esistenti. Le statistiche
+  espongono portafoglio simulato complessivo e portafogli separati per
+  stato, usando solo l'ultima revisione pre-kickoff; le revisioni precedenti
+  restano nel DB per ricerca. Nessun dato simulato entra nel ROI ufficiale.
+
 ## Connessione DB runtime
 - **AGGIORNATO 2026-09-04**: sorgente runtime ora fissata sul DB dev remoto Railway: `DATABASE_URL=postgresql://postgres:...@sakura.proxy.rlwy.net:18862/railway` (credenziali complete in `properties/config.env`), unica per locale/Docker/Alembic - vedi entry INFRA sopra. Il valore storico sotto (`localhost:5432/match_db`) e la narrazione del fix Docker restano come riferimento della situazione PRECEDENTE al cambio Railway.
 - vecchio runtime locale (fino al 2026-09-03): `DATABASE_URL=postgresql://postgres:postgres@localhost:5432/match_db`

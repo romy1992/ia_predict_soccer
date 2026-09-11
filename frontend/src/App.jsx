@@ -248,16 +248,25 @@ export default function App() {
         let payload;
         if (isPastDate) {
           const saved = await getSavedBetslipProposals({ targetDate: betslipDate });
-          const profiles = { SAFE: [], BALANCED: [], AGGRESSIVE: [] };
+          const decisionGroups = {
+            PLAY: { SAFE: [], BALANCED: [], AGGRESSIVE: [] },
+            BORDERLINE: { SAFE: [], BALANCED: [], AGGRESSIVE: [] },
+            "NO BET": { SAFE: [], BALANCED: [], AGGRESSIVE: [] },
+          };
           (saved.rows || []).forEach((slip) => {
             const profile = slip.profile_name || "BALANCED";
-            profiles[profile] = [...(profiles[profile] || []), slip];
+            const decision = slip.situation || "NO BET";
+            decisionGroups[decision][profile] = [
+              ...(decisionGroups[decision][profile] || []),
+              slip,
+            ];
           });
           payload = {
             generated_at: null,
             correlation_ruleset_version: null,
             pool_considered: 0,
-            profiles,
+            profiles: decisionGroups.PLAY,
+            decision_groups: decisionGroups,
             warnings: [],
             historical_snapshot: true,
           };

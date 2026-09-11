@@ -52,10 +52,11 @@ function statusClass(status) {
   return "value-unavailable";
 }
 
-function legStatusLabel(status, isOfficial) {
-  if (!isOfficial) return "Proposta";
+function legStatusLabel(status, isOfficial, isShadow = false) {
+  if (!isOfficial && !isShadow) return "Proposta";
   const labels = { PENDING: "In corso", WON: "Vinta", LOST: "Persa", VOID: "Rimborsata" };
-  return labels[status] || status || "In corso";
+  const label = labels[status] || status || "In corso";
+  return !isOfficial && isShadow ? `Sim. ${label}` : label;
 }
 
 export default function BetslipPage({
@@ -71,6 +72,7 @@ export default function BetslipPage({
   onLoadStatistics,
 }) {
   const [activeView, setActiveView] = useState("proposals");
+  const [activeDecision, setActiveDecision] = useState("PLAY");
   const [activeFilter, setActiveFilter] = useState("all");
   const [stake, setStake] = useState(10);
   const [copiedSlipId, setCopiedSlipId] = useState(null);
@@ -85,16 +87,25 @@ export default function BetslipPage({
   }, [dayData]);
 
   const profiles = report?.profiles || {};
-  const proposedSlips = useMemo(
-    () =>
-      PROFILE_ORDER.flatMap((profile) =>
-        (profiles[profile] || []).map((slip) => ({
-          ...slip,
-          profile_name: slip.profile_name || profile,
-          is_official: false,
-        }))
-      ),
-    [profiles]
+  const proposalGroups = useMemo(() => {
+    const groups = report?.decision_groups || { PLAY: profiles };
+    return Object.fromEntries(
+      ["PLAY", "BORDERLINE", "NO BET"].map((decision) => [
+        decision,
+        PROFILE_ORDER.flatMap((profile) =>
+          (groups?.[decision]?.[profile] || []).map((slip) => ({
+            ...slip,
+            profile_name: slip.profile_name || profile,
+            is_official: false,
+          }))
+        ),
+      ])
+    );
+  }, [profiles, report?.decision_groups]);
+  const proposedSlips = proposalGroups[activeDecision] || [];
+  const totalProposed = Object.values(proposalGroups).reduce(
+    (total, slips) => total + slips.length,
+    0
   );
   const officialSlips = useMemo(
     () =>
@@ -193,17 +204,43 @@ export default function BetslipPage({
       <section className="panel betslip-browser">
         <div className="betslip-view-tabs" role="tablist" aria-label="Vista schedine">
           <button className={activeView === "proposals" ? "tab active" : "tab"} onClick={() => setActiveView("proposals")}>
-            Schedine <span>{proposedSlips.length}</span>
+            Schedine <span>{totalProposed}</span>
           </button>
           <button className={activeView === "official" ? "tab active" : "tab"} onClick={() => setActiveView("official")}>
             Ufficiali <span>{officialSlips.length}</span>
           </button>
         </div>
 
+        {activeView === "proposals" && (
+          <>
+            <div className="betslip-decision-tabs" role="tablist" aria-label="Qualità schedine">
+              {[
+                ["PLAY", "Consigliate"],
+                ["BORDERLINE", "Sperimentali"],
+                ["NO BET", "Non consigliate"],
+              ].map(([value, label]) => (
+                <button
+                  key={value}
+                  className={`decision-tab ${statusClass(value)} ${activeDecision === value ? "active" : ""}`}
+                  onClick={() => setActiveDecision(value)}
+                >
+                  {label} <span>{proposalGroups[value]?.length || 0}</span>
+                </button>
+              ))}
+            </div>
+            <p className="muted">
+              {activeDecision === "PLAY"
+                ? "Solo selezioni PLAY: sono le uniche candidabili alla cattura ufficiale."
+                : activeDecision === "BORDERLINE"
+                  ? "Simulazioni con almeno una selezione BORDERLINE: salvate e monitorate, ma non ufficiali."
+                  : "Simulazioni contenenti NO BET: monitoraggio sperimentale, mai raccomandazioni ufficiali."}
+            </p>
+          </>
+        )}
+
         <div className="betslip-filter-tabs">
           {[
             ["all", "Tutte"],
-            ["play", "Solo PLAY"],
             ["SAFE", "Prudenti"],
             ["BALANCED", "Bilanciate"],
             ["AGGRESSIVE", "Spinte"],
@@ -222,9 +259,7 @@ export default function BetslipPage({
         <p className="muted betslip-filter-help">
           {activeFilter === "all"
             ? "Tutte le schedine disponibili per la data selezionata."
-            : activeFilter === "play"
-              ? "Mostra soltanto le schedine che superano tutti i vincoli della policy."
-              : PROFILE_HELP[activeFilter] || "Mostra soltanto le schedine già concluse."}
+            : PROFILE_HELP[activeFilter] || "Mostra soltanto le schedine già concluse."}
         </p>
 
         <div className="betslip-legend">
@@ -278,6 +313,7 @@ function BettingStatistics({ report, fallback, days, onChangeDays }) {
   const overview = report?.overview || {};
   const predictions = overview.official_predictions || {};
   const proposals = overview.proposals || {};
+  const simulated = overview.simulated_portfolios || {};
   const official = overview.official_slips || fallback || {};
   return (
     <section className="panel betslip-statistics">
@@ -303,18 +339,21 @@ function BettingStatistics({ report, fallback, days, onChangeDays }) {
       {!report && !fallback ? (
         <div className="empty-state">Statistiche non ancora disponibili.</div>
       ) : activeTab === "overview" ? (
-        <div className="stats-grid betting-overview-grid">
-          {[
-            ["Pronostici ufficiali", predictions.plays ?? 0],
-            ["Pronostici vinti", predictions.wins ?? 0],
-            ["Proposte salvate", proposals.generated ?? 0],
-            ["Revisioni", proposals.revisions ?? 0],
-            ["Schedine ufficiali", official.total ?? 0],
-            ["Schedine vinte", official.won ?? 0],
-            ["Profitto ufficiale", formatNumber(official.net_profit, 2)],
-            ["ROI ufficiale", formatPercent(official.realized_roi)],
-          ].map(([label, value]) => <article className="stat-card" key={label}><span>{label}</span><strong>{value}</strong></article>)}
-        </div>
+        <>
+          <div className="stats-grid betting-overview-grid">
+            {[
+              ["Pronostici ufficiali", predictions.plays ?? 0],
+              ["Pronostici vinti", predictions.wins ?? 0],
+              ["Proposte salvate", proposals.generated ?? 0],
+              ["Revisioni", proposals.revisions ?? 0],
+              ["Schedine ufficiali", official.total ?? 0],
+              ["Schedine vinte", official.won ?? 0],
+              ["Profitto ufficiale", formatNumber(official.net_profit, 2)],
+              ["ROI ufficiale", formatPercent(official.realized_roi)],
+            ].map(([label, value]) => <article className="stat-card" key={label}><span>{label}</span><strong>{value}</strong></article>)}
+          </div>
+          <ShadowPortfolioTable portfolios={simulated} />
+        </>
       ) : activeTab === "markets" ? (
         <DailyMarketTable rows={report?.markets?.daily || []} />
       ) : (
@@ -323,6 +362,30 @@ function BettingStatistics({ report, fallback, days, onChangeDays }) {
       <p className="muted statistics-boundary">
         ROI, profitto e bankroll comprendono esclusivamente giocate e schedine ufficiali congelate prima del kickoff.
       </p>
+    </section>
+  );
+}
+
+function ShadowPortfolioTable({ portfolios }) {
+  const rows = [
+    ["ALL", "Complessivo simulato"],
+    ["PLAY", "PLAY simulato"],
+    ["BORDERLINE", "BORDERLINE simulato"],
+    ["NO BET", "NO BET simulato"],
+  ];
+  return (
+    <section className="shadow-portfolios">
+      <h4>Portafogli simulati</h4>
+      <p className="muted">Una unità per ogni ultima revisione pre-kickoff; risultati separati dal capitale ufficiale.</p>
+      <div className="table-wrap">
+        <table>
+          <thead><tr><th>Portafoglio</th><th>Schedine</th><th>Vinte</th><th>Perse</th><th>Pending</th><th>VOID</th><th>Capitale</th><th>Stake</th><th>Ritorno</th><th>Profitto</th><th>ROI simulato</th></tr></thead>
+          <tbody>{rows.map(([key, label]) => {
+            const row = portfolios?.[key] || {};
+            return <tr key={key}><td>{label}</td><td>{row.total ?? 0}</td><td>{row.won ?? 0}</td><td>{row.lost ?? 0}</td><td>{row.pending ?? 0}</td><td>{row.void ?? 0}</td><td>{formatNumber(row.current_bankroll, 2)}</td><td>{formatNumber(row.stake, 2)}</td><td>{formatNumber(row.return, 2)}</td><td>{formatNumber(row.profit, 2)}</td><td>{formatPercent(row.roi)}</td></tr>;
+          })}</tbody>
+        </table>
+      </div>
     </section>
   );
 }
@@ -375,9 +438,11 @@ function SlipStatistics({ report, proposals, official }) {
 }
 
 function SlipCard({ slip, fixtureIndex, stake, copied, onCopy }) {
-  const legs = slip.legs || [];
+  const shadowLegs = slip.shadow_settlement?.legs;
+  const legs = !slip.is_official && shadowLegs?.length ? shadowLegs : slip.legs || [];
   const situation = slip.situation || slip.initial_situation || "N/D";
-  const status = slip.status || "PROPOSTA";
+  const hasShadowStatus = !slip.is_official && Boolean(slip.shadow_status);
+  const status = slip.is_official ? slip.status || "PENDING" : slip.shadow_status || "PROPOSTA";
   const profile = slip.profile_name || slip.profile;
   const simulatedReturn = Number(stake) * Number(slip.combined_odd || 0);
   const simulatedProfit = simulatedReturn - Number(stake);
@@ -390,7 +455,9 @@ function SlipCard({ slip, fixtureIndex, stake, copied, onCopy }) {
         </div>
         <div className="slip-card-status">
           <span className={`value-badge ${statusClass(situation)}`}>{situation}</span>
-          <span className={`settlement-label ${statusClass(status)}`}>{slip.is_official ? status : "PROPOSTA"}</span>
+          <span className={`settlement-label ${statusClass(status)}`}>
+            {slip.is_official ? status : hasShadowStatus ? `SIM · ${status}` : "PROPOSTA"}
+          </span>
           <small>{legs.length} eventi</small>
         </div>
       </div>
@@ -410,8 +477,8 @@ function SlipCard({ slip, fixtureIndex, stake, copied, onCopy }) {
               <tr key={`${slip.slip_id || slip.id}-${index}`}>
                 <td title={leg.status === "VOID" ? `Esito rimborsato: ${leg.void_reason || "evento void"}` : ""}>
                   <span className="pick-status">
-                    <i className={`status-dot status-${(slip.is_official ? leg.status || "pending" : "proposal").toLowerCase()}`} />
-                    {legStatusLabel(leg.status, slip.is_official)}
+                    <i className={`status-dot status-${(slip.is_official || hasShadowStatus ? leg.status || "pending" : "proposal").toLowerCase()}`} />
+                    {legStatusLabel(leg.status, slip.is_official, hasShadowStatus)}
                   </span>
                 </td>
                 <td>{leg.kickoff_at ? new Date(leg.kickoff_at).toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit" }) : "—"}</td>

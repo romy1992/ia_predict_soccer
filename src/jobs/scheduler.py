@@ -19,6 +19,7 @@ from src.jobs.job_settings import JOB_DEFINITIONS, is_job_enabled, resolve_job_s
 from src.ml.serving.prediction_snapshot_service import PredictionSnapshotService
 from src.oracle.betslip.betslip_service import BetslipService
 from src.oracle.betslip.official_betslip_service import OfficialBetslipService
+from src.oracle.betslip.proposal_snapshot_service import BetslipProposalSnapshotService
 from src.oracle.ledger.ledger_service import PredictionLedgerService
 from src.oracle.ledger.official_capture_service import OfficialPredictionCaptureService
 from src.repository.base.repository_db import SessionLocal
@@ -326,15 +327,20 @@ def run_manual_settlement(
         betslip_start = time.perf_counter()
         betslip_report = OfficialBetslipService().settle_pending()
         betslip_duration = time.perf_counter() - betslip_start
+        shadow_start = time.perf_counter()
+        shadow_report = BetslipProposalSnapshotService().settle_pending()
+        shadow_duration = time.perf_counter() - shadow_start
         report["matches_updated"] = report.get("updated", 0)
         report["matches_complete"] = report.get("complete", 0)
         report["matches_incomplete"] = report.get("incomplete", 0)
         report.update(ledger_report)
         report.update(betslip_report)
+        report["shadow_betslips"] = shadow_report
         report["phase_durations"] = {
             "match_settlement_seconds": data_phase_duration,
             "ledger_settlement_seconds": ledger_duration,
             "betslip_settlement_seconds": betslip_duration,
+            "shadow_betslip_settlement_seconds": shadow_duration,
         }
         report["duration_seconds"] = time.perf_counter() - start
         history.mark_success(job_id=job_id, summary=report)

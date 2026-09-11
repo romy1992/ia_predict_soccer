@@ -345,6 +345,11 @@ class BettingSlipProposalSnapshot(Base):
             "logical_slip_id",
             "is_latest",
         ),
+        Index(
+            "ix_betting_slip_proposal_shadow_status",
+            "shadow_status",
+            "is_latest",
+        ),
     )
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -367,8 +372,21 @@ class BettingSlipProposalSnapshot(Base):
     model_version = Column(String, nullable=True)
     policy_version = Column(String, nullable=False)
     correlation_version = Column(String, nullable=False)
+    diversification_version = Column(String, nullable=True)
     payload = Column(JSON, nullable=False)
     is_latest = Column(Boolean, nullable=False, default=True)
+    shadow_status = Column(String(16), nullable=False, default="PENDING")
+    shadow_stake = Column(Float, nullable=False, default=1.0)
+    shadow_effective_odd = Column(Float, nullable=True)
+    shadow_return = Column(Float, nullable=True)
+    shadow_profit = Column(Float, nullable=True)
+    shadow_settlement = Column(JSON, nullable=True)
+    shadow_settled_at = Column(DateTime(timezone=True), nullable=True)
+    staking_policy_version = Column(
+        String,
+        nullable=False,
+        default="shadow_flat_unit_v1",
+    )
     generated_at = Column(
         DateTime(timezone=True),
         nullable=False,
