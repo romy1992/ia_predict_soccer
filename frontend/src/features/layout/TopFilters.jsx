@@ -56,7 +56,13 @@ export default function TopFilters({
           />
         </label>
 
-        <button className="btn-secondary" onClick={onApplySearch}>Cerca</button>
+        <button
+          className="btn-secondary"
+          onClick={onApplySearch}
+          title="Applica soltanto il testo inserito nel campo Cerca match. Data e mercato si aggiornano automaticamente."
+        >
+          Cerca match
+        </button>
         <button
           className="btn-secondary"
           onClick={onForceRefresh}

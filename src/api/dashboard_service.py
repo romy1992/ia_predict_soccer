@@ -1621,17 +1621,17 @@ class DashboardService:
 
         return stored
 
-    def get_available_dates(self) -> dict[str, Any]:
+    def get_available_dates(self, today: Optional[date] = None) -> dict[str, Any]:
         """Elenco date selezionabili in UI (TopFilters): dal primo giorno in
-        cui questa funzionalita' e' stata usata (persistito su file, vedi
-        `_first_seen_date`) fino ad oggi, cosi' che la lista si accumuli
-        automaticamente giorno dopo giorno invece di un calendario libero
-        (richiesta esplicita utente: "elenco di date dal giorno 1 di
-        previsioni ad oggi che man mano viene accumulato"). Se il Prediction
-        Ledger contiene gia' una prediction salvata PRIMA di quella data,
-        vince quella data ancora piu' vecchia."""
-        today = datetime.now(timezone.utc).date()
+        cui questa funzionalita' e' stata usata fino alla finestra futura
+        gestita dal Daily Refresh/Prediction Snapshot job. In questo modo la
+        select espone anche le date per cui il job salva le predizioni prima
+        che l'utente apra la Dashboard. Se il Prediction Ledger contiene una
+        prediction precedente, quella data estende il limite storico."""
+        today = today or datetime.now(timezone.utc).date()
         start = self._first_seen_date(today)
+        future_days = max(0, int(self.cfg.daily_refresh_days_ahead))
+        end = today + timedelta(days=future_days)
 
         earliest_dt = self.ledger_repo.get_earliest_created_date()
         if earliest_dt and earliest_dt.date() < start:
@@ -1639,14 +1639,14 @@ class DashboardService:
         if start > today:
             start = today
 
-        span_days = (today - start).days
+        span_days = (end - start).days
         dates = [(start + timedelta(days=offset)).isoformat() for offset in range(span_days + 1)]
-        dates.reverse()  # oggi per primo: piu' utile in una select
+        dates.reverse()
 
         return {
             "dates": dates,
             "first_date": dates[-1] if dates else today.isoformat(),
-            "last_date": dates[0] if dates else today.isoformat(),
+            "last_date": dates[0] if dates else end.isoformat(),
         }
 
     def get_match_detail(
