@@ -164,6 +164,14 @@ export function saveBetslipGeneration({ targetDate } = {}) {
   });
 }
 
+export function getSavedBetslipProposals({ targetDate, latestOnly = true, limit = 200 } = {}) {
+  const params = new URLSearchParams();
+  params.set("reference_date", targetDate);
+  params.set("latest_only", String(latestOnly));
+  params.set("limit", String(limit));
+  return request(`/betslip/proposals?${params.toString()}`);
+}
+
 export function getOfficialBetslips({ targetDate, status, limit = 200 } = {}) {
   const params = new URLSearchParams();
   if (targetDate) params.set("reference_date", targetDate);

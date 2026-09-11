@@ -82,6 +82,36 @@ def test_proposal_snapshots_are_idempotent_and_revisioned_on_odds_change():
     assert repo.rows[0].snapshot_key != repo.rows[1].snapshot_key
 
 
+def test_saved_proposals_are_returned_without_regeneration():
+    saved_at = datetime.now(timezone.utc)
+    repo = FakeProposalRepo(
+        [
+            SimpleNamespace(
+                id="snapshot-1",
+                reference_date="2026-09-10",
+                generated_at=saved_at,
+                is_latest=True,
+                payload={"slip_id": "slip-1", "profile_name": "SAFE"},
+            )
+        ]
+    )
+
+    rows = BetslipProposalSnapshotService(repo=repo).list_saved(
+        reference_date="2026-09-10"
+    )
+
+    assert rows == [
+        {
+            "slip_id": "slip-1",
+            "profile_name": "SAFE",
+            "snapshot_id": "snapshot-1",
+            "reference_date": "2026-09-10",
+            "saved_at": saved_at.isoformat(),
+            "is_latest": True,
+        }
+    ]
+
+
 class FakeLedgerRepo:
     def list_all(self, **_kwargs):
         now = datetime.now(timezone.utc)

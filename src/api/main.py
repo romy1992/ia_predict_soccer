@@ -20,6 +20,7 @@ from src.api.schemas import (
     BettingStatisticsResponse,
     BetslipGenerateResponse,
     BetslipPoolResponse,
+    BetslipProposalListResponse,
     DashboardAvailableDatesResponse,
     DashboardBundleResponse,
     DashboardDayResponse,
@@ -77,6 +78,7 @@ from src.oracle.betslip.pick_pool import PickPoolPolicy
 from src.oracle.betslip.pick_pool_service import PickPoolService
 from src.oracle.betslip.betslip_service import BetslipService
 from src.oracle.betslip.official_betslip_service import OfficialBetslipService
+from src.oracle.betslip.proposal_snapshot_service import BetslipProposalSnapshotService
 from src.oracle.betting_statistics_service import BettingStatisticsService
 from src.oracle.decision_engine.decision_policy import DEFAULT_DECISION_POLICY, evaluate_decision
 from src.oracle.ledger.ledger_service import PredictionLedgerService
@@ -1094,9 +1096,17 @@ def betslip_generate(
         max_odd=max_odd,
         min_ev=min_ev,
     )
+    selected_date = _parse_iso_date(target_date)
+    if selected_date < datetime.now(timezone.utc).date():
+        raise HTTPException(
+            status_code=409,
+            detail="Le date passate sono disponibili tramite /betslip/proposals",
+        )
     service = BetslipService()
     pool_result, generation = service.generate_for_day(
-        target_date=_parse_iso_date(target_date), pool_policy=policy, markets=selected_markets
+        target_date=selected_date,
+        pool_policy=policy,
+        markets=selected_markets,
     )
     payload = dataclasses.asdict(generation)
     payload["pool_id"] = pool_result.pool_id
@@ -1121,16 +1131,35 @@ def betslip_generate_snapshot(
         max_odd=max_odd,
         min_ev=min_ev,
     )
-    pool_result, generation, snapshot_report = BetslipService().generate_and_snapshot_for_day(
-        target_date=_parse_iso_date(target_date),
-        pool_policy=policy,
-        markets=selected_markets,
-    )
+    try:
+        pool_result, generation, snapshot_report = BetslipService().generate_and_snapshot_for_day(
+            target_date=_parse_iso_date(target_date),
+            pool_policy=policy,
+            markets=selected_markets,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     payload = dataclasses.asdict(generation)
     payload["pool_id"] = pool_result.pool_id
     payload["pool_policy_version"] = pool_result.policy_version
     payload["snapshot_report"] = snapshot_report
     return BetslipGenerateResponse(**payload)
+
+
+@app.get("/betslip/proposals", response_model=BetslipProposalListResponse)
+def betslip_saved_proposals(
+    reference_date: str,
+    latest_only: bool = True,
+    limit: int = 200,
+) -> BetslipProposalListResponse:
+    """Consulta snapshot già salvati; non genera né modifica dati."""
+    _parse_iso_date(reference_date)
+    rows = BetslipProposalSnapshotService().list_saved(
+        reference_date=reference_date,
+        latest_only=latest_only,
+        limit=min(max(limit, 0), 2_000),
+    )
+    return BetslipProposalListResponse(total=len(rows), rows=rows)
 
 
 @app.get("/betslip/official", response_model=OfficialBetslipListResponse)

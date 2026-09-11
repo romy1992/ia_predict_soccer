@@ -85,3 +85,30 @@ class BetslipProposalSnapshotService:
                 report["proposals_created"] += int(created)
                 report["proposals_unchanged"] += int(not created)
         return report
+
+    def list_saved(
+        self,
+        *,
+        reference_date: str,
+        latest_only: bool = True,
+        limit: int = 200,
+    ) -> list[dict[str, Any]]:
+        """Restituisce gli snapshot già salvati, senza rigenerare il passato."""
+        rows = self.repo.list_all(
+            reference_date=reference_date,
+            latest_only=latest_only,
+            limit=limit,
+        )
+        result = []
+        for row in rows:
+            payload = dict(row.payload or {})
+            payload.update(
+                {
+                    "snapshot_id": row.id,
+                    "reference_date": row.reference_date,
+                    "saved_at": row.generated_at.isoformat() if row.generated_at else None,
+                    "is_latest": bool(row.is_latest),
+                }
+            )
+            result.append(payload)
+        return result

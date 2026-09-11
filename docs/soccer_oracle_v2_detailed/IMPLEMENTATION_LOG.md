@@ -318,6 +318,13 @@ Prima di ogni task viene applicata la premessa in `AI_MASTER_PROMPT.md`:
   sono deliberatamente separate: ROI, profitto e bankroll continuano a
   derivare soltanto dalle schedine ufficiali congelate pre-kickoff.
 
+  Correzione anti-hindsight: `POST /betslip/generate/snapshot` rifiuta date
+  passate e, per la giornata corrente, salva solo schedine con tutti i
+  kickoff futuri e validi. `GET /betslip/proposals` permette di consultare
+  gli snapshot storici senza rigenerarli; il frontend passa automaticamente
+  alla modalità “Solo consultazione” quando viene selezionata una data
+  precedente a oggi.
+
 ## Connessione DB runtime
 - **AGGIORNATO 2026-09-04**: sorgente runtime ora fissata sul DB dev remoto Railway: `DATABASE_URL=postgresql://postgres:...@sakura.proxy.rlwy.net:18862/railway` (credenziali complete in `properties/config.env`), unica per locale/Docker/Alembic - vedi entry INFRA sopra. Il valore storico sotto (`localhost:5432/match_db`) e la narrazione del fix Docker restano come riferimento della situazione PRECEDENTE al cambio Railway.
 - vecchio runtime locale (fino al 2026-09-03): `DATABASE_URL=postgresql://postgres:postgres@localhost:5432/match_db`
