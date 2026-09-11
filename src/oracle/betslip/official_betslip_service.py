@@ -244,8 +244,17 @@ class OfficialBetslipService:
     def list_official(self, reference_date: Optional[str] = None, status: Optional[str] = None, limit: int = 200):
         return [row.to_dict() for row in self.repo.list_all(reference_date=reference_date, status=status, limit=limit)]
 
-    def statistics(self) -> dict[str, Any]:
+    def statistics(
+        self,
+        *,
+        since_date: Optional[str] = None,
+        until_date: Optional[str] = None,
+    ) -> dict[str, Any]:
         rows = sorted(self.repo.list_all(limit=1_000_000), key=lambda row: (row.created_at, row.id))
+        if since_date is not None:
+            rows = [row for row in rows if row.reference_date >= since_date]
+        if until_date is not None:
+            rows = [row for row in rows if row.reference_date <= until_date]
         settled = [row for row in rows if row.status in {"WON", "LOST", "VOID"}]
         active_settled = [row for row in settled if row.status != "VOID"]
         total_stake = sum(float(row.stake) for row in active_settled)
@@ -263,10 +272,29 @@ class OfficialBetslipService:
             buckets: dict[str, dict[str, Any]] = {}
             for row in rows:
                 label = str(key(row))
-                bucket = buckets.setdefault(label, {"total": 0, "won": 0, "lost": 0, "void": 0, "profit": 0.0})
+                bucket = buckets.setdefault(
+                    label,
+                    {
+                        "total": 0,
+                        "pending": 0,
+                        "won": 0,
+                        "lost": 0,
+                        "void": 0,
+                        "stake": 0.0,
+                        "return": 0.0,
+                        "profit": 0.0,
+                    },
+                )
                 bucket["total"] += 1
                 bucket[row.status.lower()] = bucket.get(row.status.lower(), 0) + 1
+                if row.status != "VOID":
+                    bucket["stake"] += float(row.stake or 0.0)
+                bucket["return"] += float(row.actual_return or 0.0)
                 bucket["profit"] += float(row.realized_profit or 0.0)
+            for bucket in buckets.values():
+                settled = bucket["won"] + bucket["lost"]
+                bucket["win_rate"] = bucket["won"] / settled if settled else None
+                bucket["roi"] = bucket["profit"] / bucket["stake"] if bucket["stake"] else None
             return buckets
 
         return {
@@ -297,6 +325,7 @@ class OfficialBetslipService:
             "bankroll_curve": curve,
             "by_profile": aggregate(lambda row: row.profile),
             "by_event_count": aggregate(lambda row: row.event_count),
+            "by_day": aggregate(lambda row: row.reference_date),
             "by_period": aggregate(lambda row: row.reference_date[:7]),
             "by_market_combination": aggregate(
                 lambda row: "+".join(sorted(pick.market for pick in row.picks))

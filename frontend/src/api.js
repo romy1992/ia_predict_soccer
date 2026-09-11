@@ -156,6 +156,14 @@ export function getBetslipGenerate({
   return request(`/betslip/generate?${params.toString()}`);
 }
 
+export function saveBetslipGeneration({ targetDate } = {}) {
+  const params = new URLSearchParams();
+  if (targetDate) params.set("target_date", targetDate);
+  return request(`/betslip/generate/snapshot?${params.toString()}`, {
+    method: "POST",
+  });
+}
+
 export function getOfficialBetslips({ targetDate, status, limit = 200 } = {}) {
   const params = new URLSearchParams();
   if (targetDate) params.set("reference_date", targetDate);
@@ -166,6 +174,10 @@ export function getOfficialBetslips({ targetDate, status, limit = 200 } = {}) {
 
 export function getOfficialBetslipStatistics() {
   return request("/betslip/official/statistics");
+}
+
+export function getBettingStatistics({ days = 30 } = {}) {
+  return request(`/betting/statistics?days=${encodeURIComponent(days)}`);
 }
 
 function normalizeJobBody(asyncRunOrPayload, fallbackPayload = {}) {

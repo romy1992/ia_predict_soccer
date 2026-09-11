@@ -66,6 +66,9 @@ export default function BetslipPage({
   error,
   onLoadReport,
   dayData,
+  bettingStatistics,
+  bettingStatsDays,
+  onLoadStatistics,
 }) {
   const [activeView, setActiveView] = useState("proposals");
   const [activeFilter, setActiveFilter] = useState("all");
@@ -145,7 +148,7 @@ export default function BetslipPage({
               <input type="date" value={targetDate} onChange={(e) => onChangeTargetDate(e.target.value)} />
             </label>
             <button className="btn-primary" onClick={() => onLoadReport()} disabled={isLoading}>
-              Genera schedine
+              Genera e salva
             </button>
           </div>
         </div>
@@ -249,22 +252,114 @@ export default function BetslipPage({
         )}
       </section>
 
-      {report?.official_statistics && (
-        <section className="panel betslip-statistics">
-          <h3>Rendimento schedine ufficiali</h3>
-          <div className="decision-counters">
-            <span>Totali: {report.official_statistics.total}</span>
-            <span>Pending: {report.official_statistics.pending}</span>
-            <span>Vinte: {report.official_statistics.won}</span>
-            <span>Perse: {report.official_statistics.lost}</span>
-            <span>Rimborsate: {report.official_statistics.void}</span>
-            <span>Profitto: {formatNumber(report.official_statistics.net_profit, 2)}</span>
-            <span>ROI realizzato: {formatPercent(report.official_statistics.realized_roi)}</span>
-          </div>
-          <p className="muted">Calcolato esclusivamente sulle schedine congelate dal job server-side.</p>
-        </section>
-      )}
+      <BettingStatistics
+        report={bettingStatistics}
+        fallback={report?.official_statistics}
+        days={bettingStatsDays}
+        onChangeDays={onLoadStatistics}
+      />
     </section>
+  );
+}
+
+function BettingStatistics({ report, fallback, days, onChangeDays }) {
+  const [activeTab, setActiveTab] = useState("overview");
+  const overview = report?.overview || {};
+  const predictions = overview.official_predictions || {};
+  const proposals = overview.proposals || {};
+  const official = overview.official_slips || fallback || {};
+  return (
+    <section className="panel betslip-statistics">
+      <div className="panel-header">
+        <div>
+          <h3>Statistiche Betting</h3>
+          <p className="muted">Proposte salvate e performance ufficiale restano sempre distinte.</p>
+        </div>
+        <label>
+          Periodo
+          <select value={days || 30} onChange={(event) => onChangeDays?.(Number(event.target.value))}>
+            {[7, 30, 90, 365].map((value) => <option key={value} value={value}>{value} giorni</option>)}
+          </select>
+        </label>
+      </div>
+      <div className="betslip-view-tabs" role="tablist" aria-label="Statistiche betting">
+        {[["overview", "Panoramica"], ["markets", "Mercati"], ["slips", "Schedine"]].map(([value, label]) => (
+          <button key={value} className={activeTab === value ? "tab active" : "tab"} onClick={() => setActiveTab(value)}>
+            {label}
+          </button>
+        ))}
+      </div>
+      {!report && !fallback ? (
+        <div className="empty-state">Statistiche non ancora disponibili.</div>
+      ) : activeTab === "overview" ? (
+        <div className="stats-grid betting-overview-grid">
+          {[
+            ["Pronostici ufficiali", predictions.plays ?? 0],
+            ["Pronostici vinti", predictions.wins ?? 0],
+            ["Proposte salvate", proposals.generated ?? 0],
+            ["Revisioni", proposals.revisions ?? 0],
+            ["Schedine ufficiali", official.total ?? 0],
+            ["Schedine vinte", official.won ?? 0],
+            ["Profitto ufficiale", formatNumber(official.net_profit, 2)],
+            ["ROI ufficiale", formatPercent(official.realized_roi)],
+          ].map(([label, value]) => <article className="stat-card" key={label}><span>{label}</span><strong>{value}</strong></article>)}
+        </div>
+      ) : activeTab === "markets" ? (
+        <DailyMarketTable rows={report?.markets?.daily || []} />
+      ) : (
+        <SlipStatistics report={report?.slips} proposals={proposals} official={official} />
+      )}
+      <p className="muted statistics-boundary">
+        ROI, profitto e bankroll comprendono esclusivamente giocate e schedine ufficiali congelate prima del kickoff.
+      </p>
+    </section>
+  );
+}
+
+function DailyMarketTable({ rows }) {
+  if (rows.length === 0) return <div className="empty-state">Nessuna statistica ufficiale per il periodo.</div>;
+  return (
+    <div className="table-wrap">
+      <table className="betting-statistics-table">
+        <thead><tr><th>Data</th><th>Mercato</th><th>Giocate</th><th>Vinte</th><th>Perse</th><th>Pending</th><th>VOID</th><th>Hit rate</th><th>Quota media</th><th>Profitto</th><th>ROI</th></tr></thead>
+        <tbody>{rows.map((row) => (
+          <tr key={`${row.date}-${row.market}`}>
+            <td>{row.date}</td><td>{marketLabel(row.market)}</td><td>{row.plays}</td><td>{row.wins}</td><td>{row.losses}</td>
+            <td>{row.pending}</td><td>{row.void}</td><td>{formatPercent(row.hit_rate)}</td><td>{formatOdd(row.avg_odd)}</td>
+            <td>{formatNumber(row.total_profit, 2)}</td><td>{formatPercent(row.roi)}</td>
+          </tr>
+        ))}</tbody>
+      </table>
+    </div>
+  );
+}
+
+function SlipStatistics({ report, proposals, official }) {
+  const proposalRows = report?.proposals_daily || [];
+  const officialRows = Object.entries(report?.official_daily || {});
+  return (
+    <div className="statistics-split">
+      <section>
+        <h4>Attività generata</h4>
+        <p className="muted">Ogni revisione diversa viene conservata; non rappresenta una puntata piazzata.</p>
+        {proposalRows.length === 0 ? <div className="empty-state">Nessuna proposta salvata.</div> : (
+          <div className="table-wrap"><table><thead><tr><th>Data evento</th><th>Generate</th><th>PLAY</th><th>BORDERLINE</th><th>NO BET</th><th>Quota media</th><th>Expected ROI medio</th></tr></thead>
+            <tbody>{proposalRows.map((row) => <tr key={row.date}><td>{row.date}</td><td>{row.generated}</td><td>{row.play}</td><td>{row.borderline}</td><td>{row.no_bet}</td><td>{formatOdd(row.average_combined_odd)}</td><td>{formatPercent(row.average_expected_roi)}</td></tr>)}</tbody>
+          </table></div>
+        )}
+        <small>Totale revisioni salvate: {proposals.generated ?? 0}</small>
+      </section>
+      <section>
+        <h4>Performance schedine ufficiali</h4>
+        <p className="muted">Solo snapshot ufficiali pre-partita, mai proposte rigenerate a posteriori.</p>
+        {officialRows.length === 0 ? <div className="empty-state">Nessuna schedina ufficiale nel periodo.</div> : (
+          <div className="table-wrap"><table><thead><tr><th>Data evento</th><th>Totali</th><th>Vinte</th><th>Perse</th><th>Pending</th><th>VOID</th><th>Profitto</th><th>ROI</th></tr></thead>
+            <tbody>{officialRows.map(([date, row]) => <tr key={date}><td>{date}</td><td>{row.total}</td><td>{row.won}</td><td>{row.lost}</td><td>{row.pending}</td><td>{row.void}</td><td>{formatNumber(row.profit, 2)}</td><td>{formatPercent(row.roi)}</td></tr>)}</tbody>
+          </table></div>
+        )}
+        <small>Schedine ufficiali nel periodo: {official.total ?? 0}</small>
+      </section>
+    </div>
   );
 }
 
