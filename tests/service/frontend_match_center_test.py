@@ -26,6 +26,17 @@ def test_search_button_is_explicitly_scoped_to_match_text():
     source = (FRONTEND / "features/layout/TopFilters.jsx").read_text(encoding="utf-8")
     assert source.count("Cerca match") >= 2
     assert "Data e mercato si aggiornano automaticamente" in source
+    assert 'className="filter-card filter-search"' in source
+    assert 'className="filter-card filter-refresh"' in source
+    assert "Aggiornamento dati" in source
+
+
+def test_top_filters_have_distinct_responsive_spaces():
+    styles = (FRONTEND / "styles.css").read_text(encoding="utf-8")
+    assert ".filter-card {" in styles
+    assert ".filter-search-controls {" in styles
+    assert ".filter-refresh {" in styles
+    assert "grid-column: 1 / -1" in styles
 
 
 def test_situation_badges_and_no_bet_filter_are_present():

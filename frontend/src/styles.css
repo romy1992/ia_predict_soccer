@@ -119,16 +119,69 @@ body {
 
 .filters {
   display: grid;
-  grid-template-columns: repeat(2, minmax(200px, 1fr));
+  grid-template-columns: repeat(2, minmax(170px, 1fr));
+  gap: 10px;
+  width: min(100%, 520px);
+}
+
+.filter-card {
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid #dbe3f2;
+  border-radius: 11px;
+  background: #f8faff;
+}
+
+.filters label,
+.filter-refresh {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  color: #64779d;
+}
+
+.filter-card select,
+.filter-card input,
+.filter-card button {
+  width: 100%;
+  min-width: 0;
+}
+
+.filter-search,
+.filter-refresh {
+  grid-column: 1 / -1;
+}
+
+.filter-search-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
 }
 
-.filters label {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+.filter-search-controls button {
+  width: auto;
+  min-width: 126px;
+}
+
+.filter-label {
   font-size: 12px;
   color: #64779d;
+}
+
+.filter-refresh {
+  display: grid;
+  grid-template-columns: minmax(150px, 190px) 1fr;
+  align-items: center;
+}
+
+.filter-refresh .filter-label {
+  grid-column: 1 / -1;
+}
+
+.filter-refresh small {
+  color: #7888a6;
+  line-height: 1.3;
 }
 
 input,
@@ -1001,7 +1054,7 @@ th {
   }
 
   .filters {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     width: 100%;
   }
 
@@ -1011,6 +1064,24 @@ th {
 }
 
 @media (max-width: 760px) {
+  .filters {
+    grid-template-columns: 1fr;
+  }
+
+  .filter-search,
+  .filter-refresh {
+    grid-column: auto;
+  }
+
+  .filter-search-controls,
+  .filter-refresh {
+    grid-template-columns: 1fr;
+  }
+
+  .filter-refresh .filter-label {
+    grid-column: auto;
+  }
+
   .content,
   .panel,
   .stack,
