@@ -25,6 +25,25 @@ class TestDashboardService(unittest.TestCase):
             "goals": {"home": 1, "away": 0},
         }
 
+    def test_available_dates_include_prediction_refresh_future_window(self):
+        service = DashboardService.__new__(DashboardService)
+        service.cfg = SimpleNamespace(daily_refresh_days_ahead=3)
+        service.ledger_repo = SimpleNamespace(get_earliest_created_date=lambda: None)
+        service._first_seen_date = lambda today: date(2026, 9, 9)
+
+        payload = service.get_available_dates(today=date(2026, 9, 11))
+
+        self.assertEqual(payload["dates"], [
+            "2026-09-14",
+            "2026-09-13",
+            "2026-09-12",
+            "2026-09-11",
+            "2026-09-10",
+            "2026-09-09",
+        ])
+        self.assertEqual(payload["first_date"], "2026-09-09")
+        self.assertEqual(payload["last_date"], "2026-09-14")
+
     def test_get_day_matches_from_api_feed(self):
         service = DashboardService()
         service.registry.list_markets = lambda: ["h2h"]

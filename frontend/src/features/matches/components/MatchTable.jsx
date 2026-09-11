@@ -41,7 +41,7 @@ export default function MatchTable({
             <th title="Differenza assoluta tra quota mercato e quota void IA. Nel dettaglio è disponibile anche l'edge percentuale.">Edge</th>
             <th title="Rendimento teorico della singola selezione; non è il ROI realmente ottenuto.">ROI atteso</th>
             <th>Situazione</th>
-            <th title="Stato di settlement della PLAY ufficiale: distinto dalla quota void IA.">Esito ufficiale</th>
+            <th title="Stato della PLAY congelata dal job prima del calcio d'inizio: PENDING, WON, LOST o VOID. Se non è stata registrata, non contribuisce al ROI ufficiale.">Giocata ufficiale</th>
             <th>Dettaglio</th>
           </tr>
         </thead>
@@ -78,7 +78,7 @@ export default function MatchTable({
                 </span>
               </td>
               <td>
-                <strong>{decision?.is_official ? decision.official_outcome : "Non ufficiale"}</strong>
+                <strong>{decision?.is_official ? decision.official_outcome : "Non registrata"}</strong>
                 {decision?.is_official && decision?.pnl != null && <small className="official-pnl">PnL {formatSignedNumber(decision.pnl)}</small>}
               </td>
               <td>
@@ -121,7 +121,7 @@ export default function MatchTable({
               <div><dt>Edge</dt><dd>{decision?.odds_edge_absolute == null ? "N/D" : formatSignedNumber(decision.odds_edge_absolute)}</dd></div>
               <div><dt>ROI atteso</dt><dd>{decision?.expected_roi_percent == null ? "N/D" : formatPercentagePoints(decision.expected_roi_percent)}</dd></div>
               <div><dt>Situazione</dt><dd><span className={`value-badge ${valueClass(decision?.value_label || "SENZA QUOTA")}`}>{decision?.value_label || "SENZA QUOTA"}</span></dd></div>
-              <div><dt>Esito ufficiale</dt><dd>{decision?.is_official ? decision.official_outcome : "Non ufficiale"}</dd></div>
+              <div><dt>Giocata ufficiale</dt><dd>{decision?.is_official ? decision.official_outcome : "Non registrata"}</dd></div>
             </dl>
             <button className="btn-secondary" onClick={() => onOpenMatch(row.fixture_id)}>Apri dettaglio</button>
           </article>

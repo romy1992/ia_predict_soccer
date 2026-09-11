@@ -14,11 +14,18 @@ def test_match_center_contains_required_columns_and_distinct_void_concepts():
         "Edge",
         "ROI atteso",
         "Situazione",
-        "Esito ufficiale",
+        "Giocata ufficiale",
     ):
         assert label in source
     assert "stato VOID" in source
     assert "Quota di pareggio economico" in source
+    assert "Non registrata" in source
+
+
+def test_search_button_is_explicitly_scoped_to_match_text():
+    source = (FRONTEND / "features/layout/TopFilters.jsx").read_text(encoding="utf-8")
+    assert source.count("Cerca match") >= 2
+    assert "Data e mercato si aggiornano automaticamente" in source
 
 
 def test_situation_badges_and_no_bet_filter_are_present():
