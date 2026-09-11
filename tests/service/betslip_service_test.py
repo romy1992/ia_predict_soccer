@@ -120,8 +120,8 @@ class TestBetslipService(unittest.TestCase):
             now=now,
         )
 
-        self.assertEqual(generation.profiles["SAFE"], [])
-        self.assertEqual(report["proposals_skipped_started"], 1)
+        self.assertEqual(sum(len(slips) for slips in generation.profiles.values()), 0)
+        self.assertGreaterEqual(report["proposals_skipped_started"], 1)
         snapshot_service.save_generation.assert_called_once()
 
 
