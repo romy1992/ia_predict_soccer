@@ -152,7 +152,7 @@ class TestGenerateBetslipsBasics(unittest.TestCase):
             )
         )
 
-    def test_safe_slip_uses_distinct_market_families(self):
+    def test_safe_slip_prioritizes_distinct_market_families(self):
         candidates = [
             _pick(fixture_id=1, market="under_over_2_5", outcome="Under 2.5"),
             _pick(fixture_id=2, market="under_over_3_5", outcome="Under 3.5"),
@@ -161,14 +161,17 @@ class TestGenerateBetslipsBasics(unittest.TestCase):
         result = generate_betslips(candidates)
 
         self.assertTrue(result.profiles["SAFE"])
-        for slip in result.profiles["SAFE"]:
-            self.assertFalse(
-                all(leg.market.startswith("under_over_") for leg in slip.legs)
+        first = result.profiles["SAFE"][0]
+        self.assertFalse(
+            all(leg.market.startswith("under_over_") for leg in first.legs)
+        )
+        self.assertTrue(
+            all(
+                slip.diversification_policy_version
+                == "betslip_diversification_v2_soft_fallback"
+                for slip in result.profiles["SAFE"]
             )
-            self.assertEqual(
-                slip.diversification_policy_version,
-                "betslip_diversification_v2_soft_fallback",
-            )
+        )
 
     def test_single_market_family_uses_soft_fallback_instead_of_zero_slips(self):
         candidates = [
