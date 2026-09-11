@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { formatNumber, formatOdd, formatPercent, marketLabel } from "../shared/formatters";
+import { formatNumber, formatOdd, formatPercent, marketLabel, todayIso } from "../shared/formatters";
 
 /**
  * SLIP-03: Schedina Oracle — schedine 2/3/4 eventi generate dal backend
@@ -74,6 +74,7 @@ export default function BetslipPage({
   const [activeFilter, setActiveFilter] = useState("all");
   const [stake, setStake] = useState(10);
   const [copiedSlipId, setCopiedSlipId] = useState(null);
+  const isPastDate = targetDate < todayIso();
 
   const fixtureIndex = useMemo(() => {
     const map = {};
@@ -147,8 +148,13 @@ export default function BetslipPage({
               Data
               <input type="date" value={targetDate} onChange={(e) => onChangeTargetDate(e.target.value)} />
             </label>
-            <button className="btn-primary" onClick={() => onLoadReport()} disabled={isLoading}>
-              Genera e salva
+            <button
+              className="btn-primary"
+              onClick={() => onLoadReport()}
+              disabled={isLoading || isPastDate}
+              title={isPastDate ? "Le date passate mostrano soltanto schedine salvate prima degli eventi." : ""}
+            >
+              {isPastDate ? "Solo consultazione" : "Genera e salva"}
             </button>
           </div>
         </div>
@@ -177,6 +183,11 @@ export default function BetslipPage({
         </div>
         {error && <div className="error-box">Errore: {error}</div>}
         {isLoading && <div className="info-box">Generazione schedine in corso...</div>}
+        {isPastDate && !isLoading && (
+          <div className="info-box">
+            Storico in sola lettura: vengono mostrate esclusivamente le schedine già salvate, senza rigenerazioni retroattive.
+          </div>
+        )}
       </section>
 
       <section className="panel betslip-browser">

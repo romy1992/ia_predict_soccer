@@ -8,7 +8,7 @@ nessuna nuova query odds/predizioni, nessun ricalcolo di edge/EV/decisione.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timezone
 from typing import Optional
 
 from src.oracle.betslip.betslip_builder import (
@@ -68,12 +68,22 @@ class BetslipService:
         ruleset: CorrelationRuleSet = DEFAULT_CORRELATION_RULESET,
         max_pool_size: int = 14,
         max_slips_per_profile: int = 5,
+        now: Optional[datetime] = None,
     ) -> tuple[PickPoolResult, BetslipGenerationResult, dict[str, int]]:
         """Generazione esplicita con snapshot idempotente delle proposte.
 
         È usata dal job server-side e dall'azione manuale POST; la GET di
         consultazione resta priva di scritture.
         """
+        captured_at = now or datetime.now(timezone.utc)
+        if captured_at.tzinfo is None:
+            captured_at = captured_at.replace(tzinfo=timezone.utc)
+        if target_date < captured_at.date():
+            raise ValueError(
+                "Le date passate sono disponibili solo in consultazione: "
+                "non è consentito generare schedine retroattive"
+            )
+
         pool_result, generation = self.generate_for_day(
             target_date=target_date,
             pool_policy=pool_policy,
@@ -83,9 +93,37 @@ class BetslipService:
             max_pool_size=max_pool_size,
             max_slips_per_profile=max_slips_per_profile,
         )
+        skipped_started = 0
+        filtered_profiles = {}
+        for profile, slips in generation.profiles.items():
+            eligible = []
+            for slip in slips:
+                kickoffs = []
+                for leg in slip.legs:
+                    if not leg.kickoff_at:
+                        kickoffs = []
+                        break
+                    try:
+                        parsed = datetime.fromisoformat(leg.kickoff_at.replace("Z", "+00:00"))
+                    except ValueError:
+                        kickoffs = []
+                        break
+                    if parsed.tzinfo is None:
+                        parsed = parsed.replace(tzinfo=timezone.utc)
+                    kickoffs.append(parsed)
+                if kickoffs and all(kickoff > captured_at for kickoff in kickoffs):
+                    eligible.append(slip)
+                else:
+                    skipped_started += 1
+            filtered_profiles[profile] = eligible
+        generation.profiles = filtered_profiles
+        if skipped_started:
+            generation.warnings.append(f"not_saved_started_or_missing_kickoff:{skipped_started}")
         report = self.proposal_snapshot_service.save_generation(
             reference_date=target_date.isoformat(),
             generation=generation,
+            generated_at=captured_at,
         )
+        report["proposals_skipped_started"] = skipped_started
         return pool_result, generation, report
 

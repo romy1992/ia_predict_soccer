@@ -448,6 +448,11 @@ class OfficialBetslipListResponse(BaseModel):
     rows: list[dict[str, Any]] = []
 
 
+class BetslipProposalListResponse(BaseModel):
+    total: int
+    rows: list[dict[str, Any]] = []
+
+
 class OfficialBetslipStatisticsResponse(BaseModel):
     statistics: dict[str, Any]
 

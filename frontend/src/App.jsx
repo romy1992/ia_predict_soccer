@@ -7,6 +7,7 @@ import {
   getDashboardMatchDetail,
   getBettingStatistics,
   getBetslipGenerate,
+  getSavedBetslipProposals,
   getOfficialBetslips,
   getOfficialBetslipStatistics,
   getHealth,
@@ -243,9 +244,28 @@ export default function App() {
       setBetslipError("");
       try {
         const { persist = false, ...generationOverrides } = overrides;
-        const payload = persist
-          ? await saveBetslipGeneration({ targetDate: betslipDate, ...generationOverrides })
-          : await getBetslipGenerate({ targetDate: betslipDate, ...generationOverrides });
+        const isPastDate = betslipDate < todayIso();
+        let payload;
+        if (isPastDate) {
+          const saved = await getSavedBetslipProposals({ targetDate: betslipDate });
+          const profiles = { SAFE: [], BALANCED: [], AGGRESSIVE: [] };
+          (saved.rows || []).forEach((slip) => {
+            const profile = slip.profile_name || "BALANCED";
+            profiles[profile] = [...(profiles[profile] || []), slip];
+          });
+          payload = {
+            generated_at: null,
+            correlation_ruleset_version: null,
+            pool_considered: 0,
+            profiles,
+            warnings: [],
+            historical_snapshot: true,
+          };
+        } else {
+          payload = persist
+            ? await saveBetslipGeneration({ targetDate: betslipDate, ...generationOverrides })
+            : await getBetslipGenerate({ targetDate: betslipDate, ...generationOverrides });
+        }
         const [officialResult, statisticsResult, unifiedResult] = await Promise.allSettled([
           getOfficialBetslips({ targetDate: betslipDate }),
           getOfficialBetslipStatistics(),
@@ -775,7 +795,10 @@ export default function App() {
     },
     betslip: {
       targetDate: betslipDate,
-      onChangeTargetDate: setBetslipDate,
+      onChangeTargetDate: (value) => {
+        setBetslipDate(value);
+        setBetslipReport(null);
+      },
       report: betslipReport,
       isLoading: betslipLoading,
       error: betslipError,

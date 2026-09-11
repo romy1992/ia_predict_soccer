@@ -105,3 +105,21 @@ def test_manual_generation_is_explicitly_persisted_but_page_load_remains_read_on
         "export function getOfficialBetslips",
         1,
     )[0]
+
+
+def test_past_dates_are_read_only_and_load_saved_proposals():
+    page = (FRONTEND / "features/betslip/BetslipPage.jsx").read_text(encoding="utf-8")
+    app = (FRONTEND / "App.jsx").read_text(encoding="utf-8")
+    api = (FRONTEND / "api.js").read_text(encoding="utf-8")
+
+    assert "Solo consultazione" in page
+    assert "senza rigenerazioni retroattive" in page
+    assert "disabled={isLoading || isPastDate}" in page
+    assert "getSavedBetslipProposals" in app
+    assert "isPastDate" in app
+    proposal_section = api.split("export function getSavedBetslipProposals", 1)[1].split(
+        "export function getOfficialBetslips",
+        1,
+    )[0]
+    assert "/betslip/proposals" in proposal_section
+    assert "method:" not in proposal_section
