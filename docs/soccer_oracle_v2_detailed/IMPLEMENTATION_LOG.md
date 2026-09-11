@@ -292,7 +292,10 @@ Prima di ogni task viene applicata la premessa in `AI_MASTER_PROMPT.md`:
   totali con una sola query snapshot bulk. Sul database SQLite isolato il
   percorso consolidato ha impiegato 0,0126 s; il precedente rilievo sul
   percorso remoto era 6,438 s, quindi i tempi assoluti non sono direttamente
-  confrontabili ma il numero di round-trip sì.
+  confrontabili ma il numero di round-trip sì. Validazione: 111 test mirati
+  Dashboard/snapshot/frontend passati; suite completa 904 test passati;
+  build Vite riuscita; migration verificata con ciclo
+  upgrade/downgrade/upgrade su database isolato.
 
 ## Connessione DB runtime
 - **AGGIORNATO 2026-09-04**: sorgente runtime ora fissata sul DB dev remoto Railway: `DATABASE_URL=postgresql://postgres:...@sakura.proxy.rlwy.net:18862/railway` (credenziali complete in `properties/config.env`), unica per locale/Docker/Alembic - vedi entry INFRA sopra. Il valore storico sotto (`localhost:5432/match_db`) e la narrazione del fix Docker restano come riferimento della situazione PRECEDENTE al cambio Railway.
