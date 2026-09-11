@@ -77,3 +77,33 @@ class BettingSlipProposalRepository:
                 .limit(max(0, limit))
                 .all()
             )
+
+    def list_pending_settlement(
+        self,
+        *,
+        before: datetime,
+        limit: int = 500,
+    ) -> list[BettingSlipProposalSnapshot]:
+        with SessionLocal() as session:
+            return (
+                session.query(BettingSlipProposalSnapshot)
+                .filter(BettingSlipProposalSnapshot.shadow_status == "PENDING")
+                .filter(BettingSlipProposalSnapshot.generated_at < before)
+                .filter(
+                    BettingSlipProposalSnapshot.reference_date
+                    <= before.date().isoformat()
+                )
+                .order_by(BettingSlipProposalSnapshot.generated_at.asc())
+                .limit(max(0, limit))
+                .all()
+            )
+
+    def save_settlement(
+        self,
+        snapshot: BettingSlipProposalSnapshot,
+    ) -> BettingSlipProposalSnapshot:
+        with SessionLocal() as session:
+            merged = session.merge(snapshot)
+            session.commit()
+            session.refresh(merged)
+            return merged

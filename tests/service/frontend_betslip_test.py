@@ -52,7 +52,7 @@ def test_betslip_uses_compact_coupon_structure():
         "Simula puntata",
         "Schedine",
         "Ufficiali",
-        "Solo PLAY",
+        "Consigliate",
         "Prudenti",
         "Bilanciate",
         "Spinte",
@@ -123,3 +123,23 @@ def test_past_dates_are_read_only_and_load_saved_proposals():
     )[0]
     assert "/betslip/proposals" in proposal_section
     assert "method:" not in proposal_section
+
+
+def test_betslip_exposes_separate_decision_tabs_and_shadow_portfolios():
+    source = (FRONTEND / "features/betslip/BetslipPage.jsx").read_text(encoding="utf-8")
+    styles = (FRONTEND / "styles.css").read_text(encoding="utf-8")
+    for label in (
+        "Consigliate",
+        "Sperimentali",
+        "Non consigliate",
+        "Portafogli simulati",
+        "Complessivo simulato",
+        "PLAY simulato",
+        "BORDERLINE simulato",
+        "NO BET simulato",
+        "ROI simulato",
+    ):
+        assert label in source
+    assert "report?.decision_groups" in source
+    assert ".betslip-decision-tabs" in styles
+    assert ".shadow-portfolios" in styles

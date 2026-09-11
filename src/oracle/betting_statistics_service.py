@@ -32,6 +32,66 @@ def _proposal_bucket(rows: list[Any]) -> dict[str, Any]:
     }
 
 
+def _shadow_bucket(rows: list[Any]) -> dict[str, Any]:
+    starting_bankroll = 100.0
+    status = lambda row: getattr(row, "shadow_status", "PENDING")
+    settled = [row for row in rows if status(row) in {"WON", "LOST", "VOID"}]
+    active = [row for row in settled if status(row) != "VOID"]
+    stake = sum(float(getattr(row, "shadow_stake", 0.0) or 0.0) for row in active)
+    returned = sum(float(getattr(row, "shadow_return", 0.0) or 0.0) for row in settled)
+    profit = sum(float(getattr(row, "shadow_profit", 0.0) or 0.0) for row in settled)
+    bankroll = starting_bankroll
+    peak = starting_bankroll
+    max_drawdown = 0.0
+    curve = []
+    for row in sorted(
+        settled,
+        key=lambda item: (
+            str(getattr(item, "shadow_settled_at", None) or ""),
+            getattr(item, "id", ""),
+        ),
+    ):
+        bankroll += float(getattr(row, "shadow_profit", 0.0) or 0.0)
+        peak = max(peak, bankroll)
+        max_drawdown = max(max_drawdown, peak - bankroll)
+        curve.append(
+            {
+                "settled_at": (
+                    row.shadow_settled_at.isoformat()
+                    if getattr(row, "shadow_settled_at", None)
+                    else None
+                ),
+                "bankroll": bankroll,
+            }
+        )
+    decisions = [row for row in settled if status(row) in {"WON", "LOST"}]
+    return {
+        "total": len(rows),
+        "pending": sum(status(row) == "PENDING" for row in rows),
+        "won": sum(status(row) == "WON" for row in rows),
+        "lost": sum(status(row) == "LOST" for row in rows),
+        "void": sum(status(row) == "VOID" for row in rows),
+        "stake": stake,
+        "return": returned,
+        "profit": profit,
+        "starting_bankroll": starting_bankroll,
+        "current_bankroll": bankroll,
+        "max_drawdown": max_drawdown,
+        "bankroll_curve": curve,
+        "roi": profit / stake if stake else None,
+        "win_rate": (
+            sum(status(row) == "WON" for row in decisions) / len(decisions)
+            if decisions
+            else None
+        ),
+        "staking_policy_version": (
+            getattr(rows[0], "staking_policy_version", "shadow_flat_unit_v1")
+            if rows
+            else "shadow_flat_unit_v1"
+        ),
+    }
+
+
 class BettingStatisticsService:
     """Vista unica; non mescola mai proposte e performance ufficiale."""
 
@@ -88,6 +148,15 @@ class BettingStatisticsService:
         for row in proposals:
             proposal_daily_groups[row.reference_date].append(row)
             proposal_profile_groups[row.profile].append(row)
+        shadow_by_situation = {
+            label: _shadow_bucket(
+                [row for row in latest_proposals if row.situation == label]
+            )
+            for label in ("PLAY", "BORDERLINE", "NO BET")
+        }
+        shadow_daily_groups: dict[str, list[Any]] = defaultdict(list)
+        for row in latest_proposals:
+            shadow_daily_groups[row.reference_date].append(row)
 
         official_slips = self.official_betslip_service.statistics(
             since_date=since_date,
@@ -104,6 +173,10 @@ class BettingStatisticsService:
                     "latest": len(latest_proposals),
                     "revisions": len(proposals) - len(latest_proposals),
                 },
+                "simulated_portfolios": {
+                    "ALL": _shadow_bucket(latest_proposals),
+                    **shadow_by_situation,
+                },
                 "official_slips": official_slips,
             },
             "markets": {"daily": market_daily},
@@ -115,6 +188,10 @@ class BettingStatisticsService:
                 "proposals_by_profile": {
                     key: _proposal_bucket(value)
                     for key, value in sorted(proposal_profile_groups.items())
+                },
+                "shadow_daily": {
+                    key: _shadow_bucket(value)
+                    for key, value in sorted(shadow_daily_groups.items(), reverse=True)
                 },
                 "official_daily": official_slips.get("by_day", {}),
                 "official_by_profile": official_slips.get("by_profile", {}),

@@ -1,3 +1,4 @@
+import math
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
@@ -9,6 +10,7 @@ from src.oracle.betslip.betslip_builder import (
 from src.oracle.betslip.pick_pool import CandidatePick
 from src.oracle.betslip.proposal_snapshot_service import BetslipProposalSnapshotService
 from src.oracle.ledger.official_performance_service import OFFICIAL_COHORT, OFFICIAL_SOURCE
+from src.oracle.ledger.settlement_rules import SettlementResolution
 
 
 class FakeProposalRepo:
@@ -19,12 +21,22 @@ class FakeProposalRepo:
     def save_revision(self, snapshot):
         if snapshot.snapshot_key in self.keys:
             return self.keys[snapshot.snapshot_key], False
+        for row in self.rows:
+            if getattr(row, "logical_slip_id", None) == snapshot.logical_slip_id:
+                row.is_latest = False
+        snapshot.is_latest = True
         self.keys[snapshot.snapshot_key] = snapshot
         self.rows.append(snapshot)
         return snapshot, True
 
     def list_all(self, **_kwargs):
         return self.rows
+
+    def list_pending_settlement(self, **_kwargs):
+        return [row for row in self.rows if row.shadow_status == "PENDING"]
+
+    def save_settlement(self, snapshot):
+        return snapshot
 
 
 def _generation(odd=1.8):
@@ -112,6 +124,64 @@ def test_saved_proposals_are_returned_without_regeneration():
     ]
 
 
+class FakeShadowLedger:
+    def __init__(self, resolutions):
+        self.resolutions = resolutions
+
+    def _resolve_outcome_for_fixture(self, fixture_id, **_kwargs):
+        return self.resolutions[fixture_id]
+
+
+def test_shadow_settlement_tracks_result_without_becoming_official():
+    now = datetime.now(timezone.utc)
+    snapshot = SimpleNamespace(
+        id="shadow-1",
+        payload={
+            "legs": [
+                {
+                    "fixture_id": 1,
+                    "market": "1x2",
+                    "outcome": "Home",
+                    "odd": 1.8,
+                    "kickoff_at": "2026-09-10T10:00:00+00:00",
+                },
+                {
+                    "fixture_id": 2,
+                    "market": "goal_no_goal",
+                    "outcome": "Yes",
+                    "odd": 1.5,
+                    "kickoff_at": "2026-09-10T12:00:00+00:00",
+                },
+            ]
+        },
+        shadow_status="PENDING",
+        shadow_stake=1.0,
+        shadow_effective_odd=None,
+        shadow_return=None,
+        shadow_profit=None,
+        shadow_settlement=None,
+        shadow_settled_at=None,
+    )
+    repo = FakeProposalRepo([snapshot])
+    service = BetslipProposalSnapshotService(
+        repo=repo,
+        ledger_service=FakeShadowLedger(
+            {
+                1: SettlementResolution(actual_outcome="Home"),
+                2: SettlementResolution(actual_outcome="Yes"),
+            }
+        ),
+    )
+
+    report = service.settle_pending(before=now)
+
+    assert report["shadow_settled"] == 1
+    assert snapshot.shadow_status == "WON"
+    assert math.isclose(snapshot.shadow_effective_odd, 2.7)
+    assert math.isclose(snapshot.shadow_return, 2.7)
+    assert math.isclose(snapshot.shadow_profit, 1.7)
+
+
 class FakeLedgerRepo:
     def list_all(self, **_kwargs):
         now = datetime.now(timezone.utc)
@@ -171,3 +241,5 @@ def test_unified_statistics_keep_proposals_and_official_performance_separate():
     assert report["overview"]["proposals"]["generated"] == 1
     assert report["slips"]["proposals_daily"][0]["date"] == "2099-01-01"
     assert report["markets"]["daily"][0]["market"] == "1x2"
+    assert report["overview"]["simulated_portfolios"]["ALL"]["total"] == 1
+    assert report["overview"]["simulated_portfolios"]["PLAY"]["pending"] == 1

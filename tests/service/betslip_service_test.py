@@ -7,12 +7,22 @@ from src.oracle.betslip.betslip_service import BetslipService
 from src.oracle.betslip.pick_pool import CandidatePick, PickPoolResult, PoolPick
 
 
-def _pool_pick(fixture_id, market, outcome, odd, p_model, ev=0.1, run_id="run-1", kickoff_at=None):
+def _pool_pick(
+    fixture_id,
+    market,
+    outcome,
+    odd,
+    p_model,
+    ev=0.1,
+    run_id="run-1",
+    kickoff_at=None,
+    decision="PLAY",
+):
     candidate = CandidatePick(
         fixture_id=fixture_id,
         market=market,
         outcome=outcome,
-        decision="PLAY",
+        decision=decision,
         odd=odd,
         p_model=p_model,
         ev=ev,
@@ -32,6 +42,9 @@ class TestBetslipService(unittest.TestCase):
             picks=picks,
             excluded=[],
         )
+        pick_pool_service.candidates_for_day.return_value = [
+            pick.candidate for pick in picks
+        ]
         return (
             BetslipService(
                 pick_pool_service=pick_pool_service,
@@ -123,6 +136,37 @@ class TestBetslipService(unittest.TestCase):
         self.assertEqual(sum(len(slips) for slips in generation.profiles.values()), 0)
         self.assertGreaterEqual(report["proposals_skipped_started"], 1)
         snapshot_service.save_generation.assert_called_once()
+
+    def test_exploration_separates_play_borderline_and_no_bet_groups(self):
+        picks = [
+            _pool_pick(1, "h2h", "Home", 2.0, 0.60),
+            _pool_pick(2, "goal_no_goal", "Yes", 2.0, 0.60),
+            _pool_pick(
+                3,
+                "under_over_2_5",
+                "Over 2.5",
+                2.0,
+                0.60,
+                decision="BORDERLINE",
+            ),
+            _pool_pick(
+                4,
+                "corners",
+                "Over 9.5",
+                2.0,
+                0.60,
+                decision="NO BET",
+            ),
+        ]
+        service, _ = self._service_with_pool(picks)
+
+        _, generation = service.generate_exploration_for_day(date(2026, 9, 12))
+
+        self.assertEqual(set(generation.decision_groups), {"PLAY", "BORDERLINE", "NO BET"})
+        for label, profiles in generation.decision_groups.items():
+            rows = [slip for slips in profiles.values() for slip in slips]
+            self.assertTrue(rows, label)
+            self.assertTrue(all(slip.situation == label for slip in rows))
 
 
 if __name__ == "__main__":

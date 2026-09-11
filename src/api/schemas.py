@@ -439,6 +439,7 @@ class BetslipGenerateResponse(BaseModel):
     pool_policy_version: Optional[str] = None
     pool_considered: int
     profiles: dict[str, list[dict[str, Any]]] = {}
+    decision_groups: dict[str, dict[str, list[dict[str, Any]]]] = {}
     warnings: list[str] = []
     snapshot_report: Optional[dict[str, int]] = None
 

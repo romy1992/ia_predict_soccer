@@ -222,20 +222,35 @@ class TestSettlementIncludesLedger(unittest.TestCase):
             "betslips_pending": 0,
             "errors": [],
         }
+        shadow_service = mock.Mock()
+        shadow_service.settle_pending.return_value = {
+            "shadow_candidates": 1,
+            "shadow_settled": 1,
+            "shadow_pending": 0,
+            "errors": [],
+        }
         with (
             mock.patch.object(scheduler_module, "JobHistory", return_value=history),
             mock.patch.object(scheduler_module, "SettlementService", return_value=match_service),
             mock.patch.object(scheduler_module, "PredictionLedgerService", return_value=ledger_service),
             mock.patch.object(scheduler_module, "OfficialBetslipService", return_value=betslip_service),
+            mock.patch.object(
+                scheduler_module,
+                "BetslipProposalSnapshotService",
+                return_value=shadow_service,
+            ),
         ):
             report = scheduler_module.run_manual_settlement(job_id="job-1")
 
         ledger_service.settle_pending.assert_called_once_with()
         betslip_service.settle_pending.assert_called_once_with()
+        shadow_service.settle_pending.assert_called_once_with()
         self.assertEqual(report["ledger_settled_win"], 1)
         self.assertEqual(report["betslips_settled"], 1)
         self.assertIn("ledger_settlement_seconds", report["phase_durations"])
         self.assertIn("betslip_settlement_seconds", report["phase_durations"])
+        self.assertEqual(report["shadow_betslips"]["shadow_settled"], 1)
+        self.assertIn("shadow_betslip_settlement_seconds", report["phase_durations"])
 
 
 class TestLastCompletedRun(unittest.TestCase):

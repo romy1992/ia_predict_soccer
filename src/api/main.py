@@ -1103,7 +1103,7 @@ def betslip_generate(
             detail="Le date passate sono disponibili tramite /betslip/proposals",
         )
     service = BetslipService()
-    pool_result, generation = service.generate_for_day(
+    pool_result, generation = service.generate_exploration_for_day(
         target_date=selected_date,
         pool_policy=policy,
         markets=selected_markets,

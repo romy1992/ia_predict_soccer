@@ -1076,6 +1076,31 @@ th {
   flex-wrap: wrap;
 }
 
+.betslip-decision-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 12px 0 6px;
+}
+
+.decision-tab {
+  padding: 10px 12px;
+  border: 2px solid transparent;
+  border-radius: 9px;
+  font-weight: 700;
+  cursor: pointer;
+  opacity: 0.72;
+}
+
+.decision-tab.active {
+  border-color: currentColor;
+  opacity: 1;
+}
+
+.decision-tab span {
+  margin-left: 4px;
+}
+
 .betslip-view-tabs .tab {
   font-weight: 700;
 }
@@ -1298,6 +1323,14 @@ th {
   border-top: 1px solid #e1e7f1;
 }
 
+.shadow-portfolios {
+  margin-top: 16px;
+}
+
+.shadow-portfolios table {
+  min-width: 940px;
+}
+
 @media (max-width: 700px) {
   .betslip-toolbar-main,
   .stake-simulator,
@@ -1330,6 +1363,10 @@ th {
 
   .betslip-statistics .panel-header {
     align-items: stretch;
+  }
+
+  .betslip-decision-tabs {
+    grid-template-columns: 1fr;
   }
 }
 
