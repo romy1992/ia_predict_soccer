@@ -266,6 +266,12 @@ class DashboardOverviewResponse(BaseModel):
     day_highlights: list[dict[str, Any]]
 
 
+class DashboardBundleResponse(BaseModel):
+    overview: dict[str, Any]
+    live: dict[str, Any]
+    day: dict[str, Any]
+
+
 class DashboardAvailableDatesResponse(BaseModel):
     """Elenco date selezionabili nel filtro UI (TopFilters): dal giorno 1 di
     prediction salvata ad oggi, accumulato progressivamente (mai un

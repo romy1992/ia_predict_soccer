@@ -37,6 +37,20 @@ export function getDashboardOverview(targetDate) {
   return request(`/dashboard/overview${query ? `?${query}` : ""}`);
 }
 
+export function getDashboardBundle({
+  targetDate,
+  limit = 400,
+  search,
+  forceRefresh = false,
+} = {}) {
+  const params = new URLSearchParams();
+  if (targetDate) params.set("target_date", targetDate);
+  params.set("limit", String(limit));
+  if (search) params.set("search", search);
+  if (forceRefresh) params.set("force_refresh", "true");
+  return request(`/dashboard/bundle?${params.toString()}`);
+}
+
 export function getDashboardAvailableDates() {
   return request("/dashboard/available-dates");
 }

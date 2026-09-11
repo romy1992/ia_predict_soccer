@@ -90,3 +90,20 @@ def test_single_market_keeps_analytic_view():
         "expected_roi_percent",
     ):
         assert backend_field in table
+
+
+def test_dashboard_uses_one_bundle_request_and_client_side_market_filters():
+    app = (FRONTEND / "App.jsx").read_text(encoding="utf-8")
+    api = (FRONTEND / "api.js").read_text(encoding="utf-8")
+    load_dashboard = app.split("const loadDashboardData", maxsplit=1)[1].split(
+        "const handleForceRefreshDay", maxsplit=1
+    )[0]
+
+    assert "getDashboardBundle" in load_dashboard
+    assert "getDashboardOverview" not in load_dashboard
+    assert "getDashboardLive" not in load_dashboard
+    assert "getDashboardDay" not in load_dashboard
+    assert 'request(`/dashboard/bundle?' in api
+    assert "initialLoadStartedRef.current" in app
+    assert 'activePage !== "dashboard"' in app
+    assert "filterRowByMarket(row, selectedMarket)" in app
