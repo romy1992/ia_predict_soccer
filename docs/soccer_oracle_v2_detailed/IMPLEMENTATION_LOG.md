@@ -287,7 +287,12 @@ Prima di ogni task viene applicata la premessa in `AI_MASTER_PROMPT.md`:
   `statistics.id_match`, `odds.id_match`,
   `prediction_ledger(cohort, fixture_id)` e
   `prediction_ledger.created_at`. Nessun dato o contratto API precedente è
-  stato rimosso.
+  stato rimosso. Misura comparativa sullo stesso carico (7 fixture × 7
+  mercati): da 54 query SQL totali, incluse 49 query snapshot, a 5 query
+  totali con una sola query snapshot bulk. Sul database SQLite isolato il
+  percorso consolidato ha impiegato 0,0126 s; il precedente rilievo sul
+  percorso remoto era 6,438 s, quindi i tempi assoluti non sono direttamente
+  confrontabili ma il numero di round-trip sì.
 
 ## Connessione DB runtime
 - **AGGIORNATO 2026-09-04**: sorgente runtime ora fissata sul DB dev remoto Railway: `DATABASE_URL=postgresql://postgres:...@sakura.proxy.rlwy.net:18862/railway` (credenziali complete in `properties/config.env`), unica per locale/Docker/Alembic - vedi entry INFRA sopra. Il valore storico sotto (`localhost:5432/match_db`) e la narrazione del fix Docker restano come riferimento della situazione PRECEDENTE al cambio Railway.
