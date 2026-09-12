@@ -12,14 +12,17 @@ from src.ml.markets.corners.corners_market import (
     CornersExpert,
     CornersLineTrainResult,
     _feature_columns_for,
+    _line_independent_oof,
     _line_specific_odds_features,
     build_corners_frame_from_records,
+    compute_monotonicity_report,
     label_corners_over,
     run_corners_benchmark,
     run_corners_benchmark_from_db,
     train_corners_all_lines,
     train_corners_line,
 )
+from src.ml.validation.temporal_split import expanding_window_splits
 
 
 def _make_match(fixture_id: int, date: datetime, home_rating: float, away_rating: float, rng: np.random.RandomState) -> dict:
@@ -220,6 +223,56 @@ class TestFeatureColumnsForLineScoping(unittest.TestCase):
         self.assertIn("odds_mean", columns)
         self.assertNotIn("odds_mean_line_8_5", columns)
         self.assertNotIn("odds_mean_line_11_5", columns)
+
+
+class TestComputeMonotonicityReport(unittest.TestCase):
+    """2026-09-12: "le linee di corners seguono lo stesso principio di
+    under/over gol? Over X implica Over di una linea piu' bassa" - stesso
+    principio gia' in produzione per i gol (MARKET-04,
+    `enforce_monotonic_over_probabilities`), qui applicato a Corners con un
+    RandomForest fisso INDIPENDENTE dal champion per linea (diagnostico,
+    veloce - non richiama mai `_select_champion_via_model_search`)."""
+
+    def test_reports_violations_and_stays_fast_without_grid_search(self):
+        matches = _synthetic_matches(n=260)
+        frame = build_corners_frame_from_records(matches)
+        cv_splits = expanding_window_splits(
+            frame=frame, time_col="prediction_at", n_splits=5,
+            min_train_size=max(30, int(len(frame) * 0.45)), min_valid_size=max(10, int(len(frame) * 0.1)),
+        )
+
+        report = compute_monotonicity_report(frame, lines=DEFAULT_LINES, cv_splits=cv_splits)
+
+        self.assertEqual(report["status"], "ok")
+        self.assertEqual(report["lines"], list(DEFAULT_LINES))
+        self.assertGreater(report["n_rows_evaluated"], 0)
+        self.assertGreaterEqual(report["violations_before_projection"], 0)
+        self.assertGreaterEqual(report["violations_pct"], 0.0)
+        self.assertLessEqual(report["violations_pct"], 1.0)
+
+    def test_single_line_is_not_applicable(self):
+        matches = _synthetic_matches(n=60)
+        frame = build_corners_frame_from_records(matches, lines=(9.5,))
+        report = compute_monotonicity_report(frame, lines=(9.5,), cv_splits=[([0], [1])])
+        self.assertEqual(report["status"], "not_applicable")
+
+    def test_line_independent_oof_returns_frame_aligned_arrays_with_nan_outside_folds(self):
+        matches = _synthetic_matches(n=260)
+        frame = build_corners_frame_from_records(matches)
+        cv_splits = expanding_window_splits(
+            frame=frame, time_col="prediction_at", n_splits=5,
+            min_train_size=max(30, int(len(frame) * 0.45)), min_valid_size=max(10, int(len(frame) * 0.1)),
+        )
+
+        oof = _line_independent_oof(frame, DEFAULT_LINES, cv_splits)
+
+        for line in DEFAULT_LINES:
+            label = f"line_{str(float(line)).replace('.', '_')}"
+            self.assertIn(label, oof)
+            self.assertEqual(len(oof[label]), len(frame))
+            valid = ~np.isnan(oof[label])
+            self.assertTrue(valid.any())
+            self.assertTrue(np.all((oof[label][valid] >= 0.0) & (oof[label][valid] <= 1.0)))
 
 
 class TestTrainCornersLine(unittest.TestCase):

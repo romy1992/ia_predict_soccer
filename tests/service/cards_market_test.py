@@ -14,16 +14,19 @@ from src.ml.markets.cards.cards_market import (
     CardsExpert,
     CardsLineTrainResult,
     _feature_columns_for,
+    _line_independent_oof,
     _line_specific_odds_features,
     _shrink_toward_baseline,
     build_cards_frame_from_records,
     build_referee_features_dataset,
+    compute_monotonicity_report,
     label_cards_over,
     run_cards_benchmark,
     run_cards_benchmark_from_db,
     train_cards_all_lines,
     train_cards_line,
 )
+from src.ml.validation.temporal_split import expanding_window_splits
 
 
 def _make_match(
@@ -387,6 +390,56 @@ class TestFeatureColumnsForLineScoping(unittest.TestCase):
         self.assertIn("odds_mean", columns)
         self.assertNotIn("odds_mean_line_3_5", columns)
         self.assertNotIn("odds_mean_line_6_5", columns)
+
+
+class TestComputeMonotonicityReport(unittest.TestCase):
+    """2026-09-12: "le linee di cards seguono lo stesso principio di
+    under/over gol? Over X implica Over di una linea piu' bassa" - stesso
+    principio gia' in produzione per i gol (MARKET-04,
+    `enforce_monotonic_over_probabilities`), qui applicato a Cards con un
+    RandomForest fisso INDIPENDENTE dal champion per linea (diagnostico,
+    veloce - non richiama mai `_select_champion_via_model_search`)."""
+
+    def test_reports_violations_and_stays_fast_without_grid_search(self):
+        matches = _synthetic_matches(n=240)
+        frame = build_cards_frame_from_records(matches)
+        cv_splits = expanding_window_splits(
+            frame=frame, time_col="prediction_at", n_splits=5,
+            min_train_size=max(30, int(len(frame) * 0.45)), min_valid_size=max(10, int(len(frame) * 0.1)),
+        )
+
+        report = compute_monotonicity_report(frame, lines=DEFAULT_LINES, cv_splits=cv_splits)
+
+        self.assertEqual(report["status"], "ok")
+        self.assertEqual(report["lines"], list(DEFAULT_LINES))
+        self.assertGreater(report["n_rows_evaluated"], 0)
+        self.assertGreaterEqual(report["violations_before_projection"], 0)
+        self.assertGreaterEqual(report["violations_pct"], 0.0)
+        self.assertLessEqual(report["violations_pct"], 1.0)
+
+    def test_single_line_is_not_applicable(self):
+        matches = _synthetic_matches(n=60)
+        frame = build_cards_frame_from_records(matches, lines=(4.5,))
+        report = compute_monotonicity_report(frame, lines=(4.5,), cv_splits=[([0], [1])])
+        self.assertEqual(report["status"], "not_applicable")
+
+    def test_line_independent_oof_returns_frame_aligned_arrays_with_nan_outside_folds(self):
+        matches = _synthetic_matches(n=240)
+        frame = build_cards_frame_from_records(matches)
+        cv_splits = expanding_window_splits(
+            frame=frame, time_col="prediction_at", n_splits=5,
+            min_train_size=max(30, int(len(frame) * 0.45)), min_valid_size=max(10, int(len(frame) * 0.1)),
+        )
+
+        oof = _line_independent_oof(frame, DEFAULT_LINES, cv_splits)
+
+        for line in DEFAULT_LINES:
+            label = f"line_{str(float(line)).replace('.', '_')}"
+            self.assertIn(label, oof)
+            self.assertEqual(len(oof[label]), len(frame))
+            valid = ~np.isnan(oof[label])
+            self.assertTrue(valid.any())
+            self.assertTrue(np.all((oof[label][valid] >= 0.0) & (oof[label][valid] <= 1.0)))
 
 
 class TestTrainCardsLine(unittest.TestCase):

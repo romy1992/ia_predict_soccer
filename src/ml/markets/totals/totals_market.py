@@ -96,18 +96,25 @@ def total_goals_to_bin(total_goals: Any, thresholds: tuple[float, ...] = THRESHO
 def enforce_monotonic_over_probabilities(
     probabilities_by_threshold: dict[str, Any],
     thresholds: tuple[float, ...] = THRESHOLDS,
+    label_fn=_threshold_label,
 ) -> dict[str, np.ndarray]:
     """Garantisce P(O1.5)>=P(O2.5)>=P(O3.5)>=P(O4.5) riga per riga.
 
     Acceptance criteria OBBLIGATORIO indipendente dall'approccio che ha
     generato le probabilita' grezze: proiezione per cumulative minimum,
     stesso principio gia' usato in `poisson_over_probabilities` (EXP-02).
-    """
+
+    `label_fn` (2026-09-12, additivo, default INVARIATO): il principio
+    "eventi annidati sulla stessa soglia crescente" non e' esclusivo dei gol
+    - vale identico per Corners/Cards (Over 10.5 implica Over 9.5). Parametro
+    per riusare questa stessa proiezione con la convenzione di etichetta di
+    `cards_market.py`/`corners_market.py` (`_line_label`, "line_X_Y") invece
+    di duplicare la funzione."""
     sorted_thresholds = sorted(set(float(t) for t in thresholds))
     result: dict[str, np.ndarray] = {}
     previous: Optional[np.ndarray] = None
     for th in sorted_thresholds:
-        label = _threshold_label(th)
+        label = label_fn(th)
         current = np.asarray(probabilities_by_threshold[label], dtype=float)
         if previous is not None:
             current = np.minimum(current, previous)
@@ -360,8 +367,10 @@ class TotalsBenchmarkReport:
     best_approach_by_threshold: dict[str, str] = field(default_factory=dict)
 
 
-def _count_monotonicity_violations(probs_by_threshold: dict[str, np.ndarray], thresholds: tuple[float, ...]) -> int:
-    ordered_arrays = [np.asarray(probs_by_threshold[_threshold_label(t)], dtype=float) for t in sorted(set(float(t) for t in thresholds))]
+def _count_monotonicity_violations(
+    probs_by_threshold: dict[str, np.ndarray], thresholds: tuple[float, ...], label_fn=_threshold_label
+) -> int:
+    ordered_arrays = [np.asarray(probs_by_threshold[label_fn(t)], dtype=float) for t in sorted(set(float(t) for t in thresholds))]
     stacked = np.vstack(ordered_arrays)
     diffs = np.diff(stacked, axis=0)  # deve essere <= 0 (non crescente al crescere della soglia)
     return int(np.sum(diffs > 1e-9))

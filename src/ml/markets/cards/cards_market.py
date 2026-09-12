@@ -53,10 +53,14 @@ from typing import Any, Optional
 import joblib
 import numpy as np
 import pandas as pd
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.impute import SimpleImputer
+from sklearn.pipeline import Pipeline
 
 from src.ml.calibration.calibration_service import CalibrationResult, CalibrationService
 from src.ml.evaluation.classification_report import compute_full_classification_report
 from src.ml.evaluation.probability_metrics import champion_probability_score
+from src.ml.markets.totals.totals_market import _count_monotonicity_violations, enforce_monotonic_over_probabilities
 from src.ml.validation.temporal_split import expanding_window_splits
 from src.repository.match_repository import MatchRepository
 from src.service_ia.training.market_service.filter_market_service import FilterMarketService
@@ -367,6 +371,90 @@ def _feature_columns_for(
     return [col for col in frame.columns if col not in excluded]
 
 
+# ---------------------------------------------------------------------------
+# Monotonicita' tra linee (2026-09-12, "le linee seguono lo stesso principio
+# di Under/Over gol? Over 2.5 e' sicuramente anche Over 1.5" - stesso
+# principio gia' in produzione per i gol, MARKET-04, `totals_market.py`):
+# P(Over 3.5) >= P(Over 4.5) >= P(Over 5.5) >= P(Over 6.5) riga per riga sono
+# eventi ANNIDATI sullo stesso conteggio totale, non variabili indipendenti -
+# modelli indipendenti per linea NON garantiscono questo ordine da soli.
+# ---------------------------------------------------------------------------
+
+_RF_MONOTONICITY_KWARGS = dict(n_estimators=150, max_depth=10, min_samples_leaf=2, random_state=42, n_jobs=-1, class_weight="balanced")
+
+
+def _line_independent_oof(
+    frame: pd.DataFrame,
+    lines: tuple[float, ...],
+    cv_splits: list[tuple[list[int], list[int]]],
+    use_line_specific_odds: bool = True,
+) -> dict[str, np.ndarray]:
+    """OOF P(Over linea) per OGNI linea con un RandomForest fisso INDIPENDENTE
+    (diagnostico - NON il champion per linea scelto da
+    `_select_champion_via_model_search`, troppo costoso per essere rifittato
+    qui: stesso principio di disaccoppiamento gia' usato da
+    `totals_market._binary_independent_oof`/dal confronto quote di questa
+    stessa sessione). Array della lunghezza del frame (NaN dove non c'e'
+    copertura OOF), cosi' le righe restano allineate tra le diverse linee."""
+    n = len(frame)
+    result = {_line_label(line): np.full(n, np.nan) for line in lines}
+    for line in lines:
+        label = _line_label(line)
+        y_col = f"y_{label}"
+        if y_col not in frame.columns:
+            continue
+        feature_columns = _feature_columns_for(frame, lines, active_line=line, use_line_specific_odds=use_line_specific_odds)
+        X = frame[feature_columns]
+        y = frame[y_col].astype(int)
+        for train_idx, valid_idx in cv_splits:
+            if not train_idx or not valid_idx or y.iloc[train_idx].nunique() < 2:
+                continue
+            pipeline = Pipeline(steps=[
+                ("imputer", SimpleImputer(strategy="median")),
+                ("model", RandomForestClassifier(**_RF_MONOTONICITY_KWARGS)),
+            ])
+            pipeline.fit(X.iloc[train_idx], y.iloc[train_idx])
+            result[label][valid_idx] = pipeline.predict_proba(X.iloc[valid_idx])[:, 1]
+    return result
+
+
+def compute_monotonicity_report(
+    frame: pd.DataFrame,
+    lines: tuple[float, ...],
+    cv_splits: list[tuple[list[int], list[int]]],
+    use_line_specific_odds: bool = True,
+) -> dict[str, Any]:
+    """Quanto le predizioni indipendenti per linea rispettano l'ordine
+    logico Over 3.5 >= Over 4.5 >= Over 5.5 >= Over 6.5, e proiezione che lo
+    impone SEMPRE (`enforce_monotonic_over_probabilities`, riusata identica
+    da `totals_market.py` - stesso principio, non duplicata)."""
+    sorted_lines = tuple(sorted(set(float(line) for line in lines)))
+    if len(sorted_lines) < 2:
+        return {"status": "not_applicable", "reason": "meno di 2 linee addestrate"}
+
+    probs_by_line = _line_independent_oof(frame, sorted_lines, cv_splits, use_line_specific_odds=use_line_specific_odds)
+
+    valid_mask = np.ones(len(frame), dtype=bool)
+    for values in probs_by_line.values():
+        valid_mask &= ~np.isnan(values)
+    oof_index = np.where(valid_mask)[0]
+    if oof_index.size == 0:
+        return {"status": "no_oof_coverage"}
+
+    restricted = {label: values[oof_index] for label, values in probs_by_line.items()}
+    violations = _count_monotonicity_violations(restricted, thresholds=sorted_lines, label_fn=_line_label)
+    n_pairs = int(oof_index.size * (len(sorted_lines) - 1))
+
+    return {
+        "status": "ok",
+        "method": "random_forest_fisso_per_linea (diagnostico, non il champion selezionato per linea)",
+        "lines": list(sorted_lines),
+        "n_rows_evaluated": int(oof_index.size),
+        "violations_before_projection": violations,
+        "violations_pct": float(violations / n_pairs) if n_pairs else 0.0,
+    }
+
+
 @dataclass
 class CardsLineTrainResult:
     """Esito ricerca+training+calibrazione per UNA linea specifica."""
@@ -445,6 +533,7 @@ class CardsBenchmarkReport:
 
     lines: tuple[float, ...]
     results: dict[str, CardsLineTrainResult]
+    monotonicity: dict[str, Any] = field(default_factory=dict)
 
     def metrics_summary(self) -> dict[str, dict[str, Any]]:
         """Report COMPLETO per linea (2026-09-12, "tutte le metriche
@@ -513,7 +602,12 @@ def train_cards_all_lines(
     if not results:
         raise ValueError("Nessuna linea addestrabile con questo dataset (classi troppo sbilanciate per tutte le linee)")
 
-    return CardsBenchmarkReport(lines=lines, results=results)
+    trained_lines = tuple(result.line for result in results.values())
+    monotonicity = compute_monotonicity_report(
+        frame, lines=trained_lines, cv_splits=cv_splits, use_line_specific_odds=use_line_specific_odds
+    )
+
+    return CardsBenchmarkReport(lines=lines, results=results, monotonicity=monotonicity)
 
 
 @dataclass
@@ -709,7 +803,7 @@ def run_cards_benchmark(
         rows=len(frame),
         status="benchmarked",
         lines_trained=[result.line for result in report.results.values()],
-        details={"metrics_summary": report.metrics_summary(), "runs": run_metadata},
+        details={"metrics_summary": report.metrics_summary(), "runs": run_metadata, "monotonicity": report.monotonicity},
     )
 
 
