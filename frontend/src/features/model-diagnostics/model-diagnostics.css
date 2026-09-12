@@ -1,0 +1,177 @@
+/* Model Diagnostics (2026-09-12): design system dedicato, replicato
+   ESATTAMENTE dall'Artifact di riferimento (vedi
+   docs/soccer_oracle_v2_detailed/PROMPT_model_diagnostics_web_section.md).
+   Tutto scoped sotto .model-diagnostics-page: nessuna variabile/selettore
+   qui deve mai riscrivere gli stili globali del resto dell'app (che oggi
+   non ha temi/variabili CSS proprie - nessuna collisione nota, ma lo scope
+   esplicito lo rende sicuro anche in futuro). */
+
+.model-diagnostics-page {
+  --paper: #F1F5F3;
+  --surface: #FFFFFF;
+  --surface-2: #E7EEEB;
+  --ink: #0F211E;
+  --ink-soft: #3C534E;
+  --muted: #647A75;
+  --line: #D6E1DC;
+  --line-soft: #E4ECE8;
+  --under: #1C7A72;
+  --under-soft: #E4F2EF;
+  --over: #C96A26;
+  --over-soft: #FBEADB;
+  --scale-1: #C9DCEE;
+  --scale-2: #8DB4DC;
+  --scale-3: #4F7FBE;
+  --scale-4: #1F4C8F;
+  --grid: #122E29;
+  --focus: #1C7A72;
+  --shadow: 0 1px 2px rgba(15, 33, 30, .06), 0 8px 20px -12px rgba(15, 33, 30, .18);
+}
+
+@media (prefers-color-scheme: dark) {
+  .model-diagnostics-page {
+    --paper: #0C1917;
+    --surface: #12211F;
+    --surface-2: #182E2B;
+    --ink: #E8F2EF;
+    --ink-soft: #B9CBC6;
+    --muted: #7E9C96;
+    --line: #243F3A;
+    --line-soft: #1C332E;
+    --under: #4FC7BB;
+    --under-soft: #12312D;
+    --over: #F0A15A;
+    --over-soft: #2E2013;
+    --scale-1: #3E6E9E;
+    --scale-2: #5C93C6;
+    --scale-3: #82B3DE;
+    --scale-4: #ADD3F2;
+    --grid: #DCEDE9;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 12px 28px -16px rgba(0, 0, 0, .55);
+  }
+}
+
+.model-diagnostics-page * { box-sizing: border-box; }
+
+.model-diagnostics-page {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  font-size: 15px;
+  line-height: 1.55;
+  padding: 32px 28px 64px;
+  border-radius: 12px;
+}
+
+.model-diagnostics-page .display { font-family: "Barlow Semi Condensed", ui-sans-serif, sans-serif; font-weight: 700; text-wrap: balance; }
+.model-diagnostics-page .mono { font-family: "IBM Plex Mono", ui-monospace, monospace; font-variant-numeric: tabular-nums; }
+
+.model-diagnostics-page header.top { display: flex; flex-direction: column; gap: 10px; padding-bottom: 28px; border-bottom: 1px solid var(--line); margin-bottom: 32px; }
+.model-diagnostics-page .eyebrow { font-family: "IBM Plex Mono", monospace; font-size: 12px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
+.model-diagnostics-page h1 { font-size: clamp(28px, 4vw, 40px); line-height: 1.08; margin: 0; letter-spacing: -.01em; color: var(--ink); }
+.model-diagnostics-page h1 .line { color: var(--muted); font-weight: 600; }
+.model-diagnostics-page .dek { max-width: 62ch; color: var(--ink-soft); font-size: 16px; margin: 2px 0 0; }
+
+.model-diagnostics-page .callout {
+  display: grid; grid-template-columns: auto 1fr; gap: 14px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+  padding: 16px 18px; box-shadow: var(--shadow); margin-bottom: 40px;
+}
+.model-diagnostics-page .callout .mark {
+  width: 28px; height: 28px; border-radius: 7px; background: var(--surface-2);
+  display: flex; align-items: center; justify-content: center;
+  font-family: "IBM Plex Mono", monospace; font-size: 13px; font-weight: 500; color: var(--ink-soft);
+  flex-shrink: 0;
+}
+.model-diagnostics-page .callout p { margin: 0; font-size: 13.5px; color: var(--ink-soft); }
+.model-diagnostics-page .callout p strong { color: var(--ink); font-weight: 600; }
+.model-diagnostics-page .callout code { font-family: "IBM Plex Mono", monospace; font-size: .93em; background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }
+
+.model-diagnostics-page section { margin-bottom: 52px; }
+.model-diagnostics-page .section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-bottom: 18px; flex-wrap: wrap; }
+.model-diagnostics-page .section-head h2 { font-size: 22px; margin: 0; color: var(--ink); }
+.model-diagnostics-page .section-head .note { font-size: 12.5px; color: var(--muted); font-family: "IBM Plex Mono", monospace; }
+
+/* ---- comparison ROC ---- */
+.model-diagnostics-page .roc-panel {
+  background: var(--surface); border: 1px solid var(--line); border-radius: 14px;
+  padding: 24px 24px 18px; box-shadow: var(--shadow);
+  display: grid; grid-template-columns: 1fr 200px; gap: 24px; align-items: center;
+}
+.model-diagnostics-page .roc-panel svg { width: 100%; height: auto; display: block; }
+.model-diagnostics-page .roc-axis-label { font-family: "IBM Plex Mono", monospace; font-size: 11px; fill: var(--muted); }
+.model-diagnostics-page .roc-tick { stroke: var(--line); stroke-width: 1; }
+.model-diagnostics-page .roc-diag { stroke: var(--muted); stroke-width: 1.5; stroke-dasharray: 3 4; opacity: .6; }
+.model-diagnostics-page .roc-line { fill: none; stroke-width: 2.25; stroke-linecap: round; stroke-linejoin: round; }
+.model-diagnostics-page .roc-frame { stroke: var(--line); stroke-width: 1; fill: none; }
+
+.model-diagnostics-page .legend { display: flex; flex-direction: column; gap: 10px; }
+.model-diagnostics-page .legend-row { display: flex; align-items: center; gap: 9px; font-size: 13px; }
+.model-diagnostics-page .legend-row .swatch { width: 14px; height: 3px; border-radius: 2px; flex-shrink: 0; }
+.model-diagnostics-page .legend-row .lab { font-weight: 500; color: var(--ink); }
+.model-diagnostics-page .legend-row .auc { margin-left: auto; font-family: "IBM Plex Mono", monospace; font-size: 12.5px; color: var(--muted); }
+
+/* ---- market grid ---- */
+.model-diagnostics-page .grid4 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 18px; }
+@media (max-width: 820px) {
+  .model-diagnostics-page .grid4 { grid-template-columns: 1fr; }
+  .model-diagnostics-page .roc-panel { grid-template-columns: 1fr; }
+}
+
+.model-diagnostics-page .card {
+  background: var(--surface); border: 1px solid var(--line); border-radius: 14px;
+  padding: 22px; box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 16px;
+}
+.model-diagnostics-page .card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.model-diagnostics-page .card-head h3 { font-size: 20px; margin: 0; color: var(--ink); }
+.model-diagnostics-page .card-head .sub { font-size: 12px; color: var(--muted); font-family: "IBM Plex Mono", monospace; margin-top: 2px; }
+.model-diagnostics-page .badge {
+  font-family: "IBM Plex Mono", monospace; font-size: 11px; font-weight: 500; letter-spacing: .02em;
+  padding: 4px 9px; border-radius: 999px; background: var(--surface-2); color: var(--ink-soft); white-space: nowrap;
+}
+
+.model-diagnostics-page .stat-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 9px; overflow: hidden; }
+.model-diagnostics-page .stat-row .stat { background: var(--surface); padding: 10px 12px; }
+.model-diagnostics-page .stat-row .stat .k { font-size: 10.5px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+.model-diagnostics-page .stat-row .stat .v { font-family: "IBM Plex Mono", monospace; font-size: 18px; font-weight: 500; margin-top: 2px; color: var(--ink); }
+
+.model-diagnostics-page .cm-wrap { display: grid; grid-template-columns: auto 1fr; gap: 8px; align-items: center; }
+.model-diagnostics-page .cm-block { display: flex; flex-direction: column; gap: 8px; }
+.model-diagnostics-page .cm-xlabs { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; padding-left: 64px; }
+.model-diagnostics-page .cm-xlabs span { font-size: 10.5px; color: var(--muted); font-family: "IBM Plex Mono", monospace; text-align: center; }
+.model-diagnostics-page .cm-row { display: grid; grid-template-columns: 60px repeat(2, 1fr); gap: 6px; align-items: stretch; }
+.model-diagnostics-page .cm-rowlab { font-size: 10.5px; color: var(--muted); font-family: "IBM Plex Mono", monospace; display: flex; align-items: center; justify-content: flex-end; text-align: right; padding-right: 2px; }
+.model-diagnostics-page .cm-cell {
+  border-radius: 8px; padding: 10px 8px; min-height: 58px;
+  display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 1px;
+  border: 1px solid var(--line-soft);
+}
+.model-diagnostics-page .cm-cell .n { font-family: "IBM Plex Mono", monospace; font-weight: 600; font-size: 17px; }
+.model-diagnostics-page .cm-cell .p { font-family: "IBM Plex Mono", monospace; font-size: 10.5px; color: var(--ink-soft); }
+.model-diagnostics-page .cm-cell.correct .n { color: var(--ink); }
+
+.model-diagnostics-page .metric-table { display: flex; flex-direction: column; gap: 7px; }
+.model-diagnostics-page .metric-table .row { display: grid; grid-template-columns: 74px repeat(3, 1fr); align-items: center; gap: 6px; }
+.model-diagnostics-page .metric-table .row.head span { font-size: 9.5px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); text-align: center; }
+.model-diagnostics-page .metric-table .row.head span:first-child { text-align: left; }
+.model-diagnostics-page .metric-table .name { font-size: 12px; font-weight: 600; display: flex; align-items: center; gap: 6px; color: var(--ink); }
+.model-diagnostics-page .metric-table .name .sw { width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0; }
+.model-diagnostics-page .metric-table .val { font-family: "IBM Plex Mono", monospace; font-size: 12.5px; color: var(--ink); text-align: center; }
+
+.model-diagnostics-page .skipped-note {
+  font-size: 12.5px; color: var(--muted); font-family: "IBM Plex Mono", monospace;
+  background: var(--surface); border: 1px dashed var(--line); border-radius: 10px; padding: 12px 16px; margin-bottom: 24px;
+}
+
+.model-diagnostics-page .diag-toolbar { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; flex-wrap: wrap; }
+.model-diagnostics-page .diag-toolbar button {
+  font-family: "IBM Plex Mono", monospace; font-size: 12.5px; font-weight: 500;
+  background: var(--surface); color: var(--ink); border: 1px solid var(--line); border-radius: 8px;
+  padding: 7px 14px; cursor: pointer;
+}
+.model-diagnostics-page .diag-toolbar button:hover { border-color: var(--focus); }
+.model-diagnostics-page .diag-toolbar button:disabled { opacity: .6; cursor: default; }
+.model-diagnostics-page .diag-toolbar .generated-at { font-size: 12px; color: var(--muted); font-family: "IBM Plex Mono", monospace; }
+
+.model-diagnostics-page footer { border-top: 1px solid var(--line); padding-top: 20px; margin-top: 12px; }
+.model-diagnostics-page footer p { font-size: 12px; color: var(--muted); font-family: "IBM Plex Mono", monospace; line-height: 1.7; margin: 0; }

@@ -12,6 +12,7 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.api.dashboard_service import DashboardService
+from src.api.model_diagnostics_service import ModelDiagnosticsService
 from src.api.oracle_match_detail_service import OracleMatchDetailService
 from src.api.schemas import (
     DataQualityResponse,
@@ -44,6 +45,7 @@ from src.api.schemas import (
     LiveFixturesResponse,
     MetricsResponse,
     ModelConsensusResponse,
+    ModelDiagnosticsResponse,
     ModelRegistryOverviewResponse,
     MonitoringAlertsResponse,
     MonitoringOverviewResponse,
@@ -682,6 +684,22 @@ def metrics(market: str, limit: int = 30) -> MetricsResponse:
 @app.get("/metrics/summary")
 def metrics_summary() -> dict[str, Any]:
     return {"summary": _load_summary()}
+
+
+@app.get("/models/diagnostics", response_model=ModelDiagnosticsResponse)
+def model_diagnostics(markets: Optional[str] = None, force_refresh: bool = False) -> ModelDiagnosticsResponse:
+    """Model Diagnostics (2026-09-12): confusion matrix/precision/recall/F1
+    per classe/ROC+AUC via walk-forward OOF (`clone()` del modello
+    registrato, rifittato fold per fold - MAI valutato sui dati di
+    training) per ogni mercato BINARIO con un modello registrato (esclude
+    "1x2" e i mercati a linea configurabile, vedi
+    `model_diagnostics_service.py`). `markets` non specificato -> tutti i
+    mercati diagnosticabili. Risposta cache 15 min (`force_refresh=true`
+    per bypassarla) - il ricalcolo rifitta il modello per ogni fold/
+    mercato, potenzialmente lento."""
+    selected_markets = [item.strip() for item in markets.split(",") if item.strip()] if markets else None
+    payload = ModelDiagnosticsService().get_diagnostics(markets=selected_markets, force_refresh=force_refresh)
+    return ModelDiagnosticsResponse(**payload)
 
 
 @app.get("/models/{market}/registry", response_model=ModelRegistryOverviewResponse)

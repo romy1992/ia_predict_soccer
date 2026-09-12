@@ -316,6 +316,18 @@ export function refreshApiQuota() {
   return request("/settings/quota/refresh", { method: "POST" });
 }
 
+export function getModelDiagnostics({ markets, forceRefresh = false } = {}) {
+  const params = new URLSearchParams();
+  if (markets && markets.length > 0) {
+    params.set("markets", markets.join(","));
+  }
+  if (forceRefresh) {
+    params.set("force_refresh", "true");
+  }
+  const query = params.toString();
+  return request(`/models/diagnostics${query ? `?${query}` : ""}`);
+}
+
 export { API_BASE_URL };
 
 
