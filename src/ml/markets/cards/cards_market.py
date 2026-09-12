@@ -16,9 +16,30 @@ le feature "team/style" richieste dal task, gia' disponibili in
   di `TeamStrengthExpert`, EXP-01, ma raggruppato per `Match.referee` invece
   che per squadra), con fallback a un prior neutro quando l'arbitro non ha
   ancora storico sufficiente nel dataset;
+- **raffinamento 2026-09-12** (discusso e confermato con l'operatore): il
+  prior arbitro grezzo (media semplice) e' rumoroso su pochi precedenti (un
+  arbitro con 1-2 partite osservate puo' avere una media estrema per puro
+  caso) - `referee_avg_cards_prior` applica ora uno SHRINKAGE bayesiano
+  verso un baseline (media di LEGA point-in-time se disponibile, altrimenti
+  media globale, altrimenti `DEFAULT_REFEREE_PRIOR_CARDS`), con peso
+  crescente sulla media grezza man mano che l'arbitro accumula partite
+  (vedi `_shrink_toward_baseline`). Nuova feature aggiuntiva
+  `referee_severity_index_prior` = prior (gia' shrunk) diviso per lo stesso
+  baseline: un indice NORMALIZZATO PER LEGA (1.0 = nella media della sua
+  lega, >1 = piu' severo, <1 = piu' permissivo) - un arbitro severo in una
+  lega "dura" e uno altrettanto severo in una lega "morbida" non sono
+  altrimenti comparabili sulla scala assoluta dei cartellini. Un arbitro
+  MANCANTE/sconosciuto continua a ricevere sempre e solo il prior neutro
+  fisso (mai un baseline di lega per un'identita' che non conosciamo);
 - calibrazione (Platt/isotonic) via `CalibrationService` (ML-06, riusata,
   non duplicata) per il modello di ciascuna linea;
-- report con metriche PER LINEA (acceptance criteria).
+- report con metriche PER LINEA, ora COMPLETO (acceptance criteria +
+  richiesta esplicita "tutte le metriche possibili", 2026-09-12): oltre a
+  log loss/Brier/ECE/AUC pre/post calibrazione (gia' esistenti), ogni linea
+  espone anche un report di classificazione completo (accuracy, confusion
+  matrix, precision/recall/F1 per classe e pesati, curva ROC+PR, soglia
+  ottimale di Youden) via `classification_report.py` (NUOVO, non duplicato
+  qui ne' in corners_market.py, che lo usa identico).
 """
 
 from __future__ import annotations
@@ -35,6 +56,8 @@ import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
 
 from src.ml.calibration.calibration_service import CalibrationResult, CalibrationService
+from src.ml.evaluation.classification_report import compute_full_classification_report
+from src.ml.evaluation.probability_metrics import champion_probability_score
 from src.ml.validation.temporal_split import expanding_window_splits
 from src.repository.match_repository import MatchRepository
 from src.service_ia.training.market_service.filter_market_service import FilterMarketService
@@ -44,7 +67,8 @@ from src.service_ia.utility.utils import convert_orm_match_to_dict
 MARKET_NAME = "cards"
 ODDS_MARKET = "cards"  # colonna Odds.cards esistente, riusata come fonte feature quote
 DEFAULT_LINES: tuple[float, ...] = (3.5, 4.5, 5.5, 6.5)
-DEFAULT_REFEREE_PRIOR_CARDS = 4.0  # cartellini totali medi neutri quando l'arbitro non ha storico
+DEFAULT_REFEREE_PRIOR_CARDS = 4.0  # cartellini totali medi neutri quando ne' l'arbitro ne' la sua lega hanno storico
+REFEREE_SHRINKAGE_K = 10.0  # "peso" in pseudo-partite del baseline nello shrinkage bayesiano del prior arbitro
 
 _META_COLUMNS = ["id_fixture", "season", "league", "market", "prediction_at"]
 _RF_KWARGS = dict(n_estimators=150, max_depth=10, min_samples_leaf=2, random_state=42, class_weight="balanced", n_jobs=-1)
@@ -108,22 +132,52 @@ class _RefereeState:
         self.matches_officiated += 1
 
 
+def _shrink_toward_baseline(raw_average: float, matches_officiated: int, baseline: float, k: float) -> float:
+    """Shrinkage bayesiano (media pesata "conteggio vs pseudo-conteggio"):
+    con pochi precedenti (`matches_officiated` basso) il risultato resta
+    vicino al `baseline` (lega/globale/costante); con molti precedenti tende
+    alla media grezza dell'arbitro. Formula standard "credibility weighting"
+    (equivalente a un prior Beta/Normale coniugato con `k` osservazioni
+    virtuali pari al baseline)."""
+    n = float(matches_officiated)
+    return ((n * raw_average) + (k * baseline)) / (n + k)
+
+
 def build_referee_features_dataset(
     matches: list[dict[str, Any]],
     default_prior_cards: float = DEFAULT_REFEREE_PRIOR_CARDS,
+    shrinkage_k: float = REFEREE_SHRINKAGE_K,
 ) -> pd.DataFrame:
     """1 riga per fixture: statistiche ARBITRO point-in-time (PRE-match).
 
-    Nessun leakage: per la riga N si usano SOLO le partite arbitrate dallo
-    stesso arbitro (`Match.referee`, stringa) con indice cronologico < N.
-    Se l'arbitro e' assente/sconosciuto o non ha ancora storico, si usa
-    `default_prior_cards` (prior neutro) e `referee_has_history=0`.
+    Nessun leakage: per la riga N si usano SOLO le partite (dello stesso
+    arbitro, della sua lega, o dell'intero dataset) con indice cronologico
+    < N.
+
+    `referee_avg_cards_prior` e' la media storica cartellini dell'arbitro
+    con SHRINKAGE bayesiano verso un baseline via via piu' generico quando
+    manca informazione piu' specifica: media di LEGA point-in-time (se la
+    lega ha gia' storico) -> media GLOBALE point-in-time (se nessuna partita
+    di quella lega e' ancora stata vista) -> `default_prior_cards` (nessuno
+    storico affatto, es. primissima partita del dataset). Un arbitro
+    assente/sconosciuto (stringa vuota) e' un caso a parte, deliberatamente
+    SEMPRE `default_prior_cards`: non abbiamo nessuna identita' su cui
+    ragionare, quindi niente stima "furba" basata sulla lega.
+
+    `referee_severity_index_prior` (NUOVO) e' il prior (gia' shrunk) diviso
+    per lo stesso baseline usato per lo shrinkage: un indice di severita'
+    NORMALIZZATO PER LEGA (1.0 = nella media, >1 = piu' severo). Per un
+    arbitro assente resta fisso a 1.0 (nessuna informazione = nessuna
+    deviazione dalla norma dichiarabile).
     """
-    states: dict[str, _RefereeState] = defaultdict(_RefereeState)
+    referee_states: dict[str, _RefereeState] = defaultdict(_RefereeState)
+    league_states: dict[Any, _RefereeState] = defaultdict(_RefereeState)
+    global_state = _RefereeState()
     rows: list[dict[str, Any]] = []
 
     for prediction_at, match in _sorted_matches_chronologically(matches):
         referee = str(match.get("referee") or "").strip()
+        league = match.get("current_league")
         stats = match.get("statistics") or []
         home_id = match.get("id_team_home")
         away_id = match.get("id_team_away")
@@ -132,26 +186,54 @@ def build_referee_features_dataset(
         if stat_home is None or stat_away is None:
             continue
 
-        state = states[referee] if referee else _RefereeState()
-        prior_average = state.average_cards
+        league_state = league_states[league]
+        baseline = league_state.average_cards
+        if baseline is None:
+            baseline = global_state.average_cards
+        if baseline is None:
+            baseline = float(default_prior_cards)
+
+        if not referee:
+            avg_value = float(default_prior_cards)
+            matches_officiated = 0
+            has_history = 0
+            severity_index = 1.0
+        else:
+            state = referee_states[referee]
+            raw_average = state.average_cards
+            matches_officiated = state.matches_officiated
+            has_history = int(raw_average is not None)
+            avg_value = baseline if raw_average is None else _shrink_toward_baseline(
+                raw_average=raw_average, matches_officiated=matches_officiated, baseline=baseline, k=shrinkage_k
+            )
+            severity_index = (avg_value / baseline) if baseline > 0 else 1.0
 
         rows.append(
             {
                 "id_fixture": match.get("id_fixture"),
                 "prediction_at": prediction_at.isoformat(),
-                "referee_avg_cards_prior": float(prior_average) if prior_average is not None else float(default_prior_cards),
-                "referee_matches_officiated_prior": int(state.matches_officiated),
-                "referee_has_history": int(prior_average is not None),
+                "referee_avg_cards_prior": float(avg_value),
+                "referee_severity_index_prior": float(severity_index),
+                "referee_matches_officiated_prior": int(matches_officiated),
+                "referee_has_history": int(has_history),
             }
         )
 
+        total_cards = _team_total_cards(stat_home) + _team_total_cards(stat_away)
         if referee:
-            total_cards = _team_total_cards(stat_home) + _team_total_cards(stat_away)
-            state.update(total_cards)
+            referee_states[referee].update(total_cards)
+        league_state.update(total_cards)
+        global_state.update(total_cards)
 
     if not rows:
         return pd.DataFrame(
-            columns=["id_fixture", "referee_avg_cards_prior", "referee_matches_officiated_prior", "referee_has_history"]
+            columns=[
+                "id_fixture",
+                "referee_avg_cards_prior",
+                "referee_severity_index_prior",
+                "referee_matches_officiated_prior",
+                "referee_has_history",
+            ]
         )
 
     return pd.DataFrame(rows)
@@ -162,6 +244,7 @@ def build_cards_frame_from_records(
     lines: tuple[float, ...] = DEFAULT_LINES,
     odds_market: str = ODDS_MARKET,
     default_prior_cards: float = DEFAULT_REFEREE_PRIOR_CARDS,
+    referee_shrinkage_k: float = REFEREE_SHRINKAGE_K,
 ) -> pd.DataFrame:
     """Dataset (feature odds/mean_stats generiche "team/style" + feature
     arbitro dedicate + target reale PER OGNI linea) sulle fixture con quote
@@ -191,19 +274,31 @@ def build_cards_frame_from_records(
     frame["prediction_at"] = pd.to_datetime(frame["prediction_at"], utc=True, errors="coerce")
     frame = frame.dropna(subset=["prediction_at"]).sort_values(by=["prediction_at", "id_fixture"]).reset_index(drop=True)
 
-    referee_frame = build_referee_features_dataset(matches, default_prior_cards=default_prior_cards)
-    referee_columns = ["referee_avg_cards_prior", "referee_matches_officiated_prior", "referee_has_history"]
+    referee_frame = build_referee_features_dataset(
+        matches, default_prior_cards=default_prior_cards, shrinkage_k=referee_shrinkage_k
+    )
+    referee_columns = [
+        "referee_avg_cards_prior",
+        "referee_severity_index_prior",
+        "referee_matches_officiated_prior",
+        "referee_has_history",
+    ]
+    referee_defaults = {
+        "referee_avg_cards_prior": default_prior_cards,
+        "referee_severity_index_prior": 1.0,
+        "referee_matches_officiated_prior": 0,
+        "referee_has_history": 0,
+    }
     if referee_frame.empty:
         for col in referee_columns:
-            frame[col] = default_prior_cards if col == "referee_avg_cards_prior" else 0
+            frame[col] = referee_defaults[col]
         return frame
 
     referee_frame = referee_frame[["id_fixture", *referee_columns]].copy()
     referee_frame["id_fixture"] = referee_frame["id_fixture"].astype(int)
     frame = frame.merge(referee_frame, on="id_fixture", how="left")
-    frame["referee_avg_cards_prior"] = frame["referee_avg_cards_prior"].fillna(default_prior_cards)
-    frame["referee_matches_officiated_prior"] = frame["referee_matches_officiated_prior"].fillna(0)
-    frame["referee_has_history"] = frame["referee_has_history"].fillna(0)
+    for col in referee_columns:
+        frame[col] = frame[col].fillna(referee_defaults[col])
     return frame
 
 
@@ -255,16 +350,32 @@ class CardsBenchmarkReport:
     results: dict[str, CardsLineTrainResult]
 
     def metrics_summary(self) -> dict[str, dict[str, Any]]:
-        return {
-            label: {
+        """Report COMPLETO per linea (2026-09-12, "tutte le metriche
+        possibili"): oltre a `pre_metrics`/`post_metrics` (log loss/Brier/
+        ECE/AUC/reliability, gia' esistenti), aggiunge un report di
+        classificazione completo (accuracy/confusion matrix/precision/
+        recall/F1/ROC/PR/soglia ottimale, via `classification_report.py`)
+        calcolato sugli STESSI array OOF gia' prodotti dalla calibrazione -
+        nessun nuovo giro di walk-forward."""
+        summary: dict[str, dict[str, Any]] = {}
+        for label, result in self.results.items():
+            calibration = result.calibration
+            classification_pre = compute_full_classification_report(
+                y_true=calibration.pre_y_true, probabilities=calibration.pre_probabilities
+            )
+            classification_post = compute_full_classification_report(
+                y_true=calibration.post_y_true, probabilities=calibration.post_probabilities
+            )
+            summary[label] = {
                 "line": result.line,
                 "sample_size": result.sample_size,
-                "pre_metrics": result.calibration.pre_metrics,
-                "post_metrics": result.calibration.post_metrics,
-                "calibration_method": result.calibration.method,
+                "pre_metrics": calibration.pre_metrics,
+                "post_metrics": calibration.post_metrics,
+                "calibration_method": calibration.method,
+                "classification_report_pre": classification_pre,
+                "classification_report_post": classification_post,
             }
-            for label, result in self.results.items()
-        }
+        return summary
 
 
 def train_cards_all_lines(
@@ -386,22 +497,54 @@ def _save_line_model(result: CardsLineTrainResult) -> dict[str, Any]:
     os.makedirs(os.path.dirname(model_path), exist_ok=True)
     joblib.dump(result.calibration.calibrator, model_path)
 
+    calibration = result.calibration
+    classification_pre = compute_full_classification_report(
+        y_true=calibration.pre_y_true, probabilities=calibration.pre_probabilities
+    )
+    classification_post = compute_full_classification_report(
+        y_true=calibration.post_y_true, probabilities=calibration.post_probabilities
+    )
+    post_weighted_f1 = classification_post.get("weighted", {}).get("f1", 0.0)
+    selection_score = champion_probability_score(metrics=calibration.post_metrics, f1_weighted=post_weighted_f1)
+
     registry = ModelRegistry()
     return registry.register(
         model_path=model_path,
         market=f"{MARKET_NAME}_{line_label}",
         model_name="calibrated_random_forest",
         feature_names=result.feature_names,
+        # Metriche SCALARI (2026-09-12, "tutte le metriche possibili" +
+        # compatibilita' col gate di promozione, OPS-02, che legge
+        # esplicitamente post_log_loss/post_brier/post_ece/post_auc/
+        # sample_size/selection_score - PRIMA mancavano post_ece/post_auc/
+        # sample_size, quindi il gate avrebbe sempre bloccato la promozione
+        # di questi mercati per "sample_size non disponibile").
         metrics={
-            "pre_log_loss": result.calibration.pre_metrics.get("log_loss"),
-            "post_log_loss": result.calibration.post_metrics.get("log_loss"),
-            "pre_brier": result.calibration.pre_metrics.get("brier"),
-            "post_brier": result.calibration.post_metrics.get("brier"),
+            "sample_size": result.sample_size,
+            "pre_log_loss": calibration.pre_metrics.get("log_loss"),
+            "pre_brier": calibration.pre_metrics.get("brier"),
+            "pre_ece": calibration.pre_metrics.get("ece"),
+            "pre_auc": calibration.pre_metrics.get("auc"),
+            "post_log_loss": calibration.post_metrics.get("log_loss"),
+            "post_brier": calibration.post_metrics.get("brier"),
+            "post_ece": calibration.post_metrics.get("ece"),
+            "post_auc": calibration.post_metrics.get("auc"),
+            "post_accuracy": classification_post.get("accuracy"),
+            "post_f1_weighted": post_weighted_f1,
+            "selection_score": selection_score,
         },
+        # Report NESTED completo (confusion matrix/ROC/PR/soglia ottimale +
+        # reliability): troppo voluminoso per il dict `metrics` (letto dal
+        # gate di promozione e da liste/dashboard sintetiche), ma conservato
+        # per intero qui per l'analisi/debug per-linea.
         extra={
             "line": result.line,
-            "calibration_method": result.calibration.method,
+            "calibration_method": calibration.method,
             "sample_size": result.sample_size,
+            "reliability_pre": calibration.pre_metrics.get("reliability"),
+            "reliability_post": calibration.post_metrics.get("reliability"),
+            "classification_report_pre": classification_pre,
+            "classification_report_post": classification_post,
         },
         stage="candidate",
     )

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
@@ -20,6 +20,16 @@ class CalibrationResult:
     pre_metrics: dict[str, Any]
     post_metrics: dict[str, Any]
     calibrator: Any
+    # Array OOF grezzi (y_true/probabilita', pre e post calibrazione) - NUOVI
+    # (2026-09-12), additivi: espongono cio' che questo metodo gia' calcola
+    # internamente, cosi' un chiamante (es. corners/cards_market.py) puo'
+    # costruire un report di classificazione completo (confusion matrix,
+    # ROC/PR, soglia ottimale - vedi `classification_report.py`) SENZA
+    # rifare da capo l'intero walk-forward OOF, gia' costoso di suo.
+    pre_probabilities: np.ndarray = field(default_factory=lambda: np.array([]))
+    pre_y_true: np.ndarray = field(default_factory=lambda: np.array([]))
+    post_probabilities: np.ndarray = field(default_factory=lambda: np.array([]))
+    post_y_true: np.ndarray = field(default_factory=lambda: np.array([]))
 
 
 class CalibrationService:
@@ -148,5 +158,9 @@ class CalibrationService:
             pre_metrics=pre_metrics,
             post_metrics=post_metrics,
             calibrator=calibrator,
+            pre_probabilities=pre_p1,
+            pre_y_true=pre_y,
+            post_probabilities=post_p1,
+            post_y_true=post_y,
         )
 
