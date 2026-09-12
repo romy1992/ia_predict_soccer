@@ -41,11 +41,12 @@ import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.impute import SimpleImputer
+from sklearn.metrics import f1_score
 from sklearn.pipeline import Pipeline
 
 from src.ml.calibration.calibration_service import CalibrationResult, CalibrationService
 from src.ml.evaluation.classification_report import compute_full_classification_report
-from src.ml.evaluation.probability_metrics import champion_probability_score
+from src.ml.evaluation.probability_metrics import champion_probability_score, compute_probability_metrics
 from src.ml.markets.totals.totals_market import _count_monotonicity_violations, enforce_monotonic_over_probabilities
 from src.ml.validation.temporal_split import expanding_window_splits
 from src.repository.match_repository import MatchRepository
@@ -246,6 +247,20 @@ def _line_independent_oof(
     return result
 
 
+def _monotonicity_line_metrics(y_true: np.ndarray, probabilities: np.ndarray) -> dict[str, Any]:
+    """Metriche di qualita' probabilistica standard, PRIMA o DOPO la
+    proiezione monotona - stesso set gia' usato ovunque nel progetto
+    (`compute_probability_metrics`+`selection_score`), cosi' si puo'
+    rispondere direttamente a "la proiezione peggiora le metriche?" invece
+    di limitarsi a contare le violazioni corrette."""
+    metrics = compute_probability_metrics(y_true=y_true, probabilities=probabilities, n_bins=10)
+    predicted = (probabilities >= 0.5).astype(int)
+    f1_weighted = float(f1_score(y_true, predicted, average="weighted", zero_division=0))
+    accuracy = float((y_true == predicted).mean())
+    selection_score = champion_probability_score(metrics=metrics, f1_weighted=f1_weighted)
+    return {**metrics, "accuracy": accuracy, "f1_weighted": f1_weighted, "selection_score": selection_score}
+
+
 def compute_monotonicity_report(
     frame: pd.DataFrame,
     lines: tuple[float, ...],
@@ -255,7 +270,13 @@ def compute_monotonicity_report(
     """Quanto le predizioni indipendenti per linea rispettano l'ordine
     logico Over 8.5 >= Over 9.5 >= Over 10.5 >= Over 11.5, e proiezione che
     lo impone SEMPRE (`enforce_monotonic_over_probabilities`, riusata
-    identica da `totals_market.py` - stesso principio, non duplicata)."""
+    identica da `totals_market.py` - stesso principio, non duplicata).
+    `metrics_by_line` (2026-09-12, "quindi le metriche dopo aver applicato
+    questo fix quali sono?"): confronto PRIMA/DOPO la proiezione per ogni
+    linea - la linea piu' bassa non cambia mai (e' l'ancora della proiezione
+    cumulativa), le altre di solito MIGLIORANO (mai peggiorano di molto):
+    la proiezione corregge violazioni logicamente impossibili, non aggiunge
+    rumore."""
     sorted_lines = tuple(sorted(set(float(line) for line in lines)))
     if len(sorted_lines) < 2:
         return {"status": "not_applicable", "reason": "meno di 2 linee addestrate"}
@@ -272,6 +293,19 @@ def compute_monotonicity_report(
     restricted = {label: values[oof_index] for label, values in probs_by_line.items()}
     violations = _count_monotonicity_violations(restricted, thresholds=sorted_lines, label_fn=_line_label)
     n_pairs = int(oof_index.size * (len(sorted_lines) - 1))
+    projected = enforce_monotonic_over_probabilities(restricted, thresholds=sorted_lines, label_fn=_line_label)
+
+    per_line: dict[str, Any] = {}
+    for line in sorted_lines:
+        label = _line_label(line)
+        y_col = f"y_{label}"
+        if y_col not in frame.columns:
+            continue
+        y_true = frame[y_col].astype(int).to_numpy()[oof_index]
+        per_line[label] = {
+            "before_projection": _monotonicity_line_metrics(y_true, restricted[label]),
+            "after_projection": _monotonicity_line_metrics(y_true, projected[label]),
+        }
 
     return {
         "status": "ok",
@@ -280,6 +314,7 @@ def compute_monotonicity_report(
         "n_rows_evaluated": int(oof_index.size),
         "violations_before_projection": violations,
         "violations_pct": float(violations / n_pairs) if n_pairs else 0.0,
+        "metrics_by_line": per_line,
     }
 
 

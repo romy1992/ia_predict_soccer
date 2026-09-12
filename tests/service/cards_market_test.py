@@ -417,6 +417,26 @@ class TestComputeMonotonicityReport(unittest.TestCase):
         self.assertGreaterEqual(report["violations_pct"], 0.0)
         self.assertLessEqual(report["violations_pct"], 1.0)
 
+        # "quindi le metriche dopo aver applicato questo fix quali sono?"
+        # (2026-09-12): confronto prima/dopo per ogni linea, stesse chiavi
+        # di compute_probability_metrics + accuracy/f1/selection_score.
+        metrics_by_line = report["metrics_by_line"]
+        for line in DEFAULT_LINES:
+            label = f"line_{str(float(line)).replace('.', '_')}"
+            self.assertIn(label, metrics_by_line)
+            for phase in ("before_projection", "after_projection"):
+                entry = metrics_by_line[label][phase]
+                self.assertIn("log_loss", entry)
+                self.assertIn("selection_score", entry)
+                self.assertIn("accuracy", entry)
+        # La linea piu' bassa e' l'ancora della proiezione cumulativa:
+        # non puo' cambiare (nessuna linea sotto con cui fare il minimo).
+        lowest_label = f"line_{str(float(min(DEFAULT_LINES))).replace('.', '_')}"
+        self.assertEqual(
+            metrics_by_line[lowest_label]["before_projection"]["log_loss"],
+            metrics_by_line[lowest_label]["after_projection"]["log_loss"],
+        )
+
     def test_single_line_is_not_applicable(self):
         matches = _synthetic_matches(n=60)
         frame = build_cards_frame_from_records(matches, lines=(4.5,))
