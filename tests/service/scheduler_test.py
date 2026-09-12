@@ -68,7 +68,7 @@ class TestBuildSchedulerJobsSeparation(unittest.TestCase):
     job SEPARATI per data sync (frequenti) e training (indipendente) - mai
     un job unico che incatena import+retrain."""
 
-    def test_registers_exactly_eight_independent_jobs(self):
+    def test_registers_exactly_nine_independent_jobs(self):
         sched = scheduler_module.build_scheduler(cfg=_cfg())
         job_ids = {job.id for job in sched.get_jobs()}
         self.assertEqual(
@@ -82,12 +82,13 @@ class TestBuildSchedulerJobsSeparation(unittest.TestCase):
                 "ml_training",
                 "data_sync_live",
                 "prediction_snapshot_refresh",
+                "official_prediction_capture",
             },
         )
 
     def test_build_scheduler_uses_default_config_when_none_given(self):
         sched = scheduler_module.build_scheduler()
-        self.assertEqual(len(sched.get_jobs()), 8)
+        self.assertEqual(len(sched.get_jobs()), 9)
 
 
 class TestMaxInstancesAndCoalesce(unittest.TestCase):
@@ -97,7 +98,7 @@ class TestMaxInstancesAndCoalesce(unittest.TestCase):
     def test_every_job_has_max_instances_one_and_coalesce_true(self):
         sched = scheduler_module.build_scheduler(cfg=_cfg())
         jobs = sched.get_jobs()
-        self.assertEqual(len(jobs), 8)
+        self.assertEqual(len(jobs), 9)
         for job in jobs:
             self.assertEqual(job.max_instances, 1, f"{job.id} deve avere max_instances=1")
             self.assertTrue(job.coalesce, f"{job.id} deve avere coalesce=True")
@@ -183,12 +184,73 @@ class TestJobTargetsAreCorrectAndIndependent(unittest.TestCase):
         self.assertIs(_target_func(snapshot_job), scheduler_module.run_prediction_snapshot_refresh)
         self.assertIsNot(_target_func(snapshot_job), scheduler_module.run_manual_retrain)
 
+    def test_official_capture_job_targets_correct_function(self):
+        job = scheduler_module.build_scheduler(cfg=_cfg()).get_job("official_prediction_capture")
+        self.assertIs(_target_func(job), scheduler_module.run_official_prediction_capture)
+
     def test_no_single_job_bundles_import_and_retrain(self):
         # Nessuno dei job registrati deve puntare a `run_daily_pipeline`
         # (l'anti-pattern rimosso da OPS-01: import+retrain nello stesso job).
         sched = scheduler_module.build_scheduler(cfg=_cfg())
         targets = {_target_func(job) for job in sched.get_jobs()}
         self.assertNotIn(scheduler_module.run_daily_pipeline, targets)
+
+
+class TestSettlementIncludesLedger(unittest.TestCase):
+    def test_data_settlement_runs_prediction_ledger_settlement(self):
+        history = mock.Mock()
+        match_service = mock.Mock()
+        match_service.run_settlement.return_value = {
+            "final_matches_seen": 2,
+            "updated": 1,
+            "complete": 1,
+            "incomplete": 1,
+        }
+        ledger_service = mock.Mock()
+        ledger_service.settle_pending.return_value = {
+            "ledger_candidates": 1,
+            "ledger_settled_win": 1,
+            "ledger_settled_loss": 0,
+            "ledger_void": 0,
+            "ledger_still_pending": 0,
+            "errors": [],
+        }
+        betslip_service = mock.Mock()
+        betslip_service.settle_pending.return_value = {
+            "betslips_candidates": 1,
+            "betslips_settled": 1,
+            "betslips_pending": 0,
+            "errors": [],
+        }
+        shadow_service = mock.Mock()
+        shadow_service.settle_pending.return_value = {
+            "shadow_candidates": 1,
+            "shadow_settled": 1,
+            "shadow_pending": 0,
+            "errors": [],
+        }
+        with (
+            mock.patch.object(scheduler_module, "JobHistory", return_value=history),
+            mock.patch.object(scheduler_module, "SettlementService", return_value=match_service),
+            mock.patch.object(scheduler_module, "PredictionLedgerService", return_value=ledger_service),
+            mock.patch.object(scheduler_module, "OfficialBetslipService", return_value=betslip_service),
+            mock.patch.object(
+                scheduler_module,
+                "BetslipProposalSnapshotService",
+                return_value=shadow_service,
+            ),
+        ):
+            report = scheduler_module.run_manual_settlement(job_id="job-1")
+
+        ledger_service.settle_pending.assert_called_once_with()
+        betslip_service.settle_pending.assert_called_once_with()
+        shadow_service.settle_pending.assert_called_once_with()
+        self.assertEqual(report["ledger_settled_win"], 1)
+        self.assertEqual(report["betslips_settled"], 1)
+        self.assertIn("ledger_settlement_seconds", report["phase_durations"])
+        self.assertIn("betslip_settlement_seconds", report["phase_durations"])
+        self.assertEqual(report["shadow_betslips"]["shadow_settled"], 1)
+        self.assertIn("shadow_betslip_settlement_seconds", report["phase_durations"])
 
 
 class TestLastCompletedRun(unittest.TestCase):

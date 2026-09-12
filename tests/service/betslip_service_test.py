@@ -1,5 +1,5 @@
 import unittest
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from unittest import mock
 
 from src.oracle.betslip.betslip_builder import DEFAULT_SLIP_PROFILES
@@ -7,22 +7,33 @@ from src.oracle.betslip.betslip_service import BetslipService
 from src.oracle.betslip.pick_pool import CandidatePick, PickPoolResult, PoolPick
 
 
-def _pool_pick(fixture_id, market, outcome, odd, p_model, ev=0.1, run_id="run-1"):
+def _pool_pick(
+    fixture_id,
+    market,
+    outcome,
+    odd,
+    p_model,
+    ev=0.1,
+    run_id="run-1",
+    kickoff_at=None,
+    decision="PLAY",
+):
     candidate = CandidatePick(
         fixture_id=fixture_id,
         market=market,
         outcome=outcome,
-        decision="PLAY",
+        decision=decision,
         odd=odd,
         p_model=p_model,
         ev=ev,
         model_run_id=run_id,
+        kickoff_at=kickoff_at,
     )
     return PoolPick(candidate=candidate, inclusion_reason="passed_policy:x", pool_policy_version="pick_pool_policy_v1")
 
 
 class TestBetslipService(unittest.TestCase):
-    def _service_with_pool(self, picks):
+    def _service_with_pool(self, picks, snapshot_service=None):
         pick_pool_service = mock.Mock()
         pick_pool_service.build_pool_for_day.return_value = PickPoolResult(
             pool_id="deadbeef1234",
@@ -31,12 +42,21 @@ class TestBetslipService(unittest.TestCase):
             picks=picks,
             excluded=[],
         )
-        return BetslipService(pick_pool_service=pick_pool_service), pick_pool_service
+        pick_pool_service.candidates_for_day.return_value = [
+            pick.candidate for pick in picks
+        ]
+        return (
+            BetslipService(
+                pick_pool_service=pick_pool_service,
+                proposal_snapshot_service=snapshot_service,
+            ),
+            pick_pool_service,
+        )
 
     def test_generate_for_day_reuses_pick_pool_service(self):
         picks = [
             _pool_pick(1, "h2h", "Home", 1.8, 0.60),
-            _pool_pick(2, "h2h", "Away", 1.9, 0.58),
+            _pool_pick(2, "goal_no_goal", "Yes", 1.9, 0.58),
         ]
         service, pick_pool_service = self._service_with_pool(picks)
 
@@ -65,6 +85,114 @@ class TestBetslipService(unittest.TestCase):
 
         _, kwargs = pick_pool_service.build_pool_for_day.call_args
         self.assertEqual(kwargs["markets"], ["h2h", "goal_no_goal"])
+
+    def test_snapshot_generation_rejects_past_dates(self):
+        snapshot_service = mock.Mock()
+        service, pick_pool_service = self._service_with_pool([], snapshot_service)
+        now = datetime(2026, 9, 11, 10, 0, tzinfo=timezone.utc)
+
+        with self.assertRaisesRegex(ValueError, "solo in consultazione"):
+            service.generate_and_snapshot_for_day(
+                target_date=date(2026, 9, 10),
+                now=now,
+            )
+
+        pick_pool_service.build_pool_for_day.assert_not_called()
+        snapshot_service.save_generation.assert_not_called()
+
+    def test_snapshot_generation_keeps_only_pre_kickoff_slips(self):
+        snapshot_service = mock.Mock()
+        snapshot_service.save_generation.return_value = {
+            "proposals_seen": 0,
+            "proposals_created": 0,
+            "proposals_unchanged": 0,
+        }
+        now = datetime(2026, 9, 11, 10, 0, tzinfo=timezone.utc)
+        picks = [
+            _pool_pick(
+                1,
+                "h2h",
+                "Home",
+                1.8,
+                0.60,
+                kickoff_at=(now + timedelta(hours=2)).isoformat(),
+            ),
+            _pool_pick(
+                2,
+                "goal_no_goal",
+                "Yes",
+                1.9,
+                0.58,
+                kickoff_at=(now - timedelta(minutes=1)).isoformat(),
+            ),
+        ]
+        service, _ = self._service_with_pool(picks, snapshot_service)
+
+        _, generation, report = service.generate_and_snapshot_for_day(
+            target_date=now.date(),
+            now=now,
+        )
+
+        self.assertEqual(sum(len(slips) for slips in generation.profiles.values()), 0)
+        self.assertGreaterEqual(report["proposals_skipped_started"], 1)
+        snapshot_service.save_generation.assert_called_once()
+
+    def test_exploration_separates_play_borderline_and_no_bet_groups(self):
+        picks = [
+            _pool_pick(1, "h2h", "Home", 2.0, 0.60),
+            _pool_pick(2, "goal_no_goal", "Yes", 2.0, 0.60),
+            _pool_pick(
+                3,
+                "under_over_2_5",
+                "Over 2.5",
+                2.0,
+                0.60,
+                decision="BORDERLINE",
+            ),
+            _pool_pick(
+                4,
+                "corners",
+                "Over 9.5",
+                2.0,
+                0.60,
+                decision="NO BET",
+            ),
+        ]
+        service, _ = self._service_with_pool(picks)
+
+        _, generation = service.generate_exploration_for_day(date(2026, 9, 12))
+
+        self.assertEqual(set(generation.decision_groups), {"PLAY", "BORDERLINE", "NO BET"})
+        for label, profiles in generation.decision_groups.items():
+            rows = [slip for slips in profiles.values() for slip in slips]
+            self.assertTrue(rows, label)
+            self.assertTrue(all(slip.situation == label for slip in rows))
+
+    def test_exploration_caps_total_and_keeps_single_family_fallback(self):
+        picks = [
+            _pool_pick(
+                fixture_id=index,
+                market="under_over_3_5",
+                outcome="Under 3.5",
+                odd=1.8,
+                p_model=0.60,
+            )
+            for index in range(1, 15)
+        ]
+        service, _ = self._service_with_pool(picks)
+
+        _, generation = service.generate_exploration_for_day(date(2026, 9, 12))
+
+        total = sum(
+            len(slips)
+            for profiles in generation.decision_groups.values()
+            for slips in profiles.values()
+        )
+        self.assertGreaterEqual(total, 10)
+        self.assertLessEqual(total, 18)
+        self.assertTrue(
+            any("limited_market_diversification" in item for item in generation.warnings)
+        )
 
 
 if __name__ == "__main__":

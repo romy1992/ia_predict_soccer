@@ -39,6 +39,7 @@ class PredictionLedgerRepository:
         market: str,
         outcome: str,
         model_run_id: Optional[str],
+        cohort: Optional[str] = None,
     ) -> Optional[PredictionLedger]:
         """Cerca una prediction gia' salvata per la STESSA chiave logica
         (fixture/market/outcome/model_run_id): usato per l'idempotenza di
@@ -53,7 +54,17 @@ class PredictionLedgerRepository:
                 query = query.filter(PredictionLedger.model_run_id.is_(None))
             else:
                 query = query.filter(PredictionLedger.model_run_id == model_run_id)
+            if cohort is not None:
+                query = query.filter(PredictionLedger.cohort == cohort)
             return query.order_by(PredictionLedger.created_at.desc()).first()
+
+    def find_by_capture_key(self, capture_key: str) -> Optional[PredictionLedger]:
+        with SessionLocal() as session:
+            return (
+                session.query(PredictionLedger)
+                .filter(PredictionLedger.capture_key == capture_key)
+                .first()
+            )
 
     def list_for_fixture(self, fixture_id: int, market: Optional[str] = None) -> list[PredictionLedger]:
         with SessionLocal() as session:
@@ -61,6 +72,21 @@ class PredictionLedgerRepository:
             if market:
                 query = query.filter(PredictionLedger.market == market)
             return query.order_by(PredictionLedger.created_at.asc()).all()
+
+    def list_for_fixtures(
+        self,
+        fixture_ids: list[int],
+        cohort: Optional[str] = None,
+    ) -> list[PredictionLedger]:
+        if not fixture_ids:
+            return []
+        with SessionLocal() as session:
+            query = session.query(PredictionLedger).filter(
+                PredictionLedger.fixture_id.in_([int(value) for value in fixture_ids])
+            )
+            if cohort is not None:
+                query = query.filter(PredictionLedger.cohort == cohort)
+            return query.order_by(PredictionLedger.captured_at.asc()).all()
 
     def list_pending_settlement(self, before: Optional[datetime] = None, limit: int = 500) -> list[PredictionLedger]:
         """Prediction NON ancora settled con kickoff gia' passato (rispetto a
@@ -84,6 +110,13 @@ class PredictionLedgerRepository:
         market: Optional[str] = None,
         is_settled: Optional[bool] = None,
         since: Optional[datetime] = None,
+        until: Optional[datetime] = None,
+        cohort: Optional[str] = None,
+        outcome: Optional[str] = None,
+        league: Optional[int] = None,
+        model_name: Optional[str] = None,
+        model_run_id: Optional[str] = None,
+        policy_version: Optional[str] = None,
         limit: int = 200,
     ) -> list[PredictionLedger]:
         """`since` (OPS-03, opzionale, default `None` = comportamento
@@ -98,6 +131,20 @@ class PredictionLedgerRepository:
                 query = query.filter(PredictionLedger.is_settled.is_(bool(is_settled)))
             if since is not None:
                 query = query.filter(PredictionLedger.created_at >= since)
-            return query.order_by(PredictionLedger.created_at.desc()).limit(max(0, limit)).all()
+            if until is not None:
+                query = query.filter(PredictionLedger.created_at <= until)
+            if cohort is not None:
+                query = query.filter(PredictionLedger.cohort == cohort)
+            if outcome is not None:
+                query = query.filter(PredictionLedger.outcome == outcome)
+            if league is not None:
+                query = query.filter(PredictionLedger.league == int(league))
+            if model_name is not None:
+                query = query.filter(PredictionLedger.model_name == model_name)
+            if model_run_id is not None:
+                query = query.filter(PredictionLedger.model_run_id == model_run_id)
+            if policy_version is not None:
+                query = query.filter(PredictionLedger.policy_version == policy_version)
+            return query.order_by(PredictionLedger.captured_at.desc()).limit(max(0, limit)).all()
 
 

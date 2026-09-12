@@ -3,6 +3,7 @@ import unittest
 from src.oracle.betslip.betslip_builder import (
     AGGRESSIVE_PROFILE,
     BALANCED_PROFILE,
+    BetslipDiversificationPolicy,
     DEFAULT_SLIP_PROFILES,
     SAFE_PROFILE,
     SlipProfile,
@@ -10,6 +11,13 @@ from src.oracle.betslip.betslip_builder import (
 )
 from src.oracle.betslip.correlation_engine import CorrelationRuleSet
 from src.oracle.betslip.pick_pool import CandidatePick
+
+
+RELAXED_DIVERSIFICATION = BetslipDiversificationPolicy(
+    version="test_relaxed_diversification",
+    max_candidates_per_family=20,
+    max_overlap_ratio=1.0,
+)
 
 
 def _pick(fixture_id=1, market="h2h", outcome="Home", odd=2.0, p_model=0.6, ev=0.2, decision="PLAY"):
@@ -71,7 +79,7 @@ class TestGenerateBetslipsBasics(unittest.TestCase):
     def test_two_independent_picks_generate_safe_slip(self):
         candidates = [
             _pick(fixture_id=1, market="h2h", outcome="Home", odd=1.8, p_model=0.60),
-            _pick(fixture_id=2, market="h2h", outcome="Away", odd=1.9, p_model=0.58),
+            _pick(fixture_id=2, market="goal_no_goal", outcome="Yes", odd=1.9, p_model=0.58),
         ]
         result = generate_betslips(candidates)
         safe_slips = result.profiles["SAFE"]
@@ -88,8 +96,9 @@ class TestGenerateBetslipsBasics(unittest.TestCase):
 
     def test_low_probability_picks_excluded_from_safe_but_present_in_aggressive(self):
         candidates = [
-            _pick(fixture_id=1, market="h2h", outcome="Home", odd=3.5, p_model=0.30),
-            _pick(fixture_id=2, market="h2h", outcome="Away", odd=3.2, p_model=0.28),
+            _pick(fixture_id=1, market="h2h", outcome="Home", odd=3.5, p_model=0.34),
+            _pick(fixture_id=2, market="h2h", outcome="Away", odd=3.2, p_model=0.32),
+            _pick(fixture_id=3, market="goal_no_goal", outcome="Yes", odd=3.0, p_model=0.31),
         ]
         result = generate_betslips(candidates)
         self.assertEqual(result.profiles["SAFE"], [])  # p_model < 0.55 (soglia SAFE)
@@ -102,6 +111,102 @@ class TestGenerateBetslipsBasics(unittest.TestCase):
         ]
         result = generate_betslips(candidates)
         self.assertEqual(result.profiles["SAFE"], [])  # odd 6.0 > max_leg_odd SAFE (2.50)
+
+    def test_borderline_and_no_bet_never_enter_a_slip(self):
+        candidates = [
+            _pick(fixture_id=1, decision="PLAY"),
+            _pick(fixture_id=2, decision="BORDERLINE"),
+            _pick(fixture_id=3, decision="NO BET"),
+        ]
+        result = generate_betslips(candidates)
+        self.assertEqual(result.pool_considered, 1)
+        self.assertTrue(all(not slips for slips in result.profiles.values()))
+
+    def test_exploration_can_generate_borderline_and_no_bet_without_promoting_them(self):
+        candidates = [
+            _pick(fixture_id=1, market="h2h", decision="PLAY"),
+            _pick(fixture_id=2, market="goal_no_goal", decision="BORDERLINE"),
+            _pick(fixture_id=3, market="under_over_2_5", decision="NO BET"),
+        ]
+        borderline = generate_betslips(
+            candidates,
+            allowed_decisions=frozenset({"PLAY", "BORDERLINE"}),
+        )
+        no_bet = generate_betslips(
+            candidates,
+            allowed_decisions=frozenset({"PLAY", "BORDERLINE", "NO BET"}),
+        )
+
+        self.assertTrue(
+            any(
+                slip.situation == "BORDERLINE"
+                for slips in borderline.profiles.values()
+                for slip in slips
+            )
+        )
+        self.assertTrue(
+            any(
+                slip.situation == "NO BET"
+                for slips in no_bet.profiles.values()
+                for slip in slips
+            )
+        )
+
+    def test_safe_slip_prioritizes_distinct_market_families(self):
+        candidates = [
+            _pick(fixture_id=1, market="under_over_2_5", outcome="Under 2.5"),
+            _pick(fixture_id=2, market="under_over_3_5", outcome="Under 3.5"),
+            _pick(fixture_id=3, market="goal_no_goal", outcome="No"),
+        ]
+        result = generate_betslips(candidates)
+
+        self.assertTrue(result.profiles["SAFE"])
+        first = result.profiles["SAFE"][0]
+        self.assertFalse(
+            all(leg.market.startswith("under_over_") for leg in first.legs)
+        )
+        self.assertTrue(
+            all(
+                slip.diversification_policy_version
+                == "betslip_diversification_v2_soft_fallback"
+                for slip in result.profiles["SAFE"]
+            )
+        )
+
+    def test_single_market_family_uses_soft_fallback_instead_of_zero_slips(self):
+        candidates = [
+            _pick(
+                fixture_id=index,
+                market="under_over_3_5",
+                outcome="Under 3.5",
+                odd=1.8,
+                p_model=0.60,
+            )
+            for index in range(1, 15)
+        ]
+
+        result = generate_betslips(candidates)
+        total = sum(len(slips) for slips in result.profiles.values())
+
+        self.assertGreaterEqual(total, 10)
+        self.assertTrue(
+            any("limited_market_diversification" in item for item in result.warnings)
+        )
+
+    def test_combined_value_metrics_use_adjusted_probability(self):
+        candidates = [
+            _pick(fixture_id=1, market="h2h", odd=1.8, p_model=0.60),
+            _pick(fixture_id=2, market="goal_no_goal", odd=1.5, p_model=0.70),
+        ]
+        slip = generate_betslips(candidates).profiles["SAFE"][0]
+        self.assertAlmostEqual(slip.combined_odd, 2.70)
+        self.assertAlmostEqual(slip.naive_probability, 0.42)
+        self.assertAlmostEqual(slip.adjusted_probability, 0.42)
+        self.assertAlmostEqual(slip.combined_model_void_odd, 1 / 0.42)
+        self.assertAlmostEqual(slip.combined_edge_absolute, 2.70 - (1 / 0.42))
+        self.assertAlmostEqual(slip.combined_expected_roi, 0.42 * 2.70 - 1)
+        self.assertAlmostEqual(slip.combined_expected_roi_percent, (0.42 * 2.70 - 1) * 100)
+        self.assertEqual(slip.situation, "PLAY")
 
 
 class TestCorrelationLimitsPerProfile(unittest.TestCase):
@@ -122,7 +227,7 @@ class TestCorrelationLimitsPerProfile(unittest.TestCase):
                     f"Combinazione EXCLUDE trovata nel profilo {profile_name}",
                 )
 
-    def test_penalty_pair_excluded_from_safe_but_allowed_in_balanced(self):
+    def test_same_fixture_pair_excluded_from_all_profiles_by_default(self):
         # Nested totals same-match: "Over 2.5" + "Over 3.5" -> PENALTY.
         # Probabilita'/quote scelte per superare comunque la soglia leg-level
         # di SAFE, cosi' l'esclusione e' dovuta SOLO a max_penalty_pairs=0.
@@ -135,16 +240,20 @@ class TestCorrelationLimitsPerProfile(unittest.TestCase):
         def _has_pair(slips):
             return any(len(s.legs) == 2 and s.penalty_pairs >= 1 for s in slips)
 
-        self.assertFalse(_has_pair(result.profiles["SAFE"]))  # max_penalty_pairs=0
-        self.assertTrue(_has_pair(result.profiles["BALANCED"]))  # max_penalty_pairs=1
-        self.assertTrue(_has_pair(result.profiles["AGGRESSIVE"]))
+        self.assertFalse(_has_pair(result.profiles["SAFE"]))
+        self.assertFalse(_has_pair(result.profiles["BALANCED"]))
+        self.assertFalse(_has_pair(result.profiles["AGGRESSIVE"]))
 
     def test_penalty_pair_adjusted_probability_uses_min_not_product(self):
         candidates = [
             _pick(fixture_id=1, market="under_over_2_5", outcome="Over 2.5", odd=1.6, p_model=0.60),
             _pick(fixture_id=1, market="under_over_3_5", outcome="Over 3.5", odd=2.2, p_model=0.45),
         ]
-        result = generate_betslips(candidates)
+        result = generate_betslips(
+            candidates,
+            one_pick_per_fixture=False,
+            diversification_policy=RELAXED_DIVERSIFICATION,
+        )
         balanced = [s for s in result.profiles["BALANCED"] if s.n_legs == 2]
         self.assertEqual(len(balanced), 1)
         slip = balanced[0]
@@ -157,8 +266,8 @@ class TestRankingDeterminism(unittest.TestCase):
     def test_slips_sorted_by_ev_desc(self):
         candidates = [
             _pick(fixture_id=1, market="h2h", outcome="Home", odd=1.5, p_model=0.60),
-            _pick(fixture_id=2, market="h2h", outcome="Home", odd=1.5, p_model=0.60),
-            _pick(fixture_id=3, market="h2h", outcome="Home", odd=3.0, p_model=0.60),
+            _pick(fixture_id=2, market="goal_no_goal", outcome="Yes", odd=1.5, p_model=0.60),
+            _pick(fixture_id=3, market="under_over_2_5", outcome="Over 2.5", odd=3.0, p_model=0.60),
         ]
         result = generate_betslips(candidates, max_slips_per_profile=10)
         aggressive = result.profiles["AGGRESSIVE"]
@@ -192,7 +301,7 @@ class TestExplanationAndTraceability(unittest.TestCase):
     def test_explanation_mentions_legs_and_odd(self):
         candidates = [
             _pick(fixture_id=1, market="h2h", outcome="Home", odd=1.8, p_model=0.60),
-            _pick(fixture_id=2, market="h2h", outcome="Away", odd=1.9, p_model=0.58),
+            _pick(fixture_id=2, market="goal_no_goal", outcome="Yes", odd=1.9, p_model=0.58),
         ]
         result = generate_betslips(candidates)
         slip = result.profiles["SAFE"][0]
@@ -211,7 +320,7 @@ class TestExplanationAndTraceability(unittest.TestCase):
     def test_slip_id_stable_regardless_of_leg_order(self):
         legs_a = [
             _pick(fixture_id=1, market="h2h", outcome="Home", odd=1.8, p_model=0.60),
-            _pick(fixture_id=2, market="h2h", outcome="Away", odd=1.9, p_model=0.58),
+            _pick(fixture_id=2, market="goal_no_goal", outcome="Yes", odd=1.9, p_model=0.58),
         ]
         legs_b = list(reversed(legs_a))
         result_a = generate_betslips(legs_a)
@@ -221,7 +330,7 @@ class TestExplanationAndTraceability(unittest.TestCase):
     def test_correlation_ruleset_version_reported(self):
         candidates = [
             _pick(fixture_id=1, market="h2h", outcome="Home", odd=1.8, p_model=0.60),
-            _pick(fixture_id=2, market="h2h", outcome="Away", odd=1.9, p_model=0.58),
+            _pick(fixture_id=2, market="goal_no_goal", outcome="Yes", odd=1.9, p_model=0.58),
         ]
         result = generate_betslips(candidates)
         self.assertEqual(result.correlation_ruleset_version, "correlation_ruleset_v1")
@@ -234,9 +343,18 @@ class TestCustomRuleset(unittest.TestCase):
             _pick(fixture_id=1, market="under_over_1_5", outcome="Over 1.5", odd=1.5, p_model=0.60),
             _pick(fixture_id=1, market="under_over_2_5", outcome="Under 2.5", odd=1.6, p_model=0.55),
         ]
-        default_result = generate_betslips(candidates)
+        default_result = generate_betslips(
+            candidates,
+            one_pick_per_fixture=False,
+            diversification_policy=RELAXED_DIVERSIFICATION,
+        )
         tighter = CorrelationRuleSet(version="correlation_ruleset_test_tight", totals_narrow_band_max_gap=0.0)
-        custom_result = generate_betslips(candidates, ruleset=tighter)
+        custom_result = generate_betslips(
+            candidates,
+            ruleset=tighter,
+            one_pick_per_fixture=False,
+            diversification_policy=RELAXED_DIVERSIFICATION,
+        )
 
         default_two_leg = [s for s in default_result.profiles["BALANCED"] if s.n_legs == 2]
         custom_two_leg = [s for s in custom_result.profiles["BALANCED"] if s.n_legs == 2]

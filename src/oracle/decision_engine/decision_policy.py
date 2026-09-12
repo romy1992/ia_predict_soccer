@@ -50,6 +50,9 @@ from src.oracle.value_engine.value_engine import (
     compute_prob_edge,
 )
 
+WITHOUT_ODD = "SENZA QUOTA"
+NOT_AVAILABLE = "N/D"
+
 
 @dataclass(frozen=True)
 class DecisionThresholds:
@@ -61,13 +64,14 @@ class DecisionThresholds:
 
     play_min_probability: float = 0.62
     play_min_prob_edge: float = 0.0
-    play_min_ev: float = 0.03
+    play_min_ev: float = 0.0
     borderline_min_probability: float = 0.55
     borderline_min_prob_edge: float = 0.0
     borderline_min_ev: float = 0.0
     min_samples: int = 0
     min_odd: Optional[float] = None
     max_odd: Optional[float] = None
+    min_edge_percent: float = 2.0
 
     def __post_init__(self) -> None:
         # Fail-fast su una configurazione palesemente inconsistente (mai
@@ -78,6 +82,8 @@ class DecisionThresholds:
             raise ValueError(f"min_odd ({self.min_odd}) non puo' essere maggiore di max_odd ({self.max_odd})")
         if self.min_samples < 0:
             raise ValueError(f"min_samples non puo' essere negativo: {self.min_samples}")
+        if self.min_edge_percent < 0:
+            raise ValueError(f"min_edge_percent non puo' essere negativo: {self.min_edge_percent}")
 
 
 DEFAULT_THRESHOLDS = DecisionThresholds()
@@ -116,7 +122,7 @@ class DecisionPolicy:
 # specifica per mercato in questo task): la POLICY di default resta
 # equivalente a `DEFAULT_POLICY` (BET-02) per ogni mercato finche' un
 # override non viene esplicitamente configurato dal chiamante.
-DEFAULT_DECISION_POLICY = DecisionPolicy(version="decision_policy_v1")
+DEFAULT_DECISION_POLICY = DecisionPolicy(version="decision_policy_v2_model_break_even")
 
 
 @dataclass
@@ -137,6 +143,36 @@ class Decision:
     decision: str
     reason: str
     policy_version: str
+    model_void_odd: Optional[float] = None
+    market_fair_odd: Optional[float] = None
+    odds_edge_absolute: Optional[float] = None
+    odds_edge_percent: Optional[float] = None
+    expected_roi_percent: Optional[float] = None
+    play_threshold_odd: Optional[float] = None
+    min_edge_percent: float = 0.0
+
+
+def compute_model_void_odd(p_model: Optional[float]) -> Optional[float]:
+    """Quota di pareggio economico del modello, distinta dalla fair odd di mercato."""
+    if p_model is None:
+        return None
+    try:
+        probability = float(p_model)
+    except (TypeError, ValueError):
+        return None
+    if probability <= 0.0 or probability > 1.0:
+        return None
+    return 1.0 / probability
+
+
+def _market_fair_odd(p_market_fair: Optional[float]) -> Optional[float]:
+    if p_market_fair is None:
+        return None
+    try:
+        probability = float(p_market_fair)
+    except (TypeError, ValueError):
+        return None
+    return (1.0 / probability) if 0.0 < probability <= 1.0 else None
 
 
 def evaluate_decision(
@@ -153,42 +189,74 @@ def evaluate_decision(
     riusando `compute_prob_edge`/`compute_expected_value` (BET-02, MAI
     duplicati: la formula resta unica in tutto il progetto)."""
     thresholds = policy.thresholds_for(market=market, outcome=outcome)
-    prob_edge = compute_prob_edge(p_model, p_market_fair)
-    ev = compute_expected_value(p_model, odd)
+    model_void_odd = compute_model_void_odd(p_model)
+    market_fair_odd = _market_fair_odd(p_market_fair)
+    valid_probability = model_void_odd is not None
+    probability_value = float(p_model) if valid_probability else None
+    prob_edge = compute_prob_edge(probability_value, p_market_fair) if valid_probability else None
+    valid_odd = odd is not None and _is_positive_number(odd)
+    ev = compute_expected_value(probability_value, odd) if valid_probability and valid_odd else None
+    odd_value = float(odd) if valid_odd else None
+    play_threshold_odd = (
+        model_void_odd * (1.0 + thresholds.min_edge_percent / 100.0)
+        if model_void_odd is not None
+        else None
+    )
+    odds_edge_absolute = (
+        odd_value - model_void_odd
+        if odd_value is not None and model_void_odd is not None
+        else None
+    )
+    odds_edge_percent = (
+        ((odd_value / model_void_odd) - 1.0) * 100.0
+        if odd_value is not None and model_void_odd is not None
+        else None
+    )
+    expected_roi_percent = ev * 100.0 if ev is not None else None
 
-    if p_model is None:
-        decision, reason = NO_BET, "Probabilita' modello non disponibile"
-    elif odd is None or float(odd) <= 0.0:
-        decision, reason = NO_BET, "Quota non disponibile"
-    elif thresholds.min_odd is not None and float(odd) < thresholds.min_odd:
+    if not valid_probability:
+        decision, reason = NOT_AVAILABLE, "Probabilita' modello non disponibile o non valida"
+    elif not valid_odd:
+        decision, reason = WITHOUT_ODD, "Quota mercato non disponibile"
+    elif odd_value < model_void_odd:
+        decision, reason = NO_BET, "Quota inferiore alla quota void IA"
+    elif thresholds.min_odd is not None and odd_value < thresholds.min_odd:
         decision, reason = NO_BET, f"Quota sotto il minimo consentito ({thresholds.min_odd})"
-    elif thresholds.max_odd is not None and float(odd) > thresholds.max_odd:
+    elif thresholds.max_odd is not None and odd_value > thresholds.max_odd:
         decision, reason = NO_BET, f"Quota sopra il massimo consentito ({thresholds.max_odd})"
     elif samples < thresholds.min_samples:
-        decision, reason = NO_BET, f"Campione insufficiente ({samples} < {thresholds.min_samples})"
+        decision, reason = NO_BET, f"Numero di bookmaker insufficiente ({samples} < {thresholds.min_samples})"
     elif (
-        p_model >= thresholds.play_min_probability
+        odd_value >= play_threshold_odd
+        and
+        probability_value >= thresholds.play_min_probability
         and prob_edge is not None
         and prob_edge >= thresholds.play_min_prob_edge
         and ev is not None
         and ev >= thresholds.play_min_ev
     ):
-        decision, reason = PLAY, "Confidenza alta e EV positivo"
+        decision, reason = PLAY, "Quota sopra la soglia PLAY"
     elif (
-        p_model >= thresholds.borderline_min_probability
+        probability_value >= thresholds.borderline_min_probability
         and prob_edge is not None
         and prob_edge >= thresholds.borderline_min_prob_edge
         and ev is not None
         and ev >= thresholds.borderline_min_ev
     ):
-        decision, reason = BORDERLINE, "Confidenza media o EV ridotto"
+        decision, reason = BORDERLINE, "Quota con valore, ma margine di sicurezza insufficiente"
     else:
-        decision, reason = NO_BET, "Confidenza/EV insufficienti"
+        if probability_value < thresholds.borderline_min_probability:
+            reason = "Probabilita' minima non raggiunta"
+        elif prob_edge is not None and prob_edge < thresholds.borderline_min_prob_edge:
+            reason = "Edge probabilistico minimo non raggiunto"
+        else:
+            reason = "Vincoli della Decision Policy non soddisfatti"
+        decision = NO_BET
 
     return Decision(
         market=market,
         outcome=outcome,
-        p_model=p_model,
+        p_model=probability_value,
         p_market_fair=p_market_fair,
         odd=odd,
         samples=samples,
@@ -197,7 +265,21 @@ def evaluate_decision(
         decision=decision,
         reason=reason,
         policy_version=policy.version,
+        model_void_odd=model_void_odd,
+        market_fair_odd=market_fair_odd,
+        odds_edge_absolute=odds_edge_absolute,
+        odds_edge_percent=odds_edge_percent,
+        expected_roi_percent=expected_roi_percent,
+        play_threshold_odd=play_threshold_odd,
+        min_edge_percent=thresholds.min_edge_percent,
     )
+
+
+def _is_positive_number(value: object) -> bool:
+    try:
+        return float(value) > 0.0
+    except (TypeError, ValueError):
+        return False
 
 
 def evaluate_decision_from_fair_odds_outcome(

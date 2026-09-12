@@ -14,6 +14,9 @@ export function formatDateIt(iso) {
 }
 
 export function formatPercent(value) {
+  if (value === null || value === undefined) {
+    return "--";
+  }
   const num = Number(value);
   if (Number.isNaN(num)) {
     return "--";
@@ -24,6 +27,7 @@ export function formatPercent(value) {
 export function marketLabel(market) {
   const map = {
     h2h: "Vincitore partita",
+    "1x2": "1X2",
     goal_no_goal: "Goal / No Goal",
     dc: "Doppia chance",
     corners: "Corners",
@@ -41,7 +45,7 @@ export function predictionLabel(market, prediction, row) {
     return prediction === 1 ? "Goal" : "No Goal";
   }
   if (market === "dc") {
-    return prediction === 1 ? "1X" : "X2";
+    return prediction === 1 ? "1X" : "Vittoria ospite";
   }
   if (market.startsWith("under_over_")) {
     const threshold = market.replace("under_over_", "").replace("_", ".");
@@ -163,12 +167,38 @@ export function formatEdge(value) {
   return `${sign}${pct.toFixed(1)}%`;
 }
 
+export function formatPercentagePoints(value) {
+  if (value === null || value === undefined) {
+    return "-";
+  }
+  const num = Number(value);
+  if (Number.isNaN(num)) {
+    return "-";
+  }
+  const sign = num > 0 ? "+" : "";
+  return `${sign}${num.toFixed(1)}%`;
+}
+
+export function formatSignedNumber(value, decimals = 2) {
+  if (value === null || value === undefined) {
+    return "-";
+  }
+  const num = Number(value);
+  if (Number.isNaN(num)) {
+    return "-";
+  }
+  return `${num > 0 ? "+" : ""}${num.toFixed(decimals)}`;
+}
+
 export function valueClass(valueLabel) {
   if (valueLabel === "PLAY") {
     return "value-play";
   }
   if (valueLabel === "BORDERLINE") {
     return "value-borderline";
+  }
+  if (valueLabel === "SENZA QUOTA" || valueLabel === "N/D") {
+    return "value-unavailable";
   }
   return "value-no-bet";
 }
@@ -208,7 +238,7 @@ export function filterRowByMarket(row, market) {
     ...row,
     predictions: filteredPredictions,
     decision_cards: decisionCards,
-    best_decision: decisionCards[0] || null,
+    best_decision: decisionCards.find((card) => card.is_market_best) || decisionCards[0] || null,
   };
 }
 

@@ -1,0 +1,20 @@
+{
+  "name": "Soccer ML Platform",
+  "install": "bash .cursor/install.sh",
+  "ports": [
+    { "name": "api", "port": 8000 },
+    { "name": "frontend", "port": 3000 }
+  ],
+  "terminals": [
+    {
+      "name": "api",
+      "command": ".venv/bin/python -m uvicorn src.api.main:app --host 0.0.0.0 --port 8000",
+      "description": "API FastAPI su http://localhost:8000 (docs su /docs). Legge properties/config.env, quindi punta al Postgres dev remoto su Railway."
+    },
+    {
+      "name": "frontend",
+      "command": "npm run dev --prefix frontend",
+      "description": "Dashboard React (Vite) su http://localhost:3000, con VITE_API_BASE_URL di default su http://localhost:8000."
+    }
+  ]
+}

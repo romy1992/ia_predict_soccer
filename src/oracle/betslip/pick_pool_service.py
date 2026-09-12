@@ -26,6 +26,7 @@ def candidate_from_decision_card(
     fixture_id: int,
     kickoff_at: Optional[str],
     card: dict[str, Any],
+    row: Optional[dict[str, Any]] = None,
 ) -> CandidatePick:
     """Adapter: da UNA riga di `decision_cards` (gia' calcolata da
     `DashboardService._build_decision_cards`, BET-01/02/04) a
@@ -47,6 +48,15 @@ def candidate_from_decision_card(
         model_name=card.get("model_name"),
         policy_version=card.get("policy_version"),
         kickoff_at=kickoff_at,
+        competition=(row or {}).get("league"),
+        home_team=(row or {}).get("home"),
+        away_team=(row or {}).get("away"),
+        line=card.get("line"),
+        model_void_odd=card.get("model_void_odd"),
+        market_fair_odd=card.get("market_fair_odd"),
+        odds_edge_absolute=card.get("odds_edge_absolute"),
+        odds_edge_percent=card.get("odds_edge_percent"),
+        expected_roi_percent=card.get("expected_roi_percent"),
     )
 
 
@@ -74,7 +84,12 @@ class PickPoolService:
                 continue
             for card in row.get("decision_cards") or []:
                 candidates.append(
-                    candidate_from_decision_card(fixture_id=fixture_id, kickoff_at=row.get("datetime"), card=card)
+                    candidate_from_decision_card(
+                        fixture_id=fixture_id,
+                        kickoff_at=row.get("datetime"),
+                        card=card,
+                        row=row,
+                    )
                 )
         return candidates
 

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Optional
 
+from sqlalchemy import func
+
 from src.repository.base.repository_db import SessionLocal
 from src.service_ia.model.match import MatchPredictionSnapshot
 
@@ -30,7 +32,11 @@ class MatchPredictionSnapshotRepository:
                 .first()
             )
 
-    def get_latest_bulk(self, fixture_ids: list[int]) -> dict[tuple[int, str], MatchPredictionSnapshot]:
+    def get_latest_bulk(
+        self,
+        fixture_ids: list[int],
+        markets: Optional[list[str]] = None,
+    ) -> dict[tuple[int, str], MatchPredictionSnapshot]:
         """Ultima riga per OGNI (fixture_id, market) presente tra
         `fixture_ids`, in UNA sola query (invece di `get_latest` in loop) -
         usata dal job schedulato di refresh, che considera decine/centinaia
@@ -42,17 +48,29 @@ class MatchPredictionSnapshotRepository:
             return {}
 
         with SessionLocal() as session:
+            ranked_query = session.query(
+                MatchPredictionSnapshot.id_snapshot.label("id_snapshot"),
+                func.row_number()
+                .over(
+                    partition_by=(
+                        MatchPredictionSnapshot.fixture_id,
+                        MatchPredictionSnapshot.market,
+                    ),
+                    order_by=MatchPredictionSnapshot.computed_at.desc(),
+                )
+                .label("row_number"),
+            ).filter(MatchPredictionSnapshot.fixture_id.in_([int(value) for value in fixture_ids]))
+            if markets:
+                ranked_query = ranked_query.filter(MatchPredictionSnapshot.market.in_(markets))
+            ranked = ranked_query.subquery()
             rows = (
                 session.query(MatchPredictionSnapshot)
-                .filter(MatchPredictionSnapshot.fixture_id.in_(fixture_ids))
-                .order_by(MatchPredictionSnapshot.computed_at.asc())
+                .join(ranked, MatchPredictionSnapshot.id_snapshot == ranked.c.id_snapshot)
+                .filter(ranked.c.row_number == 1)
                 .all()
             )
 
-        latest: dict[tuple[int, str], MatchPredictionSnapshot] = {}
-        for row in rows:
-            latest[(row.fixture_id, row.market)] = row
-        return latest
+        return {(row.fixture_id, row.market): row for row in rows}
 
     def list_for_fixture(self, fixture_id: int, market: Optional[str] = None) -> list[MatchPredictionSnapshot]:
         with SessionLocal() as session:

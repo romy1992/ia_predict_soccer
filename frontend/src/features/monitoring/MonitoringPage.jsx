@@ -23,6 +23,9 @@ function SeverityBadge({ severity }) {
  */
 export default function MonitoringPage({
   report,
+  officialPerformance,
+  officialDays,
+  onChangeOfficialDays,
   alerts,
   isLoading,
   error,
@@ -57,6 +60,14 @@ export default function MonitoringPage({
               ))}
             </select>
           </label>
+          <label>
+            Finestra ufficiale
+            <select value={officialDays} onChange={(e) => onChangeOfficialDays(Number(e.target.value))}>
+              <option value={7}>7 giorni</option>
+              <option value={30}>30 giorni</option>
+              <option value={90}>90 giorni</option>
+            </select>
+          </label>
         </div>
 
         {error && <div className="error-box">Errore API: {error}</div>}
@@ -65,6 +76,74 @@ export default function MonitoringPage({
           <p className="muted">
             Generato il {new Date(report.generated_at).toLocaleString("it-IT")} · policy {report.thresholds_version}
           </p>
+        )}
+      </section>
+
+      <section className="panel">
+        <div className="panel-header">
+          <h3>Performance ufficiale / Paper</h3>
+          <span className="value-badge value-play">UFFICIALE/PAPER</span>
+        </div>
+        {!officialPerformance || officialPerformance.sample_size === 0 ? (
+          <div className="empty-state">
+            Nessuna PLAY ufficiale ancora registrata · <strong>DATI INSUFFICIENTI</strong>
+          </div>
+        ) : (
+          <>
+            <p className="muted">
+              Solo PLAY catturate automaticamente prima del kickoff. Edge ed EV sono ex-ante; ROI e profitto
+              sono osservati; CLV confronta la quota presa con la chiusura.
+            </p>
+            <div className="stats-grid">
+              {[
+                ["PLAY", officialPerformance.overall?.plays],
+                ["Vinte", officialPerformance.overall?.wins],
+                ["Perse", officialPerformance.overall?.losses],
+                ["VOID", officialPerformance.overall?.void],
+                ["Pending", officialPerformance.overall?.pending],
+                ["Profitto", formatNumber(officialPerformance.overall?.total_profit, 2)],
+                [
+                  "ROI",
+                  officialPerformance.overall?.roi == null
+                    ? "Dati insufficienti"
+                    : formatPercent(officialPerformance.overall.roi),
+                ],
+                [
+                  "Hit rate",
+                  officialPerformance.overall?.hit_rate == null
+                    ? "Dati insufficienti"
+                    : formatPercent(officialPerformance.overall.hit_rate),
+                ],
+                ["Quota media", formatOdd(officialPerformance.overall?.avg_odd)],
+                ["Edge probabilistico (p.p.)", formatPercent(officialPerformance.overall?.avg_prob_edge)],
+                ["EV teorico", formatPercent(officialPerformance.overall?.avg_ev)],
+                ["Max drawdown", formatNumber(officialPerformance.overall?.max_drawdown, 2)],
+                [
+                  "CLV medio",
+                  officialPerformance.overall?.avg_clv_odd_pct == null
+                    ? "Dati insufficienti"
+                    : formatPercent(officialPerformance.overall.avg_clv_odd_pct),
+                ],
+                [
+                  "Copertura CLV",
+                  officialPerformance.overall?.clv_coverage == null
+                    ? "Dati insufficienti"
+                    : formatPercent(officialPerformance.overall.clv_coverage),
+                ],
+              ].map(([label, value]) => (
+                <article className="stat-card" key={label}>
+                  <span>{label}</span>
+                  <strong>{value ?? 0}</strong>
+                </article>
+              ))}
+            </div>
+            <p className="muted">
+              Gross stake {formatNumber(officialPerformance.overall?.gross_stake, 2)} · Stake VOID restituito{" "}
+              {formatNumber(officialPerformance.overall?.void_stake, 2)} · Active stake{" "}
+              {formatNumber(officialPerformance.overall?.active_stake, 2)} · Campione{" "}
+              {officialPerformance.sample_size}
+            </p>
+          </>
         )}
       </section>
 
@@ -139,9 +218,23 @@ export default function MonitoringPage({
 
       <section className="panel">
         <div className="panel-header">
-          <h3>ROI rolling</h3>
+          <h3>Previsioni correnti</h3>
+          <span className="value-badge">CORRENTI</span>
         </div>
-        <p className="muted">Solo diagnostico: non influenza la Decision Policy ne' il gate di promozione.</p>
+        <p className="muted">
+          I suggerimenti correnti restano nella Dashboard e non vengono sommati alla performance
+          UFFICIALE/PAPER finché il job server-side non registra una PLAY pre-kickoff.
+        </p>
+      </section>
+
+      <section className="panel">
+        <div className="panel-header">
+          <h3>Performance non ufficiale / legacy</h3>
+        </div>
+        <p className="muted">
+          Separata dalla coorte UFFICIALE/PAPER e dal BACKTEST OOS. Solo diagnostico: non influenza la Decision
+          Policy né il gate di promozione.
+        </p>
         <div className="table-wrap">
           <table>
             <thead>
@@ -207,6 +300,16 @@ export default function MonitoringPage({
             </article>
           </div>
         )}
+      </section>
+
+      <section className="panel">
+        <div className="panel-header">
+          <h3>Backtest OOS</h3>
+          <span className="value-badge value-borderline">BACKTEST OOS</span>
+        </div>
+        <div className="empty-state">
+          Report storico separato dalla performance ufficiale; nessun risultato OOS caricato in questa vista.
+        </div>
       </section>
 
       <section className="panel">

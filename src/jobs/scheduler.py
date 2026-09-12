@@ -17,6 +17,11 @@ from src.data.quality_report_service import DataQualityService
 from src.jobs.job_history import JobHistory
 from src.jobs.job_settings import JOB_DEFINITIONS, is_job_enabled, resolve_job_schedule
 from src.ml.serving.prediction_snapshot_service import PredictionSnapshotService
+from src.oracle.betslip.betslip_service import BetslipService
+from src.oracle.betslip.official_betslip_service import OfficialBetslipService
+from src.oracle.betslip.proposal_snapshot_service import BetslipProposalSnapshotService
+from src.oracle.ledger.ledger_service import PredictionLedgerService
+from src.oracle.ledger.official_capture_service import OfficialPredictionCaptureService
 from src.repository.base.repository_db import SessionLocal
 from src.service_ia.config.app_config import AppConfig, load_app_config
 from src.service_ia.model.match import Match
@@ -315,6 +320,28 @@ def run_manual_settlement(
             seasons=seasons,
             leagues=leagues,
         )
+        data_phase_duration = time.perf_counter() - start
+        ledger_start = time.perf_counter()
+        ledger_report = PredictionLedgerService().settle_pending()
+        ledger_duration = time.perf_counter() - ledger_start
+        betslip_start = time.perf_counter()
+        betslip_report = OfficialBetslipService().settle_pending()
+        betslip_duration = time.perf_counter() - betslip_start
+        shadow_start = time.perf_counter()
+        shadow_report = BetslipProposalSnapshotService().settle_pending()
+        shadow_duration = time.perf_counter() - shadow_start
+        report["matches_updated"] = report.get("updated", 0)
+        report["matches_complete"] = report.get("complete", 0)
+        report["matches_incomplete"] = report.get("incomplete", 0)
+        report.update(ledger_report)
+        report.update(betslip_report)
+        report["shadow_betslips"] = shadow_report
+        report["phase_durations"] = {
+            "match_settlement_seconds": data_phase_duration,
+            "ledger_settlement_seconds": ledger_duration,
+            "betslip_settlement_seconds": betslip_duration,
+            "shadow_betslip_settlement_seconds": shadow_duration,
+        }
         report["duration_seconds"] = time.perf_counter() - start
         history.mark_success(job_id=job_id, summary=report)
         report["job_id"] = job_id
@@ -327,6 +354,38 @@ def run_manual_settlement(
                 "duration_seconds": time.perf_counter() - start,
                 "params": params,
             },
+        )
+        raise
+
+
+def run_official_prediction_capture(job_id: Optional[str] = None) -> dict:
+    """Cattura deterministica delle PLAY ufficiali, indipendente dal frontend."""
+    cfg = load_app_config()
+    history = JobHistory()
+    params = {"cutoff_minutes": cfg.official_capture_minutes_before_kickoff}
+    if job_id:
+        history.mark_running(job_id=job_id, params=params)
+    else:
+        started = history.create_job(
+            job_type="official_prediction_capture",
+            status="running",
+            params=params,
+            started_at=JobHistory._now_iso(),
+        )
+        job_id = started["job_id"]
+    start = time.perf_counter()
+    try:
+        report = OfficialPredictionCaptureService().capture(
+            cutoff_minutes=cfg.official_capture_minutes_before_kickoff
+        )
+        report.update(OfficialBetslipService().capture_from_official_ledger())
+        report["duration_seconds"] = time.perf_counter() - start
+        history.mark_success(job_id=job_id, summary=report)
+        return {"job_id": job_id, **report}
+    except Exception as exc:
+        history.mark_failed(
+            job_id=job_id,
+            error={"message": str(exc), "duration_seconds": time.perf_counter() - start, "params": params},
         )
         raise
 
@@ -506,6 +565,33 @@ def run_prediction_snapshot_refresh(
             except Exception as exc:
                 errors.append({"fixture_id": match.id_fixture, "message": str(exc)})
 
+        # Dopo l'aggiornamento delle predizioni salva automaticamente le
+        # proposte per ogni giornata futura. Lo snapshot è idempotente:
+        # nessuna nuova riga se quote/probabilità/combinazioni sono immutate.
+        proposal_report = {
+            "dates_considered": 0,
+            "proposals_seen": 0,
+            "proposals_created": 0,
+            "proposals_unchanged": 0,
+            "errors": [],
+        }
+        for target_date in sorted(
+            {
+                datetime.fromisoformat(match.date_match).date()
+                for match in upcoming_matches
+                if match.date_match
+            }
+        ):
+            proposal_report["dates_considered"] += 1
+            try:
+                _, _, saved = BetslipService().generate_and_snapshot_for_day(target_date)
+                for key in ("proposals_seen", "proposals_created", "proposals_unchanged"):
+                    proposal_report[key] += saved[key]
+            except Exception as exc:
+                proposal_report["errors"].append(
+                    {"reference_date": target_date.isoformat(), "message": str(exc)}
+                )
+
         summary = {
             "days_ahead": days_ahead,
             "recently_finished_days": recently_finished_days,
@@ -513,6 +599,7 @@ def run_prediction_snapshot_refresh(
             "fixtures_upcoming": len(upcoming_matches),
             "fixtures_recently_finished": len(finished_matches_needing_snapshot),
             "predictions_resolved": predictions_resolved,
+            "betslip_proposals": proposal_report,
             "errors": errors,
             "duration_seconds": time.perf_counter() - start,
         }
@@ -800,6 +887,13 @@ def build_scheduler(cfg: Optional[AppConfig] = None) -> BlockingScheduler:
         functools.partial(_run_if_due, "prediction_snapshot_refresh", run_prediction_snapshot_refresh, cfg=cfg),
         trigger=heartbeat,
         job_id="prediction_snapshot_refresh",
+        misfire_grace_time=_MISFIRE_GRACE_SECONDS,
+    )
+    _add_job(
+        scheduler,
+        functools.partial(_run_if_due, "official_prediction_capture", run_official_prediction_capture, cfg=cfg),
+        trigger=heartbeat,
+        job_id="official_prediction_capture",
         misfire_grace_time=_MISFIRE_GRACE_SECONDS,
     )
 

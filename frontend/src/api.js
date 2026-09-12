@@ -37,6 +37,20 @@ export function getDashboardOverview(targetDate) {
   return request(`/dashboard/overview${query ? `?${query}` : ""}`);
 }
 
+export function getDashboardBundle({
+  targetDate,
+  limit = 400,
+  search,
+  forceRefresh = false,
+} = {}) {
+  const params = new URLSearchParams();
+  if (targetDate) params.set("target_date", targetDate);
+  params.set("limit", String(limit));
+  if (search) params.set("search", search);
+  if (forceRefresh) params.set("force_refresh", "true");
+  return request(`/dashboard/bundle?${params.toString()}`);
+}
+
 export function getDashboardAvailableDates() {
   return request("/dashboard/available-dates");
 }
@@ -140,6 +154,38 @@ export function getBetslipGenerate({
     params.set("markets", markets.join(","));
   }
   return request(`/betslip/generate?${params.toString()}`);
+}
+
+export function saveBetslipGeneration({ targetDate } = {}) {
+  const params = new URLSearchParams();
+  if (targetDate) params.set("target_date", targetDate);
+  return request(`/betslip/generate/snapshot?${params.toString()}`, {
+    method: "POST",
+  });
+}
+
+export function getSavedBetslipProposals({ targetDate, latestOnly = true, limit = 200 } = {}) {
+  const params = new URLSearchParams();
+  params.set("reference_date", targetDate);
+  params.set("latest_only", String(latestOnly));
+  params.set("limit", String(limit));
+  return request(`/betslip/proposals?${params.toString()}`);
+}
+
+export function getOfficialBetslips({ targetDate, status, limit = 200 } = {}) {
+  const params = new URLSearchParams();
+  if (targetDate) params.set("reference_date", targetDate);
+  if (status) params.set("status", status);
+  params.set("limit", String(limit));
+  return request(`/betslip/official?${params.toString()}`);
+}
+
+export function getOfficialBetslipStatistics() {
+  return request("/betslip/official/statistics");
+}
+
+export function getBettingStatistics({ days = 30 } = {}) {
+  return request(`/betting/statistics?days=${encodeURIComponent(days)}`);
 }
 
 function normalizeJobBody(asyncRunOrPayload, fallbackPayload = {}) {
@@ -274,6 +320,15 @@ export function getMonitoringAlerts({ market } = {}) {
   }
   const query = params.toString();
   return request(`/monitoring/alerts${query ? `?${query}` : ""}`);
+}
+
+export function getOfficialPerformance({ market, days = 30 } = {}) {
+  const params = new URLSearchParams();
+  params.set("days", String(days));
+  if (market && market !== "all") {
+    params.set("market", market);
+  }
+  return request(`/predictions/official/performance?${params.toString()}`);
 }
 
 export function getJobSettings() {

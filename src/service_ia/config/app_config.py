@@ -123,6 +123,11 @@ class AppConfig:
     # freschezza al minuto per questo scopo (la Dashboard resta comunque
     # protetta dalla cache/finestra oraria API gia' esistenti).
     prediction_snapshot_interval_minutes: int = 30
+    # Cattura automatica delle PLAY ufficiali. Il job gira frequentemente,
+    # ma registra una fixture una sola volta quando entra nella finestra
+    # pre-kickoff configurata.
+    official_capture_interval_minutes: int = 5
+    official_capture_minutes_before_kickoff: int = 60
 
 
 def load_app_config() -> AppConfig:
@@ -148,6 +153,10 @@ def load_app_config() -> AppConfig:
     api_sports_daily_limit = _int_env("API_SPORTS_DAILY_LIMIT", default=7500)
     data_quality_interval_minutes = _int_env("DATA_QUALITY_INTERVAL_MINUTES", default=60)
     prediction_snapshot_interval_minutes = _int_env("PREDICTION_SNAPSHOT_INTERVAL_MINUTES", default=30)
+    official_capture_interval_minutes = _int_env("OFFICIAL_CAPTURE_INTERVAL_MINUTES", default=5)
+    official_capture_minutes_before_kickoff = _int_env(
+        "OFFICIAL_CAPTURE_MINUTES_BEFORE_KICKOFF", default=60
+    )
     database_url = os.environ.get("DATABASE_URL", DEFAULT_DATABASE_URL).strip()
     database_schema = os.environ.get("DATABASE_SCHEMA", DEFAULT_DATABASE_SCHEMA).strip() or DEFAULT_DATABASE_SCHEMA
 
@@ -170,5 +179,7 @@ def load_app_config() -> AppConfig:
         database_schema=database_schema,
         data_quality_interval_minutes=data_quality_interval_minutes,
         prediction_snapshot_interval_minutes=prediction_snapshot_interval_minutes,
+        official_capture_interval_minutes=official_capture_interval_minutes,
+        official_capture_minutes_before_kickoff=official_capture_minutes_before_kickoff,
     )
 
