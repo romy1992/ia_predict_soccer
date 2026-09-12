@@ -16,7 +16,7 @@ from sklearn.feature_selection import RFE, SelectKBest
 from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import f1_score, make_scorer
-from sklearn.model_selection import GridSearchCV, cross_val_score
+from sklearn.model_selection import GridSearchCV, RandomizedSearchCV, cross_val_score
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
@@ -312,26 +312,54 @@ def _select_champion_via_model_search(
     season_series: pd.Series,
     league_series: pd.Series,
     selection_method: str = "kbest",
+    search_strategy: str = "grid",
+    random_search_iter: int = 10,
 ) -> ModelSearchResult:
-    """Grid search su `_model_space` (logistic/random_forest/
+    """Grid (o randomized) search su `_model_space` (logistic/random_forest/
     random_forest_smote) + ensemble (voting/stacking) sui 2 migliori
     candidati + selezione del champion per `selection_score` - ESTRATTO
-    (2026-09-12, comportamento INVARIATO) da `train_market()`, che ora la
-    richiama qui sotto. Nessuna logica cambiata: stesso `_model_space`,
-    stesso `GridSearchCV`, stesso criterio di ranking."""
+    (2026-09-12, comportamento INVARIATO col default `search_strategy="grid"`)
+    da `train_market()`, che ora la richiama qui sotto. Nessuna logica
+    cambiata per i mercati esistenti: stesso `_model_space`, stesso
+    `GridSearchCV`, stesso criterio di ranking.
+
+    `search_strategy="random"` (2026-09-12, "forse e' meglio usare una
+    random search per il momento" - richiesto dall'operatore dopo aver
+    scoperto il costo enorme della grid search completa su Corners/Cards,
+    68 minuti solo per la suite di test su dati sintetici): campiona
+    `random_search_iter` combinazioni invece di valutarle tutte
+    esaustivamente - stessa `_model_space`/stesso `cv_splits`/stesso
+    criterio di ranking, cambia SOLO quante combinazioni vengono provate.
+    `random_state=42` per riproducibilita' (stesso principio gia' seguito
+    ovunque nel progetto)."""
     scorer = make_scorer(f1_score, average="weighted", zero_division=0)
     model_results: dict[str, dict[str, Any]] = {}
     fitted_estimators: dict[str, Any] = {}
 
     for model_name, (pipeline, grid) in _model_space(selection_method=selection_method, feature_count=X.shape[1]).items():
-        search = GridSearchCV(
-            estimator=pipeline,
-            param_grid=grid,
-            scoring=scorer,
-            cv=cv_splits,
-            n_jobs=-1,
-            verbose=0,
-        )
+        if search_strategy == "random":
+            n_candidates = 1
+            for values in grid.values():
+                n_candidates *= len(values)
+            search = RandomizedSearchCV(
+                estimator=pipeline,
+                param_distributions=grid,
+                n_iter=min(random_search_iter, n_candidates),
+                random_state=42,
+                scoring=scorer,
+                cv=cv_splits,
+                n_jobs=-1,
+                verbose=0,
+            )
+        else:
+            search = GridSearchCV(
+                estimator=pipeline,
+                param_grid=grid,
+                scoring=scorer,
+                cv=cv_splits,
+                n_jobs=-1,
+                verbose=0,
+            )
         # backend "threading" (non il default "loky" a processi): evita di
         # nidificare due livelli di parallelismo a PROCESSI separati
         # (GridSearchCV + RandomForestClassifier, entrambi n_jobs=-1), che

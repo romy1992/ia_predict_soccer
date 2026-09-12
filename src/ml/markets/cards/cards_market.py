@@ -511,6 +511,7 @@ def train_cards_line(
     lines_in_frame: tuple[float, ...] = DEFAULT_LINES,
     selection_method: str = "kbest",
     use_line_specific_odds: bool = True,
+    search_strategy: str = "random",
 ) -> CardsLineTrainResult:
     """Addestra + calibra il modello per una singola linea, con validazione
     temporale OOF (mai split random).
@@ -522,7 +523,17 @@ def train_cards_line(
     grid search su logistic/random_forest/random_forest_smote, ensemble
     voting+stacking sui 2 migliori, selezione del champion per
     `selection_score`. Il champion (calibrato) e' poi passato a
-    `CalibrationService.calibrate_estimator`, come prima."""
+    `CalibrationService.calibrate_estimator`, come prima.
+
+    `search_strategy="random"` (default QUI, diverso dal default "grid" di
+    `_select_champion_via_model_search" - 2026-09-12, "forse e' meglio usare
+    una random search per il momento"): la grid search esaustiva e' risultata
+    troppo costosa su Corners/Cards (68 minuti solo per la suite di test su
+    dati sintetici) - random search campiona un sottoinsieme delle
+    combinazioni, stesso identico spazio di ricerca/criterio di selezione,
+    costo molto piu' basso. Non tocca i mercati flagship (h2h/goal_no_goal/
+    under_over_*), che continuano a passare da `train_market()` col default
+    "grid" invariato."""
     label = f"y_{_line_label(line)}"
     if label not in frame.columns:
         raise ValueError(f"Linea non presente nel dataset: {line}")
@@ -546,6 +557,7 @@ def train_cards_line(
         season_series=season_series,
         league_series=league_series,
         selection_method=selection_method,
+        search_strategy=search_strategy,
     )
     calibration = CalibrationService.calibrate_estimator(
         estimator=search_result.champion_estimator, X=X, y=y, cv_splits=cv_splits
@@ -606,6 +618,7 @@ def train_cards_all_lines(
     cv_splits: Optional[list[tuple[list[int], list[int]]]] = None,
     selection_method: str = "kbest",
     use_line_specific_odds: bool = True,
+    search_strategy: str = "random",
 ) -> CardsBenchmarkReport:
     """Addestra+calibra ciascuna linea sullo STESSO walk-forward. Una linea
     con classe unica (dati insufficienti) viene saltata SENZA bloccare le
@@ -629,6 +642,7 @@ def train_cards_all_lines(
                 lines_in_frame=lines,
                 selection_method=selection_method,
                 use_line_specific_odds=use_line_specific_odds,
+                search_strategy=search_strategy,
             )
         except ValueError:
             continue
