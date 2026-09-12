@@ -90,6 +90,30 @@ def _corner_dedicated_features(match: dict[str, Any]) -> dict[str, float]:
     }
 
 
+def _line_specific_odds_features(match: dict[str, Any], odds_market: str, lines: tuple[float, ...]) -> dict[str, Any]:
+    """Feature quote SEPARATE per linea (2026-09-12 - vedi
+    `FilterMarketService._extract_line_specific_odds_features`): a
+    differenza degli Under/Over gol (dove l'ingestion separa gia' le quote
+    per soglia), 'Corners Over Under' mette TUTTE le linee in un unico
+    bucket piatto - qui si estrae, PER OGNI linea configurata, solo le
+    quote di quella linea (nome colonna con suffisso `_{line_label}`,
+    es. `odds_mean_line_8_5`), cosi' il modello di ciascuna linea vede
+    SOLO le quote di mercato pertinenti a se stesso."""
+    odds_list = match.get("odds") or []
+    if not odds_list:
+        return {}
+    market_odds = (odds_list[0] or {}).get(odds_market)
+    if not isinstance(market_odds, dict) or not market_odds:
+        return {}
+
+    features: dict[str, Any] = {}
+    for line in lines:
+        line_features = FilterMarketService._extract_line_specific_odds_features(market_odds, line)
+        for key, value in line_features.items():
+            features[f"{key}_{_line_label(line)}"] = value
+    return features
+
+
 def build_corners_frame_from_records(
     matches: list[dict[str, Any]],
     lines: tuple[float, ...] = DEFAULT_LINES,
@@ -115,6 +139,7 @@ def build_corners_frame_from_records(
         total_corners = int(home_corners) + int(away_corners)
         row["total_corners"] = total_corners
         row.update(_corner_dedicated_features(match))
+        row.update(_line_specific_odds_features(match, odds_market, lines))
         for line in lines:
             row[f"y_{_line_label(line)}"] = int(label_corners_over(total_corners, line))
         rows.append(row)
@@ -129,9 +154,43 @@ def build_corners_frame_from_records(
     return frame
 
 
-def _feature_columns_for(frame: pd.DataFrame, lines: tuple[float, ...]) -> list[str]:
+_ODDS_METRIC_KEYS = ["odds_count", "odds_mean", "odds_std", "odds_min", "odds_max"] + [f"odds_slot_{i}" for i in range(1, 11)]
+
+
+def _line_specific_odds_columns(line: float) -> set[str]:
+    label = _line_label(line)
+    return {f"{key}_{label}" for key in _ODDS_METRIC_KEYS}
+
+
+def _feature_columns_for(
+    frame: pd.DataFrame,
+    lines: tuple[float, ...],
+    active_line: Optional[float] = None,
+    use_line_specific_odds: bool = True,
+) -> list[str]:
+    """Colonne feature per il training di UNA linea (`active_line`).
+
+    Quote (2026-09-12, vedi `_line_specific_odds_features`): con
+    `use_line_specific_odds=True` (default) usa SOLO le quote della linea
+    attiva (`odds_*_line_X_Y`), escludendo sia le quote per-linea delle
+    ALTRE linee sia le vecchie quote "pooled" (mischiano tutte le linee
+    insieme - il problema che ha motivato questa feature). Con `False`
+    (comportamento legacy, usato SOLO per il confronto A/B) torna alle
+    quote pooled originarie."""
     y_columns = {f"y_{_line_label(line)}" for line in lines}
     excluded = set(_META_COLUMNS) | {"total_corners"} | y_columns
+
+    all_line_odds_columns: set[str] = set()
+    for line in lines:
+        all_line_odds_columns |= _line_specific_odds_columns(line)
+
+    if use_line_specific_odds and active_line is not None:
+        active_columns = _line_specific_odds_columns(active_line)
+        excluded |= (all_line_odds_columns - active_columns)
+        excluded |= set(_ODDS_METRIC_KEYS)
+    else:
+        excluded |= all_line_odds_columns
+
     return [col for col in frame.columns if col not in excluded]
 
 
@@ -156,6 +215,7 @@ def train_corners_line(
     cv_splits: list[tuple[list[int], list[int]]],
     lines_in_frame: tuple[float, ...] = DEFAULT_LINES,
     selection_method: str = "kbest",
+    use_line_specific_odds: bool = True,
 ) -> CornersLineTrainResult:
     """Addestra + calibra il modello per una singola linea, con validazione
     temporale OOF (mai split random).
@@ -171,7 +231,9 @@ def train_corners_line(
     if label not in frame.columns:
         raise ValueError(f"Linea non presente nel dataset: {line}")
 
-    feature_columns = _feature_columns_for(frame, lines_in_frame)
+    feature_columns = _feature_columns_for(
+        frame, lines_in_frame, active_line=line, use_line_specific_odds=use_line_specific_odds
+    )
     X = frame[feature_columns]
     y = frame[label].astype(int)
     if y.nunique() < 2:
@@ -246,6 +308,7 @@ def train_corners_all_lines(
     lines: tuple[float, ...] = DEFAULT_LINES,
     cv_splits: Optional[list[tuple[list[int], list[int]]]] = None,
     selection_method: str = "kbest",
+    use_line_specific_odds: bool = True,
 ) -> CornersBenchmarkReport:
     """Addestra+calibra ciascuna linea sullo STESSO walk-forward. Una linea
     con classe unica (dati insufficienti) viene saltata SENZA bloccare le
@@ -263,7 +326,12 @@ def train_corners_all_lines(
     for line in lines:
         try:
             results[_line_label(line)] = train_corners_line(
-                frame=frame, line=line, cv_splits=cv_splits, lines_in_frame=lines, selection_method=selection_method
+                frame=frame,
+                line=line,
+                cv_splits=cv_splits,
+                lines_in_frame=lines,
+                selection_method=selection_method,
+                use_line_specific_odds=use_line_specific_odds,
             )
         except ValueError:
             continue

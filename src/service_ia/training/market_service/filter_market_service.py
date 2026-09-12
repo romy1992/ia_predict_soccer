@@ -141,6 +141,50 @@ class FilterMarketService:
 
         return features
 
+    _ODDS_LINE_PATTERN = re.compile(r"(\d+(?:\.\d+)?)")
+
+    @staticmethod
+    def _extract_line_from_odds_key(key: str) -> Optional[float]:
+        """Estrae il valore numerico di linea da una chiave quote tipo
+        'over 8.5_bet365'/'under 9.5_pinnacle' (formato prodotto da
+        `map_odds()` per Corners/Cards: `f'{alternate_value}_{name_book}'`,
+        dove `alternate_value` e' la stringa RAW dell'esito dal provider,
+        es. 'over 8.5' - la linea compare SEMPRE prima del nome bookmaker,
+        quindi il primo numero decimale trovato e' sempre quello giusto,
+        indipendentemente da eventuali cifre nel nome del bookmaker)."""
+        match = FilterMarketService._ODDS_LINE_PATTERN.search(key)
+        if not match:
+            return None
+        try:
+            return float(match.group(1))
+        except ValueError:
+            return None
+
+    @staticmethod
+    def _extract_line_specific_odds_features(market_odds: dict, line: float, tolerance: float = 0.01) -> dict:
+        """Come `_extract_market_odds_features`, ma filtra PRIMA le chiavi
+        alla sola linea richiesta (2026-09-12, scoperto investigando perche'
+        Corners/Cards (MARKET-05/06, linea configurabile) avessero un AUC
+        vicino al coin-flip): a differenza dei mercati Under/Over gol (dove
+        `map_odds()` separa gia' le quote per soglia in bucket dedicati,
+        `under_over_1_5`/`_2_5`/...), per 'Corners Over Under'/'Cards
+        Over/Under' l'ingestion mette TUTTE le linee (8.5/9.5/10.5/11.5,
+        entrambi i lati Over/Under, tutti i bookmaker) in un UNICO bucket
+        piatto ('corners'/'cards') - la linea resta identificabile SOLO nella
+        chiave (mai estratta prima d'ora per queste feature aggregate, a
+        differenza di quanto gia' fatto per `OddsSnapshot` via
+        `_extract_line_value` in `download_match_service.py`). Il pooling
+        indiscriminato attuale mischia quote di linee radicalmente diverse
+        (es. "quasi certo" per una linea bassa insieme a "quasi impossibile"
+        per una alta) nello stesso odds_mean/std/slot - rumore, non segnale,
+        per il modello di QUALUNQUE singola linea."""
+        filtered = {}
+        for key, value in market_odds.items():
+            extracted_line = FilterMarketService._extract_line_from_odds_key(key)
+            if extracted_line is not None and abs(extracted_line - line) < tolerance:
+                filtered[key] = value
+        return FilterMarketService._extract_market_odds_features(filtered)
+
     @staticmethod
     def _extract_mean_features(match: dict) -> dict:
         mean_home, mean_away = FilterMarketService._resolve_mean_stats(match)

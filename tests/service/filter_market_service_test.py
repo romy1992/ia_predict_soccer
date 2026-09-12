@@ -150,6 +150,77 @@ class TestBuildPredictionFrames(unittest.TestCase):
         self.assertEqual(service.build_prediction_frames_from_match({"odds": []}, markets=[]), {})
 
 
+class TestExtractLineFromOddsKey(unittest.TestCase):
+    """2026-09-12: Corners/Cards ('Corners Over Under'/'Cards Over/Under')
+    mettono TUTTE le linee quotate in un unico bucket piatto (a differenza
+    degli Under/Over gol, gia' separati per soglia dall'ingestion) - qui si
+    estrae la linea dalla chiave (formato reale confermato da
+    `TestBuildPredictionFrames` sopra: 'Over 2.5_bookA'/'Under X.Y_book')
+    per poter poi filtrare le quote pertinenti a UNA sola linea."""
+
+    def test_extracts_line_from_realistic_key_format(self):
+        self.assertEqual(FilterMarketService._extract_line_from_odds_key("Over 8.5_bet365"), 8.5)
+        self.assertEqual(FilterMarketService._extract_line_from_odds_key("Under 9.5_pinnacle"), 9.5)
+        self.assertEqual(FilterMarketService._extract_line_from_odds_key("over 10.5_bookA"), 10.5)
+
+    def test_returns_none_when_no_number_present(self):
+        self.assertIsNone(FilterMarketService._extract_line_from_odds_key("Home_bookA"))
+
+    def test_bookmaker_name_with_digits_does_not_confuse_extraction(self):
+        # La linea precede sempre il nome bookmaker nella chiave prodotta da
+        # `map_odds()` (f'{alternate_value}_{name_book}') - il primo numero
+        # trovato deve essere sempre quello della linea, mai una cifra nel
+        # nome del bookmaker (es. "888sport", "1xBet").
+        self.assertEqual(FilterMarketService._extract_line_from_odds_key("Over 8.5_888sport"), 8.5)
+        self.assertEqual(FilterMarketService._extract_line_from_odds_key("Under 3.5_1xBet"), 3.5)
+
+
+class TestExtractLineSpecificOddsFeatures(unittest.TestCase):
+    def test_pools_only_matching_line_both_sides_all_bookmakers(self):
+        market_odds = {
+            "Over 8.5_bookA": "1.90",
+            "Under 8.5_bookA": "1.95",
+            "Over 8.5_bookB": "1.85",
+            "Under 8.5_bookB": "2.00",
+            # Altre linee, DEVONO essere escluse dal pool per la linea 8.5:
+            "Over 9.5_bookA": "2.50",
+            "Under 9.5_bookA": "1.55",
+            "Over 11.5_bookA": "6.75",
+            "Under 11.5_bookA": "1.06",
+        }
+        features = FilterMarketService._extract_line_specific_odds_features(market_odds, line=8.5)
+
+        self.assertEqual(features["odds_count"], 4.0)
+        self.assertAlmostEqual(features["odds_min"], 1.85)
+        self.assertAlmostEqual(features["odds_max"], 2.00)
+        # Con la vecchia estrazione "pooled" (tutte le linee insieme)
+        # odds_max sarebbe stato 6.75 (la linea 11.5) - qui deve restare
+        # circoscritto alla sola linea 8.5.
+        self.assertLess(features["odds_max"], 6.75)
+
+    def test_no_matching_line_returns_empty_like_no_odds(self):
+        market_odds = {"Over 9.5_bookA": "2.50", "Under 9.5_bookA": "1.55"}
+        features = FilterMarketService._extract_line_specific_odds_features(market_odds, line=8.5)
+        self.assertEqual(features, {})
+
+    def test_different_lines_produce_different_pools_from_same_raw_odds(self):
+        # Stesso identico dizionario grezzo multi-linea: filtrando per 8.5 vs
+        # per 11.5 si devono ottenere pool completamente diversi - e' questo
+        # l'intero punto della funzione (prima, un'unica pool mischiava tutto).
+        market_odds = {
+            "Over 8.5_bookA": "1.30",
+            "Under 8.5_bookA": "3.20",
+            "Over 11.5_bookA": "6.75",
+            "Under 11.5_bookA": "1.06",
+        }
+        low_line = FilterMarketService._extract_line_specific_odds_features(market_odds, line=8.5)
+        high_line = FilterMarketService._extract_line_specific_odds_features(market_odds, line=11.5)
+
+        self.assertAlmostEqual(low_line["odds_mean"], (1.30 + 3.20) / 2)
+        self.assertAlmostEqual(high_line["odds_mean"], (6.75 + 1.06) / 2)
+        self.assertNotAlmostEqual(low_line["odds_mean"], high_line["odds_mean"])
+
+
 if __name__ == "__main__":
     unittest.main()
 

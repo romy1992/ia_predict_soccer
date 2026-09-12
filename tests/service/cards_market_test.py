@@ -13,6 +13,8 @@ from src.ml.markets.cards.cards_market import (
     CardsBenchmarkReport,
     CardsExpert,
     CardsLineTrainResult,
+    _feature_columns_for,
+    _line_specific_odds_features,
     _shrink_toward_baseline,
     build_cards_frame_from_records,
     build_referee_features_dataset,
@@ -51,7 +53,36 @@ def _make_match(
             {"statistics_team_id": 100, "score_ft": 1, "yellow_cards": home_cards_yellow, "red_cards": home_cards_red},
             {"statistics_team_id": 200, "score_ft": 1, "yellow_cards": away_cards_yellow, "red_cards": away_cards_red},
         ],
-        "odds": [{"cards": {"over_bookA": 1.9, "under_bookA": 1.9, "over_bookB": 1.95, "under_bookB": 1.85}}],
+        # Quote REALISTICHE multi-linea (2026-09-12): il provider mette
+        # TUTTE le linee quotate in un unico bucket piatto 'cards' (a
+        # differenza degli Under/Over gol, gia' separati per soglia) - qui
+        # si simula lo stesso formato reale confermato in
+        # filter_market_service_test.py ('Over 2.5_bookA'), con piu' linee
+        # e quote diverse per linea (necessario per esercitare
+        # `_line_specific_odds_features`/`_feature_columns_for`, che PRIMA
+        # avrebbero pooled indiscriminatamente linee diverse insieme).
+        "odds": [
+            {
+                "cards": {
+                    "Over 3.5_bookA": 1.55,
+                    "Under 3.5_bookA": 2.35,
+                    "Over 3.5_bookB": 1.60,
+                    "Under 3.5_bookB": 2.30,
+                    "Over 4.5_bookA": 1.95,
+                    "Under 4.5_bookA": 1.85,
+                    "Over 4.5_bookB": 1.90,
+                    "Under 4.5_bookB": 1.90,
+                    "Over 5.5_bookA": 2.50,
+                    "Under 5.5_bookA": 1.55,
+                    "Over 5.5_bookB": 2.45,
+                    "Under 5.5_bookB": 1.58,
+                    "Over 6.5_bookA": 3.40,
+                    "Under 6.5_bookA": 1.28,
+                    "Over 6.5_bookB": 3.30,
+                    "Under 6.5_bookB": 1.30,
+                }
+            }
+        ],
     }
 
 
@@ -290,6 +321,72 @@ class TestBuildCardsFrameFromRecords(unittest.TestCase):
         frame = build_cards_frame_from_records(matches)
         ordered_dates = pd.to_datetime(frame["prediction_at"], utc=True)
         self.assertTrue((ordered_dates.diff().dropna() >= pd.Timedelta(0)).all())
+
+    def test_line_specific_odds_columns_present_and_differ_per_line(self):
+        # 2026-09-12: le quote 'cards' arrivano mischiate su piu' linee nello
+        # stesso bucket - il frame deve esporre colonne SEPARATE per
+        # ciascuna linea configurata, con valori diversi (non un pool unico
+        # ripetuto identico su tutte le linee).
+        matches = _synthetic_matches(n=40)
+        frame = build_cards_frame_from_records(matches)
+
+        for line in DEFAULT_LINES:
+            label = str(line).replace(".", "_")
+            for key in ("odds_mean", "odds_min", "odds_max"):
+                self.assertIn(f"{key}_line_{label}", frame.columns)
+
+        row = frame.iloc[0]
+        self.assertNotAlmostEqual(row["odds_mean_line_3_5"], row["odds_mean_line_6_5"])
+
+
+class TestLineSpecificOddsFeatures(unittest.TestCase):
+    def test_pools_only_the_requested_line(self):
+        match = {
+            "odds": [
+                {
+                    "cards": {
+                        "Over 3.5_bookA": 1.55,
+                        "Under 3.5_bookA": 2.35,
+                        "Over 6.5_bookA": 3.40,
+                        "Under 6.5_bookA": 1.28,
+                    }
+                }
+            ]
+        }
+        features = _line_specific_odds_features(match, odds_market="cards", lines=(3.5, 6.5))
+
+        self.assertAlmostEqual(features["odds_mean_line_3_5"], (1.55 + 2.35) / 2)
+        self.assertAlmostEqual(features["odds_mean_line_6_5"], (3.40 + 1.28) / 2)
+        self.assertEqual(features["odds_count_line_3_5"], 2.0)
+        self.assertEqual(features["odds_count_line_6_5"], 2.0)
+
+    def test_missing_odds_returns_empty_dict(self):
+        self.assertEqual(_line_specific_odds_features({"odds": []}, odds_market="cards", lines=(3.5,)), {})
+        self.assertEqual(_line_specific_odds_features({}, odds_market="cards", lines=(3.5,)), {})
+
+
+class TestFeatureColumnsForLineScoping(unittest.TestCase):
+    def test_active_line_odds_kept_other_lines_and_pooled_excluded(self):
+        matches = _synthetic_matches(n=40)
+        frame = build_cards_frame_from_records(matches)
+
+        columns = _feature_columns_for(frame, DEFAULT_LINES, active_line=3.5, use_line_specific_odds=True)
+
+        self.assertIn("odds_mean_line_3_5", columns)
+        self.assertNotIn("odds_mean_line_6_5", columns)
+        self.assertNotIn("odds_mean", columns)
+        # Feature arbitro restano sempre incluse, indipendenti dalla linea.
+        self.assertIn("referee_avg_cards_prior", columns)
+
+    def test_legacy_pooled_mode_excludes_all_line_specific_columns(self):
+        matches = _synthetic_matches(n=40)
+        frame = build_cards_frame_from_records(matches)
+
+        columns = _feature_columns_for(frame, DEFAULT_LINES, active_line=3.5, use_line_specific_odds=False)
+
+        self.assertIn("odds_mean", columns)
+        self.assertNotIn("odds_mean_line_3_5", columns)
+        self.assertNotIn("odds_mean_line_6_5", columns)
 
 
 class TestTrainCardsLine(unittest.TestCase):
