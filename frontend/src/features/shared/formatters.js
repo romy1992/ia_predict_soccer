@@ -59,6 +59,36 @@ export function predictionLabel(market, prediction, row) {
   return String(prediction);
 }
 
+/**
+ * Model Diagnostics (2026-09-12): etichette di classe 0/1 per mercato, USATE
+ * SOLO qui invece di hardcodare "Under"/"Over" nel componente React (che si
+ * applicherebbe a torto anche a h2h/goal_no_goal/dc) - stessa idea di
+ * `predictionLabel` sopra, ma per un report AGGREGATO (nessuna riga/`row`
+ * di una singola partita da cui leggere es. il nome della squadra casa).
+ */
+export function marketClassLabels(market) {
+  if (market === "goal_no_goal") {
+    return ["No Goal", "Goal"];
+  }
+  if (market === "dc") {
+    return ["X2", "1X"];
+  }
+  if (market === "h2h") {
+    return ["Non vince casa", "Vince casa"];
+  }
+  if (market === "corners") {
+    return ["Under corners", "Over corners"];
+  }
+  if (market === "cards") {
+    return ["Under cards", "Over cards"];
+  }
+  if (market && market.startsWith("under_over_")) {
+    const threshold = market.replace("under_over_", "").replace("_", ".");
+    return [`Under ${threshold}`, `Over ${threshold}`];
+  }
+  return ["Classe 0", "Classe 1"];
+}
+
 export function phaseLabel(phase) {
   if (phase === "live") {
     return "In diretta";

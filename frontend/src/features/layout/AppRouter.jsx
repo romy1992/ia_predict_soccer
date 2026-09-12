@@ -3,6 +3,7 @@ import DataCenterPage from "../data-center/DataCenterPage";
 import DataQualityPage from "../data-quality/DataQualityPage";
 import BetslipPage from "../betslip/BetslipPage";
 import MlLabPage from "../ml-lab/MlLabPage";
+import ModelDiagnosticsPage from "../model-diagnostics/ModelDiagnosticsPage";
 import MonitoringPage from "../monitoring/MonitoringPage";
 import OraclePage from "../oracle/OraclePage";
 import OracleMatchDetailPage from "../oracle/OracleMatchDetailPage";
@@ -32,6 +33,9 @@ export default function AppRouter({ activePage, props }) {
   }
   if (activePage === "monitoring") {
     return <MonitoringPage {...props.monitoring} />;
+  }
+  if (activePage === "model-diagnostics") {
+    return <ModelDiagnosticsPage {...props.modelDiagnostics} />;
   }
   if (activePage === "settings") {
     return <SettingsPage {...props.settings} />;

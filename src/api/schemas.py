@@ -419,6 +419,33 @@ class ModelRegistryOverviewResponse(BaseModel):
     history: list[dict[str, Any]] = []
 
 
+class MarketDiagnosticsEntry(BaseModel):
+    """Esito diagnostico per UN mercato (2026-09-12) - vedi
+    `src/ml/evaluation/model_diagnostics_service.py::MarketDiagnostics`.
+    `status != "ok"` -> i campi numerici restano `None`/liste vuote (mai un
+    valore inventato): il frontend mostra quel mercato come "non ancora
+    disponibile" invece di un grafico vuoto o un numero fittizio."""
+
+    market: str
+    status: str
+    n_oof: Optional[int] = None
+    champion: Optional[str] = None
+    stage: Optional[str] = None
+    accuracy: Optional[float] = None
+    auc: Optional[float] = None
+    cm: Optional[dict[str, int]] = None
+    class0: Optional[dict[str, float]] = None
+    class1: Optional[dict[str, float]] = None
+    weighted: Optional[dict[str, float]] = None
+    roc_fpr: list[float] = []
+    roc_tpr: list[float] = []
+
+
+class ModelDiagnosticsResponse(BaseModel):
+    generated_at: str
+    markets: list[MarketDiagnosticsEntry]
+
+
 class PromotionEvaluationResponse(BaseModel):
     """OPS-02: verdetto del gate metriche + confronto candidate/production
     per un run, SENZA eseguire alcuna modifica (dry-run) — vedi
