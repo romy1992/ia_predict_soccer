@@ -233,6 +233,21 @@ class TestRunCornersBenchmark(unittest.TestCase):
         self.assertEqual(result.status, "skipped_no_data")
         self.assertEqual(result.rows, 0)
 
+    def test_uses_provided_frame_directly_ignoring_matches(self):
+        # 2026-09-12: `frame=` permette di eseguire il training in un
+        # ambiente senza accesso DB (CSV esportato altrove - vedi
+        # train_corners_cards_from_export.py). Qui verifichiamo che, quando
+        # fornito, il frame venga usato DIRETTAMENTE - `matches` (qui
+        # deliberatamente diverso/vuoto) viene ignorato, non ricostruito.
+        matches = _synthetic_matches(n=260)
+        frame = build_corners_frame_from_records(matches)
+
+        result = run_corners_benchmark(matches=[], frame=frame, save_model=False)
+
+        self.assertEqual(result.status, "benchmarked")
+        self.assertEqual(result.rows, len(frame))
+        self.assertGreater(len(result.lines_trained), 0)
+
 
 class TestRunCornersBenchmarkFromDb(unittest.TestCase):
     def test_empty_db_result_is_skipped_without_raising(self):
