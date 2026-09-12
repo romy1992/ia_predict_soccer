@@ -39,7 +39,6 @@ from typing import Any, Optional
 import joblib
 import numpy as np
 import pandas as pd
-from sklearn.ensemble import RandomForestClassifier
 
 from src.ml.calibration.calibration_service import CalibrationResult, CalibrationService
 from src.ml.evaluation.classification_report import compute_full_classification_report
@@ -48,6 +47,7 @@ from src.ml.validation.temporal_split import expanding_window_splits
 from src.repository.match_repository import MatchRepository
 from src.service_ia.training.market_service.filter_market_service import FilterMarketService
 from src.service_ia.training.model_registry import ModelRegistry
+from src.service_ia.training.train_multi_market import _select_champion_via_model_search
 from src.service_ia.utility.utils import convert_orm_match_to_dict
 
 MARKET_NAME = "corners"
@@ -55,7 +55,6 @@ ODDS_MARKET = "corners"  # colonna Odds.corners esistente, riusata come fonte fe
 DEFAULT_LINES: tuple[float, ...] = (8.5, 9.5, 10.5, 11.5)
 
 _META_COLUMNS = ["id_fixture", "season", "league", "market", "prediction_at"]
-_RF_KWARGS = dict(n_estimators=150, max_depth=10, min_samples_leaf=2, random_state=42, class_weight="balanced", n_jobs=-1)
 
 
 def _line_label(line: float) -> str:
@@ -138,12 +137,17 @@ def _feature_columns_for(frame: pd.DataFrame, lines: tuple[float, ...]) -> list[
 
 @dataclass
 class CornersLineTrainResult:
-    """Esito training+calibrazione per UNA linea specifica."""
+    """Esito ricerca+training+calibrazione per UNA linea specifica."""
 
     line: float
     sample_size: int
     feature_names: list[str]
     calibration: CalibrationResult
+    # NUOVI (2026-09-12, "hai fatto grid search/ensemble/provato piu'
+    # opzioni?"): trasparenza su COSA e' stato provato, non solo il
+    # risultato finale - stesso principio gia' seguito da train_market().
+    champion_name: str
+    model_results: dict[str, Any]
 
 
 def train_corners_line(
@@ -151,9 +155,18 @@ def train_corners_line(
     line: float,
     cv_splits: list[tuple[list[int], list[int]]],
     lines_in_frame: tuple[float, ...] = DEFAULT_LINES,
+    selection_method: str = "kbest",
 ) -> CornersLineTrainResult:
-    """Addestra + calibra (`CalibrationService`, ML-06) il modello per una
-    singola linea, con validazione temporale OOF (mai split random)."""
+    """Addestra + calibra il modello per una singola linea, con validazione
+    temporale OOF (mai split random).
+
+    **Model search completo (2026-09-12)**: non piu' un singolo
+    `RandomForestClassifier` a iperparametri fissi - riusa
+    `_select_champion_via_model_search` (la STESSA ricerca gia' usata da
+    `train_market()` per h2h/goal_no_goal/under_over_*, mai duplicata):
+    grid search su logistic/random_forest/random_forest_smote, ensemble
+    voting+stacking sui 2 migliori, selezione del champion per
+    `selection_score`. Il champion e' poi calibrato come prima."""
     label = f"y_{_line_label(line)}"
     if label not in frame.columns:
         raise ValueError(f"Linea non presente nel dataset: {line}")
@@ -164,10 +177,30 @@ def train_corners_line(
     if y.nunique() < 2:
         raise ValueError(f"Target a classe unica per la linea {line}: impossibile addestrare")
 
-    estimator = RandomForestClassifier(**_RF_KWARGS)
-    calibration = CalibrationService.calibrate_estimator(estimator=estimator, X=X, y=y, cv_splits=cv_splits)
+    season_series = frame["season"] if "season" in frame.columns else pd.Series([None] * len(frame))
+    league_series = frame["league"] if "league" in frame.columns else pd.Series([None] * len(frame))
 
-    return CornersLineTrainResult(line=float(line), sample_size=int(len(y)), feature_names=feature_columns, calibration=calibration)
+    search_result = _select_champion_via_model_search(
+        X=X,
+        y=y,
+        cv_splits=cv_splits,
+        market=f"{MARKET_NAME}_{_line_label(line)}",
+        season_series=season_series,
+        league_series=league_series,
+        selection_method=selection_method,
+    )
+    calibration = CalibrationService.calibrate_estimator(
+        estimator=search_result.champion_estimator, X=X, y=y, cv_splits=cv_splits
+    )
+
+    return CornersLineTrainResult(
+        line=float(line),
+        sample_size=int(len(y)),
+        feature_names=feature_columns,
+        calibration=calibration,
+        champion_name=search_result.champion_name,
+        model_results=search_result.model_results,
+    )
 
 
 @dataclass
@@ -202,6 +235,8 @@ class CornersBenchmarkReport:
                 "calibration_method": calibration.method,
                 "classification_report_pre": classification_pre,
                 "classification_report_post": classification_post,
+                "champion_family": result.champion_name,
+                "model_search_results": result.model_results,
             }
         return summary
 
@@ -210,6 +245,7 @@ def train_corners_all_lines(
     frame: pd.DataFrame,
     lines: tuple[float, ...] = DEFAULT_LINES,
     cv_splits: Optional[list[tuple[list[int], list[int]]]] = None,
+    selection_method: str = "kbest",
 ) -> CornersBenchmarkReport:
     """Addestra+calibra ciascuna linea sullo STESSO walk-forward. Una linea
     con classe unica (dati insufficienti) viene saltata SENZA bloccare le
@@ -226,7 +262,9 @@ def train_corners_all_lines(
     results: dict[str, CornersLineTrainResult] = {}
     for line in lines:
         try:
-            results[_line_label(line)] = train_corners_line(frame=frame, line=line, cv_splits=cv_splits, lines_in_frame=lines)
+            results[_line_label(line)] = train_corners_line(
+                frame=frame, line=line, cv_splits=cv_splits, lines_in_frame=lines, selection_method=selection_method
+            )
         except ValueError:
             continue
 
@@ -340,7 +378,7 @@ def _save_line_model(result: CornersLineTrainResult) -> dict[str, Any]:
     return registry.register(
         model_path=model_path,
         market=f"{MARKET_NAME}_{line_label}",
-        model_name="calibrated_random_forest",
+        model_name=f"calibrated_{result.champion_name}",
         feature_names=result.feature_names,
         # Metriche SCALARI (2026-09-12, "tutte le metriche possibili" +
         # compatibilita' col gate di promozione, OPS-02, che legge
@@ -374,6 +412,14 @@ def _save_line_model(result: CornersLineTrainResult) -> dict[str, Any]:
             "reliability_post": calibration.post_metrics.get("reliability"),
             "classification_report_pre": classification_pre,
             "classification_report_post": classification_post,
+            # Trasparenza sulla model search (2026-09-12, "hai fatto grid
+            # search/voting/stacking? hai provato piu' opzioni?"): TUTTI i
+            # candidati confrontati (logistic/random_forest/
+            # random_forest_smote/voting/stacking) con i loro selection_score,
+            # non solo il vincitore - permette di rivedere il confronto senza
+            # dover rilanciare la ricerca.
+            "champion_family": result.champion_name,
+            "model_search_results": result.model_results,
         },
         stage="candidate",
     )
