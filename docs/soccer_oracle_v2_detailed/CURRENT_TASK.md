@@ -1,36 +1,8 @@
 # CURRENT TASK
 
-## Task correttivo: quota void IA e decisioni per partita (2026-09-10)
-
-Intervento incrementale sul percorso betting ufficiale già completato. La
-**quota void IA** è ora formalizzata come quota di pareggio economico del
-modello (`model_void_odd = 1 / p_model`) e resta distinta sia dalla quota fair
-di mercato (`market_fair_odd = 1 / p_market_fair`) sia dallo stato di
-settlement `VOID`.
-
-La Decision Policy `decision_policy_v2_model_break_even` applica una soglia
-economica minima versionata del 2%:
-
-- `market_odd < model_void_odd`: `NO BET`;
-- `model_void_odd <= market_odd < play_threshold_odd`: `BORDERLINE`;
-- oltre la soglia: `PLAY` solo se anche gli altri vincoli della policy sono
-  soddisfatti;
-- quota mancante: `SENZA QUOTA`; probabilità non valida: `N/D`.
-
-Il backend restituisce edge assoluto sulla quota, edge percentuale, EV e ROI
-atteso. Il ROI atteso è ex-ante (`ev * 100`), mentre il ROI ufficiale resta il
-consuntivo delle sole PLAY registrate e settled. Dashboard, cattura ufficiale
-e Ledger usano lo stesso motore server-side; i nuovi record conservano anche
-soglia, motivazione e metriche economiche. I record storici non vengono
-modificati.
-
-Il Match Center mostra per ogni partita e mercato pronostico, probabilità,
-quota mercato, quota void IA, edge, ROI atteso, situazione ed eventuale esito
-ufficiale. Per partite concluse con una PLAY ufficiale usa i valori congelati
-nel Ledger; senza record mostra “Non ufficiale”. Sono disponibili filtro
-Situazione e contatori per mercato, con vista mobile dedicata.
-
 ## Task corrente
+**NOTA (2026-09-12): merge di allineamento branch**. `feature/soccer-oracle-v2` era rimasto disallineato da `cursor/official-betting-metrics-03ca` per 26 commit (pipeline "official betting" completa: ledger/CLV/settlement ufficiali, betslip persistiti, statistiche performance, ottimizzazioni dashboard — vedi sezione "Task correttivo" sotto e `IMPLEMENTATION_LOG.md` per il dettaglio) dopo un merge unidirezionale precedente (`feature/soccer-oracle-v2` -> `cursor/...`). Rilevato su segnalazione esplicita dell'operatore ("il branch attuale credo non sia allineato... controlla"), verificato nessun conflitto di head Alembic (catena lineare, 20 migration totali dopo il merge), mergiato con `git merge origin/cursor/official-betting-metrics-03ca` (nessun conflitto), frontend verificato buildabile, suite completa in verifica.
+
 **AGGIORNAMENTO 2026-09-12 (6): random search al posto della grid search esaustiva per Corners/Cards, "per il momento"**. Dopo aver mostrato le metriche prima/dopo la proiezione monotona, l'operatore ha chiesto di procedere col training reale completo ma ha suggerito: "forse e' meglio usare una random search per il momento" - risposta diretta al problema di costo gia' documentato (68 minuti solo per la suite di test su dati sintetici, causato dalla grid search esaustiva introdotta al punto (3)).
 
 `_select_champion_via_model_search` (`train_multi_market.py`, condivisa con h2h/goal_no_goal/under_over_*) estesa con `search_strategy: str = "grid"` (default INVARIATO, zero impatto sui mercati flagship che continuano a passare da `train_market()` senza specificarlo) + `random_search_iter: int = 10`: con `search_strategy="random"` usa `RandomizedSearchCV` invece di `GridSearchCV` (stesso `_model_space`, stesso `cv_splits`, stesso criterio di ranking - cambia SOLO quante combinazioni vengono valutate, `random_state=42` per riproducibilita'). `train_cards_line`/`train_corners_line`/`train_cards_all_lines`/`train_corners_all_lines` ora hanno `search_strategy: str = "random"` come NUOVO default (diverso dal default "grid" della funzione condivisa - la scelta e' scoped a questi due mercati).
@@ -76,6 +48,36 @@ Verificato quanto il problema fosse reale per Corners/Cards (dove NON esisteva a
 Backend: nuova funzione pura `src/ml/evaluation/model_diagnostics_service.py` (riusata sia da un nuovo endpoint `GET /models/diagnostics` sia dallo script CLI `evaluate_champions_detailed.py`, riscritto perche' rotto — leggeva da un CSV di export non piu' nel repo), cache API a 15 minuti (`src/api/model_diagnostics_service.py`). Frontend: `frontend/src/features/model-diagnostics/` (`ModelDiagnosticsPage`/`RocComparisonChart`/`ThresholdCard` + CSS scoped dedicato), wiring menu/router/App completo. 17 nuovi test backend (suite totale invariata rispetto all'ultimo conteggio noto, verificata prima del commit), build frontend verificata, rendering verificato visivamente (screenshot chiaro/scuro con un mock del backend — nessun DB reale raggiungibile da questa sessione cloud). Dettaglio completo in `IMPLEMENTATION_LOG.md`.
 
 **Nota per il deploy**: nessuna migration necessaria (nessuna modifica di schema). Richiede solo il rebuild dei container (`docker compose up -d --build`) dopo il pull, come ogni altra modifica di codice/frontend.
+
+## Task correttivo: quota void IA e decisioni per partita (2026-09-10)
+
+Intervento incrementale sul percorso betting ufficiale già completato. La
+**quota void IA** è ora formalizzata come quota di pareggio economico del
+modello (`model_void_odd = 1 / p_model`) e resta distinta sia dalla quota fair
+di mercato (`market_fair_odd = 1 / p_market_fair`) sia dallo stato di
+settlement `VOID`.
+
+La Decision Policy `decision_policy_v2_model_break_even` applica una soglia
+economica minima versionata del 2%:
+
+- `market_odd < model_void_odd`: `NO BET`;
+- `model_void_odd <= market_odd < play_threshold_odd`: `BORDERLINE`;
+- oltre la soglia: `PLAY` solo se anche gli altri vincoli della policy sono
+  soddisfatti;
+- quota mancante: `SENZA QUOTA`; probabilità non valida: `N/D`.
+
+Il backend restituisce edge assoluto sulla quota, edge percentuale, EV e ROI
+atteso. Il ROI atteso è ex-ante (`ev * 100`), mentre il ROI ufficiale resta il
+consuntivo delle sole PLAY registrate e settled. Dashboard, cattura ufficiale
+e Ledger usano lo stesso motore server-side; i nuovi record conservano anche
+soglia, motivazione e metriche economiche. I record storici non vengono
+modificati.
+
+Il Match Center mostra per ogni partita e mercato pronostico, probabilità,
+quota mercato, quota void IA, edge, ROI atteso, situazione ed eventuale esito
+ufficiale. Per partite concluse con una PLAY ufficiale usa i valori congelati
+nel Ledger; senza record mostra “Non ufficiale”. Sono disponibili filtro
+Situazione e contatori per mercato, con vista mobile dedicata.
 
 **AGGIORNAMENTO 2026-09-11: percorso di lettura Dashboard consolidato**.
 La Dashboard è ora rigorosamente DB-first: una richiesta passiva non chiama
