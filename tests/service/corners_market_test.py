@@ -11,6 +11,8 @@ from src.ml.markets.corners.corners_market import (
     CornersBenchmarkReport,
     CornersExpert,
     CornersLineTrainResult,
+    _feature_columns_for,
+    _line_specific_odds_features,
     build_corners_frame_from_records,
     label_corners_over,
     run_corners_benchmark,
@@ -42,7 +44,36 @@ def _make_match(fixture_id: int, date: datetime, home_rating: float, away_rating
             {"statistics_team_id": 100, "score_ft": 1, "corners": home_corners},
             {"statistics_team_id": 200, "score_ft": 1, "corners": away_corners},
         ],
-        "odds": [{"corners": {"over_bookA": 1.9, "under_bookA": 1.9, "over_bookB": 1.95, "under_bookB": 1.85}}],
+        # Quote REALISTICHE multi-linea (2026-09-12): il provider mette
+        # TUTTE le linee quotate in un unico bucket piatto 'corners' (a
+        # differenza degli Under/Over gol, gia' separati per soglia) - qui
+        # si simula lo stesso formato reale confermato in
+        # filter_market_service_test.py ('Over 2.5_bookA'), con piu' linee
+        # e quote diverse per linea (necessario per esercitare
+        # `_line_specific_odds_features`/`_feature_columns_for`, che PRIMA
+        # avrebbero pooled indiscriminatamente linee diverse insieme).
+        "odds": [
+            {
+                "corners": {
+                    "Over 8.5_bookA": 1.55,
+                    "Under 8.5_bookA": 2.35,
+                    "Over 8.5_bookB": 1.60,
+                    "Under 8.5_bookB": 2.30,
+                    "Over 9.5_bookA": 1.95,
+                    "Under 9.5_bookA": 1.85,
+                    "Over 9.5_bookB": 1.90,
+                    "Under 9.5_bookB": 1.90,
+                    "Over 10.5_bookA": 2.50,
+                    "Under 10.5_bookA": 1.55,
+                    "Over 10.5_bookB": 2.45,
+                    "Under 10.5_bookB": 1.58,
+                    "Over 11.5_bookA": 3.40,
+                    "Under 11.5_bookA": 1.28,
+                    "Over 11.5_bookB": 3.30,
+                    "Under 11.5_bookB": 1.30,
+                }
+            }
+        ],
     }
 
 
@@ -121,6 +152,74 @@ class TestBuildCornersFrameFromRecords(unittest.TestCase):
         frame = build_corners_frame_from_records(matches)
         ordered_dates = pd.to_datetime(frame["prediction_at"], utc=True)
         self.assertTrue((ordered_dates.diff().dropna() >= pd.Timedelta(0)).all())
+
+    def test_line_specific_odds_columns_present_and_differ_per_line(self):
+        # 2026-09-12: le quote 'corners' arrivano mischiate su piu' linee
+        # nello stesso bucket - il frame deve esporre colonne SEPARATE per
+        # ciascuna linea configurata, con valori diversi (non un pool unico
+        # ripetuto identico su tutte le linee).
+        matches = _synthetic_matches(n=40)
+        frame = build_corners_frame_from_records(matches)
+
+        for line in DEFAULT_LINES:
+            label = str(line).replace(".", "_")
+            for key in ("odds_mean", "odds_min", "odds_max"):
+                self.assertIn(f"{key}_line_{label}", frame.columns)
+
+        row = frame.iloc[0]
+        self.assertNotAlmostEqual(row["odds_mean_line_8_5"], row["odds_mean_line_11_5"])
+
+
+class TestLineSpecificOddsFeatures(unittest.TestCase):
+    def test_pools_only_the_requested_line(self):
+        match = {
+            "odds": [
+                {
+                    "corners": {
+                        "Over 8.5_bookA": 1.55,
+                        "Under 8.5_bookA": 2.35,
+                        "Over 11.5_bookA": 3.40,
+                        "Under 11.5_bookA": 1.28,
+                    }
+                }
+            ]
+        }
+        features = _line_specific_odds_features(match, odds_market="corners", lines=(8.5, 11.5))
+
+        self.assertAlmostEqual(features["odds_mean_line_8_5"], (1.55 + 2.35) / 2)
+        self.assertAlmostEqual(features["odds_mean_line_11_5"], (3.40 + 1.28) / 2)
+        self.assertEqual(features["odds_count_line_8_5"], 2.0)
+        self.assertEqual(features["odds_count_line_11_5"], 2.0)
+
+    def test_missing_odds_returns_empty_dict(self):
+        self.assertEqual(_line_specific_odds_features({"odds": []}, odds_market="corners", lines=(8.5,)), {})
+        self.assertEqual(_line_specific_odds_features({}, odds_market="corners", lines=(8.5,)), {})
+
+
+class TestFeatureColumnsForLineScoping(unittest.TestCase):
+    def test_active_line_odds_kept_other_lines_and_pooled_excluded(self):
+        matches = _synthetic_matches(n=40)
+        frame = build_corners_frame_from_records(matches)
+
+        columns = _feature_columns_for(frame, DEFAULT_LINES, active_line=8.5, use_line_specific_odds=True)
+
+        self.assertIn("odds_mean_line_8_5", columns)
+        self.assertNotIn("odds_mean_line_11_5", columns)
+        # Le vecchie quote "pooled" (mischiano tutte le linee) restano
+        # escluse quando si usano quelle per-linea.
+        self.assertNotIn("odds_mean", columns)
+        # Feature generiche (mean_statistics/dedicate) restano sempre incluse.
+        self.assertIn("corner_mean_total_dedicated", columns)
+
+    def test_legacy_pooled_mode_excludes_all_line_specific_columns(self):
+        matches = _synthetic_matches(n=40)
+        frame = build_corners_frame_from_records(matches)
+
+        columns = _feature_columns_for(frame, DEFAULT_LINES, active_line=8.5, use_line_specific_odds=False)
+
+        self.assertIn("odds_mean", columns)
+        self.assertNotIn("odds_mean_line_8_5", columns)
+        self.assertNotIn("odds_mean_line_11_5", columns)
 
 
 class TestTrainCornersLine(unittest.TestCase):
