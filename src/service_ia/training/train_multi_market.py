@@ -290,74 +290,35 @@ def _model_space(selection_method: str, feature_count: int) -> dict[str, tuple[P
     }
 
 
-def train_market(
+@dataclass
+class ModelSearchResult:
+    """Esito della ricerca modello (grid search + ensemble + champion
+    selection) su UN (X, y, cv_splits) - indipendente da come X/y sono stati
+    costruiti, cosi' riusabile anche fuori da `train_market()` (es. per
+    Corners/Cards a linea configurabile, MARKET-05/06, 2026-09-12: stessa
+    identica ricerca, un'istanza per linea, sullo stesso frame condiviso)."""
+
+    champion_name: str
+    champion_estimator: Any
+    model_results: dict[str, dict[str, Any]]
+    fitted_estimators: dict[str, Any]
+
+
+def _select_champion_via_model_search(
+    X: pd.DataFrame,
+    y: pd.Series,
+    cv_splits: list[tuple[list[int], list[int]]],
     market: str,
-    seasons: Optional[list[int]] = None,
+    season_series: pd.Series,
+    league_series: pd.Series,
     selection_method: str = "kbest",
-    save_model: bool = True,
-) -> MarketTrainResult:
-    service = FilterMarketService()
-    df = service.build_dataset(market=market, seasons=seasons)
-
-    if df.empty:
-        return MarketTrainResult(
-            market=market,
-            rows=0,
-            status="skipped_no_data",
-            champion=None,
-            best_cv_f1=None,
-            selected_features=[],
-            details={},
-        )
-
-    if "prediction_at" in df.columns:
-        df["prediction_at"] = pd.to_datetime(df["prediction_at"], utc=True, errors="coerce")
-        df = df.dropna(subset=["prediction_at"]).sort_values(by=["prediction_at", "id_fixture"]).reset_index(drop=True)
-    else:
-        df = df.sort_values(by=["season", "id_fixture"]).reset_index(drop=True)
-
-    y = df["y"].astype(int)
-    season_series = df["season"] if "season" in df.columns else pd.Series([None] * len(df))
-    league_series = df["league"] if "league" in df.columns else pd.Series([None] * len(df))
-    X = df.drop(columns=["y", "market"], errors="ignore")
-    X = X.drop(columns=["id_fixture", "season", "league", "prediction_at"], errors="ignore")
-    feature_names = X.columns.tolist()
-
-    if X.empty:
-        return MarketTrainResult(
-            market=market,
-            rows=len(df),
-            status="skipped_no_feature_columns",
-            champion=None,
-            best_cv_f1=None,
-            selected_features=[],
-            details={"reason": "all feature columns removed"},
-        )
-
-    raw_splits = _build_temporal_cv(df)
-    if raw_splits is None:
-        return MarketTrainResult(
-            market=market,
-            rows=len(df),
-            status="skipped_insufficient_rows_for_temporal_cv",
-            champion=None,
-            best_cv_f1=None,
-            selected_features=[],
-            details={"classes": y.value_counts().to_dict(), "reason": "no temporal splits"},
-        )
-
-    cv_splits = _filter_valid_splits(y=y, splits=raw_splits)
-    if len(cv_splits) < 2:
-        return MarketTrainResult(
-            market=market,
-            rows=len(df),
-            status="skipped_invalid_temporal_folds",
-            champion=None,
-            best_cv_f1=None,
-            selected_features=[],
-            details={"classes": y.value_counts().to_dict(), "reason": "temporal folds with single-class train/valid"},
-        )
-
+) -> ModelSearchResult:
+    """Grid search su `_model_space` (logistic/random_forest/
+    random_forest_smote) + ensemble (voting/stacking) sui 2 migliori
+    candidati + selezione del champion per `selection_score` - ESTRATTO
+    (2026-09-12, comportamento INVARIATO) da `train_market()`, che ora la
+    richiama qui sotto. Nessuna logica cambiata: stesso `_model_space`,
+    stesso `GridSearchCV`, stesso criterio di ranking."""
     scorer = make_scorer(f1_score, average="weighted", zero_division=0)
     model_results: dict[str, dict[str, Any]] = {}
     fitted_estimators: dict[str, Any] = {}
@@ -475,7 +436,95 @@ def train_market(
 
     # 3) Champion selection
     champion_name, champion_payload = max(model_results.items(), key=lambda kv: kv[1].get("selection_score", -1.0))
-    champion = fitted_estimators[champion_name]
+    return ModelSearchResult(
+        champion_name=champion_name,
+        champion_estimator=fitted_estimators[champion_name],
+        model_results=model_results,
+        fitted_estimators=fitted_estimators,
+    )
+
+
+def train_market(
+    market: str,
+    seasons: Optional[list[int]] = None,
+    selection_method: str = "kbest",
+    save_model: bool = True,
+) -> MarketTrainResult:
+    service = FilterMarketService()
+    df = service.build_dataset(market=market, seasons=seasons)
+
+    if df.empty:
+        return MarketTrainResult(
+            market=market,
+            rows=0,
+            status="skipped_no_data",
+            champion=None,
+            best_cv_f1=None,
+            selected_features=[],
+            details={},
+        )
+
+    if "prediction_at" in df.columns:
+        df["prediction_at"] = pd.to_datetime(df["prediction_at"], utc=True, errors="coerce")
+        df = df.dropna(subset=["prediction_at"]).sort_values(by=["prediction_at", "id_fixture"]).reset_index(drop=True)
+    else:
+        df = df.sort_values(by=["season", "id_fixture"]).reset_index(drop=True)
+
+    y = df["y"].astype(int)
+    season_series = df["season"] if "season" in df.columns else pd.Series([None] * len(df))
+    league_series = df["league"] if "league" in df.columns else pd.Series([None] * len(df))
+    X = df.drop(columns=["y", "market"], errors="ignore")
+    X = X.drop(columns=["id_fixture", "season", "league", "prediction_at"], errors="ignore")
+    feature_names = X.columns.tolist()
+
+    if X.empty:
+        return MarketTrainResult(
+            market=market,
+            rows=len(df),
+            status="skipped_no_feature_columns",
+            champion=None,
+            best_cv_f1=None,
+            selected_features=[],
+            details={"reason": "all feature columns removed"},
+        )
+
+    raw_splits = _build_temporal_cv(df)
+    if raw_splits is None:
+        return MarketTrainResult(
+            market=market,
+            rows=len(df),
+            status="skipped_insufficient_rows_for_temporal_cv",
+            champion=None,
+            best_cv_f1=None,
+            selected_features=[],
+            details={"classes": y.value_counts().to_dict(), "reason": "no temporal splits"},
+        )
+
+    cv_splits = _filter_valid_splits(y=y, splits=raw_splits)
+    if len(cv_splits) < 2:
+        return MarketTrainResult(
+            market=market,
+            rows=len(df),
+            status="skipped_invalid_temporal_folds",
+            champion=None,
+            best_cv_f1=None,
+            selected_features=[],
+            details={"classes": y.value_counts().to_dict(), "reason": "temporal folds with single-class train/valid"},
+        )
+
+    search_result = _select_champion_via_model_search(
+        X=X,
+        y=y,
+        cv_splits=cv_splits,
+        market=market,
+        season_series=season_series,
+        league_series=league_series,
+        selection_method=selection_method,
+    )
+    model_results = search_result.model_results
+    champion_name = search_result.champion_name
+    champion_payload = model_results[champion_name]
+    champion = search_result.champion_estimator
     champion_selected_features = _extract_selected_features(estimator=champion, feature_names=feature_names)
     champion_estimator = champion
     calibration_payload: dict[str, Any] = {
