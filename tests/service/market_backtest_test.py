@@ -105,11 +105,11 @@ class TestOutcomeOddsRowsFromRawMarketOdds(unittest.TestCase):
 class TestCanonicalOutcomeForPrediction(unittest.TestCase):
     def test_known_markets(self):
         self.assertEqual(_canonical_outcome_for_prediction("h2h", 1), "Home")
-        self.assertEqual(_canonical_outcome_for_prediction("h2h", 0), "Away")
+        self.assertEqual(_canonical_outcome_for_prediction("h2h", 0), "Not Home")
         self.assertEqual(_canonical_outcome_for_prediction("goal_no_goal", 1), "Yes")
         self.assertEqual(_canonical_outcome_for_prediction("goal_no_goal", 0), "No")
         self.assertEqual(_canonical_outcome_for_prediction("dc", 1), "1X")
-        self.assertEqual(_canonical_outcome_for_prediction("dc", 0), "X2")
+        self.assertEqual(_canonical_outcome_for_prediction("dc", 0), "Away")
         self.assertEqual(_canonical_outcome_for_prediction("under_over_2_5", 1), "Over 2.5")
         self.assertEqual(_canonical_outcome_for_prediction("under_over_2_5", 0), "Under 2.5")
         self.assertEqual(_canonical_outcome_for_prediction("corners", 1), "Over 9.5")

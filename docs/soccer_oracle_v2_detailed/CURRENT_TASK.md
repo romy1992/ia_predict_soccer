@@ -1,5 +1,35 @@
 # CURRENT TASK
 
+## Task correttivo: quota void IA e decisioni per partita (2026-09-10)
+
+Intervento incrementale sul percorso betting ufficiale già completato. La
+**quota void IA** è ora formalizzata come quota di pareggio economico del
+modello (`model_void_odd = 1 / p_model`) e resta distinta sia dalla quota fair
+di mercato (`market_fair_odd = 1 / p_market_fair`) sia dallo stato di
+settlement `VOID`.
+
+La Decision Policy `decision_policy_v2_model_break_even` applica una soglia
+economica minima versionata del 2%:
+
+- `market_odd < model_void_odd`: `NO BET`;
+- `model_void_odd <= market_odd < play_threshold_odd`: `BORDERLINE`;
+- oltre la soglia: `PLAY` solo se anche gli altri vincoli della policy sono
+  soddisfatti;
+- quota mancante: `SENZA QUOTA`; probabilità non valida: `N/D`.
+
+Il backend restituisce edge assoluto sulla quota, edge percentuale, EV e ROI
+atteso. Il ROI atteso è ex-ante (`ev * 100`), mentre il ROI ufficiale resta il
+consuntivo delle sole PLAY registrate e settled. Dashboard, cattura ufficiale
+e Ledger usano lo stesso motore server-side; i nuovi record conservano anche
+soglia, motivazione e metriche economiche. I record storici non vengono
+modificati.
+
+Il Match Center mostra per ogni partita e mercato pronostico, probabilità,
+quota mercato, quota void IA, edge, ROI atteso, situazione ed eventuale esito
+ufficiale. Per partite concluse con una PLAY ufficiale usa i valori congelati
+nel Ledger; senza record mostra “Non ufficiale”. Sono disponibili filtro
+Situazione e contatori per mercato, con vista mobile dedicata.
+
 ## Task corrente
 **AGGIORNAMENTO 2026-09-12 (6): random search al posto della grid search esaustiva per Corners/Cards, "per il momento"**. Dopo aver mostrato le metriche prima/dopo la proiezione monotona, l'operatore ha chiesto di procedere col training reale completo ma ha suggerito: "forse e' meglio usare una random search per il momento" - risposta diretta al problema di costo gia' documentato (68 minuti solo per la suite di test su dati sintetici, causato dalla grid search esaustiva introdotta al punto (3)).
 
@@ -46,6 +76,22 @@ Verificato quanto il problema fosse reale per Corners/Cards (dove NON esisteva a
 Backend: nuova funzione pura `src/ml/evaluation/model_diagnostics_service.py` (riusata sia da un nuovo endpoint `GET /models/diagnostics` sia dallo script CLI `evaluate_champions_detailed.py`, riscritto perche' rotto — leggeva da un CSV di export non piu' nel repo), cache API a 15 minuti (`src/api/model_diagnostics_service.py`). Frontend: `frontend/src/features/model-diagnostics/` (`ModelDiagnosticsPage`/`RocComparisonChart`/`ThresholdCard` + CSS scoped dedicato), wiring menu/router/App completo. 17 nuovi test backend (suite totale invariata rispetto all'ultimo conteggio noto, verificata prima del commit), build frontend verificata, rendering verificato visivamente (screenshot chiaro/scuro con un mock del backend — nessun DB reale raggiungibile da questa sessione cloud). Dettaglio completo in `IMPLEMENTATION_LOG.md`.
 
 **Nota per il deploy**: nessuna migration necessaria (nessuna modifica di schema). Richiede solo il rebuild dei container (`docker compose up -d --build`) dopo il pull, come ogni altra modifica di codice/frontend.
+
+**AGGIORNAMENTO 2026-09-11: percorso di lettura Dashboard consolidato**.
+La Dashboard è ora rigorosamente DB-first: una richiesta passiva non chiama
+API-Sports e non ricostruisce feature o modelli. Il nuovo endpoint
+`GET /dashboard/bundle` produce tabella, riepilogo e sezione live da un solo
+caricamento del giorno. Gli snapshot delle predizioni vengono caricati con
+una sola query bulk per tutte le fixture e tutti i mercati richiesti, quindi
+non esiste più il precedente schema N fixture × M mercati.
+
+La query match usa il giorno esatto, carica soltanto le colonne statistiche
+necessarie e non idrata lo storico `odds_snapshots`. Gli accessi concorrenti
+alla stessa chiave della cache API usano single-flight; il fetch manuale
+multi-lega resta parallelo. Il frontend effettua una sola richiesta bundle,
+impedisce il doppio caricamento iniziale e limita il polling alla pagina
+Dashboard. Una migrazione additiva aggiunge indici alle foreign key lette
+più spesso; non modifica né cancella dati.
 
 **AGGIORNAMENTO 2026-09-10 (3): colorazione badge previsioni per esito reale + fix punteggio finale mancante**. Due richieste separate dell'operatore lo stesso giorno, entrambe gia' mergiate in `main`: (1) i badge previsione si colorano ora di verde/rosso in base all'esito REALE per le partite concluse (riuso diretto della logica di settlement BET-06, nessuna duplicazione); (2) il punteggio finale (`Match.score_home`/`score_away`, nuove colonne) viene ora salvato per OGNI partita conclusa direttamente dall'endpoint leggero `fixtures`, non piu' solo quando l'endpoint dettagliato `fixtures/statistics` restituisce dati (causa delle partite "Finita" senza risultato segnalate dall'operatore) — con un flag `has_full_stats` per evitare che l'assenza di quel dettaglio venga letta come "0" invece che "dato mancante" su corners/cards. Suite completa: 870 passed. Dettaglio completo in `IMPLEMENTATION_LOG.md`.
 
@@ -140,6 +186,79 @@ Il **07/09** e' stata inoltre completata un'estensione mirata su Under/Over 1.5/
 
 ## Regola
 Completare e validare questo task prima di aggiornare il file al task successivo.
+
+## Correzione incrementale schedine ufficiali (2026-09-10)
+
+Il generatore schedine riusa le decision card ufficiali e accetta soltanto
+selezioni `PLAY`. Per impostazione predefinita inserisce una sola selezione
+per fixture; una correlazione same-match non viene stimata arbitrariamente.
+
+Metriche pre-partita:
+
+- quota void modello: `1 / p_model` (diversa dalla quota fair del mercato);
+- edge quota: `market_odd - model_void_odd`;
+- expected ROI: `p_model * market_odd - 1`;
+- metriche combinate calcolate con la probabilità corretta dal Correlation
+  Engine, mai con il solo prodotto ingenuo.
+
+La policy combinata versionata è `slip_decision_policy_v1` (margine 2%).
+Una schedina è `PLAY` solo se tutte le selezioni sono `PLAY` e supera la
+soglia combinata; `BORDERLINE` indica margine combinato insufficiente;
+`NO BET` copre selezioni non idonee, dati mancanti, EV non positivo o
+combinazioni non valutabili.
+
+Le schedine ufficiali sono snapshot server-side immutabili creati dal job
+di cattura prima del kickoff. Lo stato `VOID` indica un esito rimborsato ed
+è distinto dalla quota void modello. Expected ROI è una stima pre-partita;
+ROI realizzato e PnL sono calcolati solo sulle schedine ufficiali concluse.
+
+## Storico proposte e statistiche betting unificate (2026-09-11)
+
+Ogni schedina proposta viene ora salvata come snapshot append-only nella
+tabella `betting_slip_proposal_snapshots`. Lo stesso output del generatore
+costituisce il payload persistito: nessun secondo motore e nessuna formula
+frontend. Una generazione identica è idempotente; una variazione di quota,
+probabilità, combinazione o versione crea una revisione collegata alla
+precedente.
+
+La pagina Schedina Oracle riunisce tre viste:
+
+- Panoramica di pronostici ufficiali, proposte salvate e schedine ufficiali;
+- statistiche giornaliere per singolo mercato;
+- attività giornaliera delle proposte e performance giornaliera delle
+  schedine ufficiali.
+
+La separazione semantica resta vincolante: le proposte misurano l'attività
+del generatore; profitto, ROI realizzato e bankroll includono soltanto
+snapshot ufficiali congelati prima del kickoff. Il job di refresh delle
+predizioni salva automaticamente le proposte per le giornate future; la GET
+di apertura pagina resta read-only, mentre “Genera e salva” usa un POST
+esplicito.
+
+Le date precedenti a oggi sono ora in sola consultazione: la UI legge
+esclusivamente gli snapshot già salvati tramite `GET /betslip/proposals` e
+il backend rifiuta ogni tentativo di generazione retroattiva. Per oggi
+vengono salvate soltanto combinazioni le cui selezioni hanno tutte kickoff
+futuro; fixture iniziate o prive di un kickoff valido vengono escluse.
+
+La policy `betslip_diversification_v2_soft_fallback` stratifica il pool per
+famiglia di mercato (`RESULT`, `TOTALS`, `BTTS`, `CORNERS`, `CARDS`) e
+preferisce combinazioni con famiglie differenti e poca sovrapposizione.
+La diversificazione non azzera più la giornata quando il pool valido espone
+una sola famiglia: in quel caso genera un fallback tracciato dal warning
+`limited_market_diversification`. I profili sono versionati
+`*_v4_soft_diversification`. La vista completa seleziona in modo
+deterministico fino a 18 proposte complessive (obiettivo operativo minimo
+10); se i candidati validi non bastano, espone un warning invece di
+inventare quote o probabilità.
+
+Le proposte sono divise in `PLAY`, `BORDERLINE` e `NO BET`. Tutte vengono
+salvate pre-kickoff e liquidate dal job settlement in portafogli simulati
+separati, con stake unitario versionato `shadow_flat_unit_v1`. Il capitale
+simulato complessivo e i tre capitali per stato non modificano mai ROI,
+profitto o bankroll ufficiali; per evitare sovrappeso delle variazioni
+intra-day, la performance usa soltanto l'ultima revisione pre-kickoff,
+mentre le revisioni precedenti restano disponibili per analisi.
 
 ## Task completati (vedi IMPLEMENTATION_LOG.md)
 SOCCER-00, SOCCER-01, SOCCER-02, DATA-01..08, ML-01..07, FE-01..03, EXP-01..05 (fase ORACLE EXPERTS completata), MARKET-01..06 (fase MARKETS completata), ORACLE-01..04 (fase ENSEMBLE completata), BET-01..06 (fase BETTING completata), MATCH-01..02 (fase MATCH CENTER completata), SLIP-01..03 (fase SCHEDINA completata), OPS-01..03 (fase OPERATIONS completata), LIVE-01..03 (fase LIVE ORACLE completata)

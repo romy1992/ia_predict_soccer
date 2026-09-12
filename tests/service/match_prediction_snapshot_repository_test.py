@@ -85,6 +85,19 @@ class TestMatchPredictionSnapshotRepository(unittest.TestCase):
     def test_get_latest_bulk_empty_input_returns_empty_dict(self):
         self.assertEqual(self.repo.get_latest_bulk(fixture_ids=[]), {})
 
+    def test_get_latest_bulk_honors_market_filter(self):
+        self.repo.save(self._snapshot(fixture_id=1, market="h2h", fingerprint="fp_h2h"))
+        self.repo.save(self._snapshot(fixture_id=1, market="goal_no_goal", fingerprint="fp_gg"))
+        self.repo.save(self._snapshot(fixture_id=2, market="h2h", fingerprint="fp_h2h_2"))
+
+        latest = self.repo.get_latest_bulk(
+            fixture_ids=[1, 2],
+            markets=["goal_no_goal"],
+        )
+
+        self.assertEqual(set(latest), {(1, "goal_no_goal")})
+        self.assertEqual(latest[(1, "goal_no_goal")].feature_fingerprint, "fp_gg")
+
 
 if __name__ == "__main__":
     unittest.main()

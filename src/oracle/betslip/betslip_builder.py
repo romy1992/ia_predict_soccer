@@ -126,9 +126,9 @@ class SlipProfile:
 # coppie EXCLUDE, sempre vietate (vedi docstring di modulo).
 SAFE_PROFILE = SlipProfile(
     name="SAFE",
-    version="slip_profile_safe_v1",
+    version="slip_profile_safe_v4_soft_diversification",
     min_legs=2,
-    max_legs=4,
+    max_legs=2,
     min_leg_probability=0.55,
     max_leg_odd=2.50,
     max_penalty_pairs=0,
@@ -138,9 +138,9 @@ SAFE_PROFILE = SlipProfile(
 
 BALANCED_PROFILE = SlipProfile(
     name="BALANCED",
-    version="slip_profile_balanced_v1",
+    version="slip_profile_balanced_v4_soft_diversification",
     min_legs=2,
-    max_legs=4,
+    max_legs=3,
     min_leg_probability=0.40,
     max_leg_odd=4.50,
     max_penalty_pairs=1,
@@ -150,8 +150,8 @@ BALANCED_PROFILE = SlipProfile(
 
 AGGRESSIVE_PROFILE = SlipProfile(
     name="AGGRESSIVE",
-    version="slip_profile_aggressive_v1",
-    min_legs=2,
+    version="slip_profile_aggressive_v4_soft_diversification",
+    min_legs=3,
     max_legs=4,
     min_leg_probability=0.25,
     max_leg_odd=8.00,
@@ -161,6 +161,29 @@ AGGRESSIVE_PROFILE = SlipProfile(
 )
 
 DEFAULT_SLIP_PROFILES: tuple[SlipProfile, ...] = (SAFE_PROFILE, BALANCED_PROFILE, AGGRESSIVE_PROFILE)
+
+
+@dataclass(frozen=True)
+class SlipDecisionPolicy:
+    version: str = "slip_decision_policy_v1"
+    min_edge_percent: float = 2.0
+
+    def __post_init__(self) -> None:
+        if self.min_edge_percent < 0:
+            raise ValueError("min_edge_percent non puo' essere negativo")
+
+
+DEFAULT_SLIP_DECISION_POLICY = SlipDecisionPolicy()
+
+
+@dataclass(frozen=True)
+class BetslipDiversificationPolicy:
+    version: str = "betslip_diversification_v2_soft_fallback"
+    max_candidates_per_family: int = 4
+    max_overlap_ratio: float = 0.5
+
+
+DEFAULT_DIVERSIFICATION_POLICY = BetslipDiversificationPolicy()
 
 
 # ---------------------------------------------------------------------------
@@ -186,11 +209,25 @@ class GeneratedSlip:
     naive_probability: Optional[float] = None
     adjusted_probability: Optional[float] = None
     combined_ev: Optional[float] = None
+    combined_model_void_odd: Optional[float] = None
+    combined_edge_absolute: Optional[float] = None
+    combined_edge_percent: Optional[float] = None
+    combined_expected_roi: Optional[float] = None
+    combined_expected_roi_percent: Optional[float] = None
+    combined_play_threshold: Optional[float] = None
+    slip_min_edge_percent: float = 0.0
+    decision_policy_version: str = ""
+    situation: str = "NO BET"
+    situation_reason: str = ""
     risk_score: Optional[float] = None
     penalty_pairs: int = 0
     correlation_ruleset_version: str = ""
+    diversification_policy_version: str = ""
     findings: list = field(default_factory=list)  # list[CorrelationFinding], solo non-INDEPENDENT
     explanation: str = ""
+    status: str = "PROPOSED"
+    is_official: bool = False
+    shadow_status: Optional[str] = None
 
 
 @dataclass
@@ -205,6 +242,7 @@ class BetslipGenerationResult:
     correlation_ruleset_version: str
     pool_considered: int
     profiles: dict = field(default_factory=dict)  # name -> list[GeneratedSlip]
+    decision_groups: dict = field(default_factory=dict)  # label -> profile -> slips
     warnings: list = field(default_factory=list)
 
 
@@ -220,16 +258,40 @@ def _ev_sort_key(value: Optional[float]) -> float:
     return float(value) if value is not None else float("-inf")
 
 
-def _is_eligible(candidate: CandidatePick) -> bool:
+def _market_family(market: str) -> str:
+    value = str(market or "").lower()
+    if value in {"h2h", "1x2", "dc", "double_chance"}:
+        return "RESULT"
+    if value.startswith("under_over_"):
+        return "TOTALS"
+    if value in {"goal_no_goal", "btts"}:
+        return "BTTS"
+    if value == "corners":
+        return "CORNERS"
+    if value == "cards":
+        return "CARDS"
+    return value.upper() or "UNKNOWN"
+
+
+def _is_eligible(candidate: CandidatePick, allowed_decisions: frozenset[str]) -> bool:
     """Una pick e' utilizzabile in una schedina solo se ha sia una quota
     valida (per la quota combinata) sia una probabilita' modello (per la
     probabilita' dichiarata) - senza le quali "metodo esplicito" non
     sarebbe rispettabile."""
-    return candidate.odd is not None and float(candidate.odd) > 0.0 and candidate.p_model is not None
+    return (
+        candidate.decision in allowed_decisions
+        and candidate.odd is not None
+        and float(candidate.odd) > 0.0
+        and candidate.p_model is not None
+        and 0.0 < float(candidate.p_model) <= 1.0
+    )
 
 
-def _base_eligible_pool(candidates: list[CandidatePick]) -> list[CandidatePick]:
-    eligible = [c for c in candidates if _is_eligible(c)]
+def _base_eligible_pool(
+    candidates: list[CandidatePick],
+    allowed_decisions: frozenset[str],
+) -> list[CandidatePick]:
+    eligible = [c for c in candidates if _is_eligible(c, allowed_decisions)]
     # Ordinamento deterministico (EV decrescente, poi fixture_id/market):
     # stesso principio di `build_pick_pool`, garantisce che il troncamento
     # successivo scelga sempre le stesse pick per lo stesso input.
@@ -238,7 +300,10 @@ def _base_eligible_pool(candidates: list[CandidatePick]) -> list[CandidatePick]:
 
 
 def _profile_eligible_pool(
-    pool: list[CandidatePick], profile: SlipProfile, max_pool_size: int
+    pool: list[CandidatePick],
+    profile: SlipProfile,
+    max_pool_size: int,
+    diversification_policy: BetslipDiversificationPolicy,
 ) -> tuple[list[CandidatePick], list[str]]:
     warnings: list[str] = []
     filtered = [
@@ -247,19 +312,121 @@ def _profile_eligible_pool(
         if (profile.min_leg_probability is None or float(c.p_model) >= profile.min_leg_probability)
         and (profile.max_leg_odd is None or float(c.odd) <= profile.max_leg_odd)
     ]
-    if len(filtered) > max_pool_size:
-        warnings.append(f"pool_truncated:{profile.name}:{len(filtered)}_to_{max_pool_size}")
-        filtered = filtered[:max_pool_size]
-    return filtered, warnings
+    grouped: dict[str, list[CandidatePick]] = {}
+    for candidate in filtered:
+        grouped.setdefault(_market_family(candidate.market), []).append(candidate)
+    for family in grouped:
+        grouped[family] = grouped[family][: diversification_policy.max_candidates_per_family]
+
+    family_order = sorted(
+        grouped,
+        key=lambda family: (
+            -_ev_sort_key(grouped[family][0].ev),
+            family,
+        ),
+    )
+    diversified: list[CandidatePick] = []
+    offset = 0
+    while len(diversified) < max_pool_size:
+        added = False
+        for family in family_order:
+            if offset < len(grouped[family]):
+                diversified.append(grouped[family][offset])
+                added = True
+                if len(diversified) >= max_pool_size:
+                    break
+        if not added:
+            break
+        offset += 1
+    if len(filtered) > len(diversified):
+        warnings.append(
+            f"pool_truncated:{profile.name}:{len(filtered)}_to_{len(diversified)}"
+        )
+        warnings.append(
+            f"pool_diversified:{profile.name}:{len(filtered)}_to_{len(diversified)}:"
+            f"{diversification_policy.version}"
+        )
+    return diversified, warnings
 
 
-def _slip_id(profile_name: str, legs: list[CandidatePick]) -> str:
+def _slip_id(
+    profile: SlipProfile,
+    legs: list[CandidatePick],
+    policy: SlipDecisionPolicy,
+    diversification_policy: BetslipDiversificationPolicy,
+) -> str:
     """Hash deterministico dalle leg incluse (stesso principio di
     `pick_pool._pool_id`): stesso profilo + stesso insieme di leg -> stesso
     `slip_id` sempre, indipendentemente dall'ordine di iterazione."""
-    payload = sorted((leg.fixture_id, leg.market, leg.outcome) for leg in legs)
-    serialized = json.dumps({"profile": profile_name, "legs": payload}, sort_keys=True)
+    payload = sorted(
+        (
+            leg.fixture_id,
+            leg.market,
+            leg.outcome,
+            leg.model_run_id or "",
+            leg.policy_version or "",
+        )
+        for leg in legs
+    )
+    serialized = json.dumps(
+        {
+            "profile": profile.name,
+            "profile_version": profile.version,
+            "decision_policy": policy.version,
+            "diversification_policy": diversification_policy.version,
+            "legs": payload,
+        },
+        sort_keys=True,
+    )
     return hashlib.sha1(serialized.encode("utf-8")).hexdigest()[:16]
+
+
+def _combined_value_metrics(
+    combined_odd: float,
+    adjusted_probability: Optional[float],
+    policy: SlipDecisionPolicy,
+) -> dict[str, Optional[float]]:
+    if adjusted_probability is None or not 0.0 < adjusted_probability <= 1.0:
+        return {
+            "model_void_odd": None,
+            "edge_absolute": None,
+            "edge_percent": None,
+            "expected_roi": None,
+            "expected_roi_percent": None,
+            "play_threshold": None,
+        }
+    model_void = 1.0 / adjusted_probability
+    expected_roi = adjusted_probability * combined_odd - 1.0
+    return {
+        "model_void_odd": model_void,
+        "edge_absolute": combined_odd - model_void,
+        "edge_percent": ((combined_odd / model_void) - 1.0) * 100.0,
+        "expected_roi": expected_roi,
+        "expected_roi_percent": expected_roi * 100.0,
+        "play_threshold": model_void * (1.0 + policy.min_edge_percent / 100.0),
+    }
+
+
+def _classify_slip(
+    legs: list[CandidatePick],
+    metrics: dict[str, Optional[float]],
+    evaluation_valid: bool,
+) -> tuple[str, str]:
+    if not evaluation_valid:
+        return "NO BET", "Combinazione incompatibile"
+    if any(leg.decision == "NO BET" for leg in legs):
+        return "NO BET", "Almeno una selezione e' NO BET"
+    if metrics["expected_roi"] is None or metrics["model_void_odd"] is None:
+        return "NO BET", "Dati necessari non disponibili"
+    if metrics["expected_roi"] <= 0.0:
+        return "NO BET", "Expected ROI combinato non positivo"
+    if any(leg.decision != "PLAY" for leg in legs):
+        return "BORDERLINE", "Almeno una selezione non e' PLAY"
+    if metrics["play_threshold"] is not None and metrics["edge_absolute"] is not None:
+        combined_odd = metrics["model_void_odd"] + metrics["edge_absolute"]
+        if combined_odd >= metrics["play_threshold"]:
+            return "PLAY", "Tutte le selezioni sono PLAY e la soglia combinata e' superata"
+    return "BORDERLINE", "Valore positivo, ma margine combinato insufficiente"
 
 
 def _explanation(
@@ -304,6 +471,10 @@ def generate_betslips(
     max_pool_size: int = 14,
     max_slips_per_profile: int = 5,
     generated_at: Optional[datetime] = None,
+    decision_policy: SlipDecisionPolicy = DEFAULT_SLIP_DECISION_POLICY,
+    one_pick_per_fixture: bool = True,
+    allowed_decisions: frozenset[str] = frozenset({"PLAY"}),
+    diversification_policy: BetslipDiversificationPolicy = DEFAULT_DIVERSIFICATION_POLICY,
 ) -> BetslipGenerationResult:
     """Funzione pura (nessun DB/IO): per ciascun profilo, combina le pick
     eligibili in schedine da `profilo.min_legs` a `profilo.max_legs` eventi,
@@ -312,12 +483,17 @@ def generate_betslips(
     correlazione/quota/probabilita' del profilo, poi ordina (ranking
     probability/EV/risk) e tronca a `max_slips_per_profile`.
     """
-    base_pool = _base_eligible_pool(candidates)
+    base_pool = _base_eligible_pool(candidates, allowed_decisions)
     warnings: list[str] = []
     profiles_result: dict[str, list[GeneratedSlip]] = {}
 
     for profile in profiles:
-        pool, pool_warnings = _profile_eligible_pool(base_pool, profile, max_pool_size)
+        pool, pool_warnings = _profile_eligible_pool(
+            base_pool,
+            profile,
+            max_pool_size,
+            diversification_policy,
+        )
         warnings.extend(pool_warnings)
 
         generated: list[GeneratedSlip] = []
@@ -327,6 +503,8 @@ def generate_betslips(
                 continue
             for combo in combinations(pool, size):
                 legs = list(combo)
+                if one_pick_per_fixture and len({leg.fixture_id for leg in legs}) != len(legs):
+                    continue
                 evaluation = evaluate_combination(legs, ruleset=ruleset)
                 if not evaluation.is_valid:
                     continue  # almeno una coppia EXCLUDE: schedina logicamente impossibile, vietata per QUALSIASI profilo
@@ -352,9 +530,11 @@ def generate_betslips(
                     continue
 
                 risk_score = (1.0 - adjusted) if adjusted is not None else None
+                metrics = _combined_value_metrics(combined_odd, adjusted, decision_policy)
+                situation, situation_reason = _classify_slip(legs, metrics, evaluation.is_valid)
                 generated.append(
                     GeneratedSlip(
-                        slip_id=_slip_id(profile.name, legs),
+                        slip_id=_slip_id(profile, legs, decision_policy, diversification_policy),
                         profile_name=profile.name,
                         profile_version=profile.version,
                         risk_label=profile.risk_label,
@@ -364,9 +544,20 @@ def generate_betslips(
                         naive_probability=evaluation.naive_probability,
                         adjusted_probability=adjusted,
                         combined_ev=combined_ev,
+                        combined_model_void_odd=metrics["model_void_odd"],
+                        combined_edge_absolute=metrics["edge_absolute"],
+                        combined_edge_percent=metrics["edge_percent"],
+                        combined_expected_roi=metrics["expected_roi"],
+                        combined_expected_roi_percent=metrics["expected_roi_percent"],
+                        combined_play_threshold=metrics["play_threshold"],
+                        slip_min_edge_percent=decision_policy.min_edge_percent,
+                        decision_policy_version=decision_policy.version,
+                        situation=situation,
+                        situation_reason=situation_reason,
                         risk_score=risk_score,
                         penalty_pairs=penalty_count,
                         correlation_ruleset_version=evaluation.ruleset_version,
+                        diversification_policy_version=diversification_policy.version,
                         findings=evaluation.findings,
                         explanation=_explanation(
                             profile, legs, combined_odd, evaluation.naive_probability, adjusted, combined_ev, penalty_count
@@ -377,17 +568,58 @@ def generate_betslips(
         # Ranking (acceptance criteria "Ranking probability/EV/risk"): EV
         # decrescente, poi probabilita' aggiustata decrescente, poi rischio
         # crescente, poi slip_id per rompere i pareggi in modo deterministico.
+        situation_rank = {"PLAY": 0, "BORDERLINE": 1, "NO BET": 2}
         generated.sort(
             key=lambda s: (
+                situation_rank.get(s.situation, 99),
+                max(
+                    (
+                        sum(
+                            _market_family(other.market) == _market_family(leg.market)
+                            for other in s.legs
+                        )
+                        for leg in s.legs
+                    ),
+                    default=0,
+                ),
+                -len({_market_family(leg.market) for leg in s.legs}),
                 -_ev_sort_key(s.combined_ev),
                 -_ev_sort_key(s.adjusted_probability),
                 s.risk_score if s.risk_score is not None else float("inf"),
+                s.penalty_pairs,
                 s.slip_id,
             )
         )
-        profiles_result[profile.name] = generated[:max_slips_per_profile]
+        selected: list[GeneratedSlip] = []
+        for candidate in generated:
+            candidate_picks = {
+                (leg.fixture_id, leg.market, leg.outcome)
+                for leg in candidate.legs
+            }
+            too_similar = False
+            for previous in selected:
+                previous_picks = {
+                    (leg.fixture_id, leg.market, leg.outcome)
+                    for leg in previous.legs
+                }
+                overlap = len(candidate_picks & previous_picks) / min(
+                    len(candidate_picks),
+                    len(previous_picks),
+                )
+                if overlap > diversification_policy.max_overlap_ratio:
+                    too_similar = True
+                    break
+            if not too_similar:
+                selected.append(candidate)
+            if len(selected) >= max_slips_per_profile:
+                break
+        profiles_result[profile.name] = selected
 
     generated_at = generated_at or datetime.now(timezone.utc)
+    if base_pool and len({_market_family(item.market) for item in base_pool}) < 2:
+        warnings.append(
+            f"limited_market_diversification:{diversification_policy.version}"
+        )
     return BetslipGenerationResult(
         generated_at=generated_at.isoformat(),
         correlation_ruleset_version=ruleset.version,

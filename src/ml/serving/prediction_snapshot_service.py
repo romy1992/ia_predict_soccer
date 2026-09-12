@@ -157,6 +157,7 @@ class PredictionSnapshotService:
         status: Optional[str] = None,
         allow_compute: bool = True,
         force: bool = False,
+        preloaded_snapshots: Optional[dict[tuple[int, str], MatchPredictionSnapshot]] = None,
     ) -> dict[str, dict[str, Any]]:
         """`allow_compute=False` (2026-09-10, richiesto esplicitamente
         dall'operatore: la vista storica della Dashboard deve restare
@@ -183,12 +184,17 @@ class PredictionSnapshotService:
         is_final = (status or "").upper() in _FINAL_STATUSES
         payload: dict[str, dict[str, Any]] = {}
 
+        def latest_snapshot(market: str) -> Optional[MatchPredictionSnapshot]:
+            if preloaded_snapshots is not None:
+                return preloaded_snapshots.get((int(fixture_id), market))
+            return self.repo.get_latest(fixture_id=fixture_id, market=market)
+
         if force:
             markets_needing_compute = list(markets)
         elif is_final:
             markets_needing_compute = []
             for market in markets:
-                snapshot = self.repo.get_latest(fixture_id=fixture_id, market=market)
+                snapshot = latest_snapshot(market)
                 if snapshot is not None:
                     payload[market] = self._entry_from_snapshot(snapshot)
                 elif allow_compute:
@@ -201,7 +207,7 @@ class PredictionSnapshotService:
             # dovrebbe mai avere fixture NS/live): serve solo cio' che e'
             # gia' salvato, mai un calcolo nuovo.
             for market in markets:
-                snapshot = self.repo.get_latest(fixture_id=fixture_id, market=market)
+                snapshot = latest_snapshot(market)
                 if snapshot is not None:
                     payload[market] = self._entry_from_snapshot(snapshot)
             return payload
@@ -238,7 +244,7 @@ class PredictionSnapshotService:
             fingerprint = compute_feature_fingerprint(X)
 
             if not is_final and not force:
-                existing = self.repo.get_latest(fixture_id=fixture_id, market=market)
+                existing = latest_snapshot(market)
                 if (
                     existing is not None
                     and existing.feature_fingerprint == fingerprint

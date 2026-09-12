@@ -25,9 +25,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
 
-from src.oracle.backtest.market_backtest import _canonical_outcome_for_prediction
 from src.oracle.decision_engine.decision_policy import Decision
-from src.service_ia.training.market_service.filter_market_service import FilterMarketService
+from src.oracle.ledger.settlement_rules import outcome_wins, resolve_settlement
 
 # Stake "paper" di default: stessa convenzione di STAKE_DEFAULT (BET-03),
 # qui duplicata come costante indipendente perche' il ledger e' un modulo
@@ -39,9 +38,27 @@ DEFAULT_STAKE = 1.0
 # "mai un valore fittizio, semmai un motivo esplicito"): un settlement puo'
 # non produrre un PnL numerico se manca la quota o se l'esito reale non e'
 # determinabile dai dati disponibili (es. statistiche incomplete).
-SETTLED = "settled"
-VOID_MISSING_ODD = "void_missing_odd"
+SETTLED = "settled"  # compatibilità lettura record legacy
+SETTLED_WIN = "settled_win"
+SETTLED_LOSS = "settled_loss"
+VOID_CANCELLED = "void_cancelled"
+VOID_POSTPONED = "void_postponed"
+VOID_ABANDONED = "void_abandoned"
+VOID_PUSH = "void_push"
 VOID_NO_RESULT = "void_no_result"
+VOID_MARKET_RULE = "void_market_rule"
+NOT_PLACED_MISSING_ODD = "not_placed_missing_odd"
+# Alias di import per compatibilità con consumer legacy; il valore semantico
+# non è più un VOID.
+VOID_MISSING_ODD = NOT_PLACED_MISSING_ODD
+VOID_STATUSES = frozenset({
+    VOID_CANCELLED,
+    VOID_POSTPONED,
+    VOID_ABANDONED,
+    VOID_PUSH,
+    VOID_NO_RESULT,
+    VOID_MARKET_RULE,
+})
 
 
 @dataclass
@@ -62,8 +79,27 @@ class PredictionRecord:
     p_market_fair: Optional[float] = None
     odd: Optional[float] = None
     fair_odd: Optional[float] = None
+    model_void_odd: Optional[float] = None
+    market_fair_odd: Optional[float] = None
+    odds_edge_absolute: Optional[float] = None
+    odds_edge_percent: Optional[float] = None
     prob_edge: Optional[float] = None
     ev: Optional[float] = None
+    expected_roi_percent: Optional[float] = None
+    play_threshold_odd: Optional[float] = None
+    min_edge_percent: Optional[float] = None
+    value_label: Optional[str] = None
+    value_reason: Optional[str] = None
+    p_market_raw: Optional[float] = None
+    period: str = "full_time"
+    line: Optional[str] = None
+    source: str = "manual"
+    cohort: str = "manual"
+    captured_at: Optional[datetime] = None
+    odds_captured_at: Optional[datetime] = None
+    bookmaker_count: int = 0
+    league: Optional[str] = None
+    capture_key: Optional[str] = None
     kickoff_at: Optional[datetime] = None
     created_at: Optional[datetime] = None
     id_prediction: Optional[str] = None
@@ -84,6 +120,16 @@ def build_prediction_record(
     model_name: Optional[str] = None,
     kickoff_at: Optional[datetime] = None,
     stake: float = DEFAULT_STAKE,
+    p_market_raw: Optional[float] = None,
+    period: str = "full_time",
+    line: Optional[str] = None,
+    source: str = "manual",
+    cohort: str = "manual",
+    captured_at: Optional[datetime] = None,
+    odds_captured_at: Optional[datetime] = None,
+    bookmaker_count: int = 0,
+    league: Optional[str] = None,
+    capture_key: Optional[str] = None,
 ) -> PredictionRecord:
     """Costruisce un `PredictionRecord` riusando DIRETTAMENTE l'output gia'
     calcolato da `evaluate_decision`/`evaluate_decision_from_fair_odds_outcome`
@@ -93,6 +139,7 @@ def build_prediction_record(
     garanzia gia' presente in BET-01/02/04)."""
     from src.oracle.fair_odds.fair_odds_engine import fair_odd_from_probability
 
+    captured_at = captured_at or datetime.now(timezone.utc)
     return PredictionRecord(
         fixture_id=int(fixture_id),
         market=decision.market,
@@ -106,10 +153,29 @@ def build_prediction_record(
         p_market_fair=decision.p_market_fair,
         odd=decision.odd,
         fair_odd=fair_odd_from_probability(decision.p_market_fair),
+        model_void_odd=decision.model_void_odd,
+        market_fair_odd=decision.market_fair_odd,
+        odds_edge_absolute=decision.odds_edge_absolute,
+        odds_edge_percent=decision.odds_edge_percent,
         prob_edge=decision.prob_edge,
         ev=decision.ev,
+        expected_roi_percent=decision.expected_roi_percent,
+        play_threshold_odd=decision.play_threshold_odd,
+        min_edge_percent=decision.min_edge_percent,
+        value_label=decision.decision,
+        value_reason=decision.reason,
+        p_market_raw=p_market_raw,
+        period=period,
+        line=line,
+        source=source,
+        cohort=cohort,
+        captured_at=captured_at,
+        odds_captured_at=odds_captured_at,
+        bookmaker_count=int(bookmaker_count),
+        league=league,
+        capture_key=capture_key,
         kickoff_at=kickoff_at,
-        created_at=datetime.now(timezone.utc),
+        created_at=captured_at,
     )
 
 
@@ -126,13 +192,15 @@ def resolve_actual_outcome(market: str, stat_home: Optional[dict], stat_away: Op
     mercato non supportato): mai un esito inventato."""
     if not stat_home or not stat_away:
         return None
-    label = FilterMarketService._label_by_market(market=market, stat_home=stat_home, stat_away=stat_away)
-    if label is None:
-        return None
-    try:
-        return _canonical_outcome_for_prediction(market=market, prediction=label)
-    except ValueError:
-        return None
+    resolution = resolve_settlement(
+        market=market,
+        match_status="FT",
+        home_score=stat_home.get("score_ft"),
+        away_score=stat_away.get("score_ft"),
+        stat_home=stat_home,
+        stat_away=stat_away,
+    )
+    return resolution.actual_outcome
 
 
 def compute_paper_pnl(odd: Optional[float], won: Optional[bool], stake: float) -> Optional[float]:
@@ -159,6 +227,8 @@ def settle_prediction_record(
     record: PredictionRecord,
     actual_outcome: Optional[str],
     settled_at: Optional[datetime] = None,
+    void_status: Optional[str] = None,
+    is_push: bool = False,
 ) -> PredictionRecord:
     """Produce un NUOVO `PredictionRecord` con i campi di settlement
     popolati, senza mai modificare in-place i campi originali (acceptance
@@ -176,6 +246,18 @@ def settle_prediction_record(
     """
     settled_at = settled_at or datetime.now(timezone.utc)
 
+    if void_status or is_push:
+        status = VOID_PUSH if is_push else str(void_status)
+        return dataclasses.replace(
+            record,
+            is_settled=True,
+            settled_at=settled_at,
+            settlement_status=status,
+            actual_outcome=actual_outcome,
+            won=None,
+            pnl=0.0,
+        )
+
     if actual_outcome is None:
         return dataclasses.replace(
             record,
@@ -184,19 +266,29 @@ def settle_prediction_record(
             settlement_status=VOID_NO_RESULT,
             actual_outcome=None,
             won=None,
-            pnl=None,
+            pnl=0.0,
         )
 
-    won = bool(record.outcome == actual_outcome)
+    won = outcome_wins(record.market, record.outcome, actual_outcome)
     if record.odd is None:
         return dataclasses.replace(
             record,
             is_settled=True,
             settled_at=settled_at,
-            settlement_status=VOID_MISSING_ODD,
+            settlement_status=NOT_PLACED_MISSING_ODD,
             actual_outcome=actual_outcome,
-            won=won,
-            pnl=None,
+            won=None,
+            pnl=0.0,
+        )
+    if won is None:
+        return dataclasses.replace(
+            record,
+            is_settled=True,
+            settled_at=settled_at,
+            settlement_status=VOID_MARKET_RULE,
+            actual_outcome=actual_outcome,
+            won=None,
+            pnl=0.0,
         )
 
     pnl = compute_paper_pnl(odd=record.odd, won=won, stake=record.stake)
@@ -204,7 +296,7 @@ def settle_prediction_record(
         record,
         is_settled=True,
         settled_at=settled_at,
-        settlement_status=SETTLED,
+        settlement_status=SETTLED_WIN if won else SETTLED_LOSS,
         actual_outcome=actual_outcome,
         won=won,
         pnl=pnl,

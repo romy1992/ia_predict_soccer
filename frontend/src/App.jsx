@@ -3,11 +3,13 @@ import {
   API_BASE_URL,
   getApiQuota,
   getDashboardAvailableDates,
-  getDashboardDay,
-  getDashboardLive,
+  getDashboardBundle,
   getDashboardMatchDetail,
-  getDashboardOverview,
+  getBettingStatistics,
   getBetslipGenerate,
+  getSavedBetslipProposals,
+  getOfficialBetslips,
+  getOfficialBetslipStatistics,
   getHealth,
   getJobs,
   getJobSettings,
@@ -15,10 +17,12 @@ import {
   getModelDiagnostics,
   getMonitoringAlerts,
   getMonitoringOverview,
+  getOfficialPerformance,
   getPredictions,
   predict,
   recomputeMatchPredictions,
   refreshApiQuota,
+  saveBetslipGeneration,
   triggerDailyRefresh,
   triggerDataQualityReport,
   triggerFutureSync,
@@ -60,9 +64,13 @@ export default function App() {
   const [betslipReport, setBetslipReport] = useState(null);
   const [betslipLoading, setBetslipLoading] = useState(false);
   const [betslipError, setBetslipError] = useState("");
+  const [bettingStatistics, setBettingStatistics] = useState(null);
+  const [bettingStatsDays, setBettingStatsDays] = useState(30);
   const [monitoringMarket, setMonitoringMarket] = useState("all");
   const [monitoringReport, setMonitoringReport] = useState(null);
   const [monitoringAlerts, setMonitoringAlerts] = useState([]);
+  const [officialPerformance, setOfficialPerformance] = useState(null);
+  const [officialDays, setOfficialDays] = useState(30);
   const [monitoringLoading, setMonitoringLoading] = useState(false);
   const [monitoringError, setMonitoringError] = useState("");
   const [modelDiagnosticsReport, setModelDiagnosticsReport] = useState(null);
@@ -74,6 +82,8 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [isInitialLoading, setIsInitialLoading] = useState(true);
   const [isFilterLoading, setIsFilterLoading] = useState(false);
+  const initialLoadStartedRef = useRef(false);
+  const lastFilterQueryRef = useRef(`${todayIso()}|`);
   const [jobSettingsRows, setJobSettingsRows] = useState([]);
   const [jobSettingsLoading, setJobSettingsLoading] = useState(false);
   const [jobSettingsError, setJobSettingsError] = useState("");
@@ -161,6 +171,11 @@ export default function App() {
   }, []);
   const loadDashboardData = useCallback(
     async (mode = "full", { forceRefresh = false } = {}) => {
+      const queryKey = `${selectedDate}|${searchFilter}`;
+      if (mode === "filter" && !forceRefresh && lastFilterQueryRef.current === queryKey) {
+        return null;
+      }
+      lastFilterQueryRef.current = queryKey;
       if (mode === "full") {
         setIsLoading(true);
       } else if (mode === "filter") {
@@ -173,30 +188,15 @@ export default function App() {
         // data/ricerca) - i tab Fase/Mercato filtrano poi istantaneamente
         // in memoria (vedi `dashboardDayData` sotto), senza rifare la
         // fetch/ricalcolare le predizioni ML ad ogni click sul tab.
-        const [overviewData, livePayload, dayPayload] = await Promise.all([
-          getDashboardOverview(selectedDate),
-          getDashboardLive({
-            targetDate: selectedDate,
-            limit: 30,
-            // La preview "Partite in diretta" non mostra previsioni/badge:
-            // nessun bisogno di calcolarle qui (risparmio lato backend).
-            withPredictions: false,
-          }),
-          getDashboardDay({
-            targetDate: selectedDate,
-            limit: 400,
-            withPredictions: true,
-            search: searchFilter || undefined,
-            // Bottone "Forza aggiornamento" (TopFilters): per i rari casi in
-            // cui serve ri-sincronizzare a mano anche una data storica gia'
-            // a DB (es. correzione tardiva quote/risultato dal provider) -
-            // vedi `DashboardService.get_day_matches::force_refresh`.
-            forceRefresh,
-          }),
-        ]);
-        setOverview(overviewData);
-        setLiveData(livePayload);
-        setDayData(dayPayload);
+        const payload = await getDashboardBundle({
+          targetDate: selectedDate,
+          limit: 400,
+          search: searchFilter || undefined,
+          forceRefresh,
+        });
+        setOverview(payload.overview);
+        setLiveData(payload.live);
+        setDayData(payload.day);
         setLastRefresh(new Date().toLocaleString("it-IT"));
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
@@ -247,9 +247,54 @@ export default function App() {
       setBetslipLoading(true);
       setBetslipError("");
       try {
-        const payload = await getBetslipGenerate({ targetDate: betslipDate, ...overrides });
-        setBetslipReport(payload);
-        return payload;
+        const { persist = false, ...generationOverrides } = overrides;
+        const isPastDate = betslipDate < todayIso();
+        let payload;
+        if (isPastDate) {
+          const saved = await getSavedBetslipProposals({ targetDate: betslipDate });
+          const decisionGroups = {
+            PLAY: { SAFE: [], BALANCED: [], AGGRESSIVE: [] },
+            BORDERLINE: { SAFE: [], BALANCED: [], AGGRESSIVE: [] },
+            "NO BET": { SAFE: [], BALANCED: [], AGGRESSIVE: [] },
+          };
+          (saved.rows || []).forEach((slip) => {
+            const profile = slip.profile_name || "BALANCED";
+            const decision = slip.situation || "NO BET";
+            decisionGroups[decision][profile] = [
+              ...(decisionGroups[decision][profile] || []),
+              slip,
+            ];
+          });
+          payload = {
+            generated_at: null,
+            correlation_ruleset_version: null,
+            pool_considered: 0,
+            profiles: decisionGroups.PLAY,
+            decision_groups: decisionGroups,
+            warnings: [],
+            historical_snapshot: true,
+          };
+        } else {
+          payload = persist
+            ? await saveBetslipGeneration({ targetDate: betslipDate, ...generationOverrides })
+            : await getBetslipGenerate({ targetDate: betslipDate, ...generationOverrides });
+        }
+        const [officialResult, statisticsResult, unifiedResult] = await Promise.allSettled([
+          getOfficialBetslips({ targetDate: betslipDate }),
+          getOfficialBetslipStatistics(),
+          getBettingStatistics({ days: bettingStatsDays }),
+        ]);
+        const official = officialResult.status === "fulfilled" ? officialResult.value : { rows: [] };
+        const officialStatistics = statisticsResult.status === "fulfilled" ? statisticsResult.value : { statistics: null };
+        const unifiedStatistics = unifiedResult.status === "fulfilled" ? unifiedResult.value : null;
+        const enriched = {
+          ...payload,
+          official_slips: official.rows || [],
+          official_statistics: officialStatistics.statistics || null,
+        };
+        if (unifiedStatistics) setBettingStatistics(unifiedStatistics);
+        setBetslipReport(enriched);
+        return enriched;
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         setBetslipError(message);
@@ -258,19 +303,28 @@ export default function App() {
         setBetslipLoading(false);
       }
     },
-    [betslipDate]
+    [betslipDate, bettingStatsDays]
   );
+  const loadBettingStatistics = useCallback(async (days) => {
+    const selectedDays = Number(days || bettingStatsDays);
+    setBettingStatsDays(selectedDays);
+    const payload = await getBettingStatistics({ days: selectedDays });
+    setBettingStatistics(payload);
+    return payload;
+  }, [bettingStatsDays]);
   const loadMonitoring = useCallback(async () => {
     setMonitoringLoading(true);
     setMonitoringError("");
     try {
       const marketFilter = monitoringMarket === "all" ? undefined : monitoringMarket;
-      const [overviewPayload, alertsPayload] = await Promise.all([
+      const [overviewPayload, alertsPayload, officialPayload] = await Promise.all([
         getMonitoringOverview({ market: marketFilter }),
         getMonitoringAlerts({ market: marketFilter }),
+        getOfficialPerformance({ market: marketFilter, days: officialDays }),
       ]);
       setMonitoringReport(overviewPayload);
       setMonitoringAlerts(alertsPayload?.alerts || []);
+      setOfficialPerformance(officialPayload);
       return overviewPayload;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -279,7 +333,7 @@ export default function App() {
     } finally {
       setMonitoringLoading(false);
     }
-  }, [monitoringMarket]);
+  }, [monitoringMarket, officialDays]);
   const loadModelDiagnostics = useCallback(async ({ forceRefresh = false } = {}) => {
     // GET /models/diagnostics: walk-forward OOF ricalcolato server-side
     // (cache TTL 15 min li' - vedi `ModelDiagnosticsService`), qui solo
@@ -559,6 +613,10 @@ export default function App() {
     setActivePage(previousPage || "dashboard");
   }, [previousPage]);
   useEffect(() => {
+    if (initialLoadStartedRef.current) {
+      return;
+    }
+    initialLoadStartedRef.current = true;
     loadEverything(false);
     // Solo al mount, con manual=false: NON deve comparire "Aggiornamento in
     // corso..." sul bottone Sidebar al semplice reload della pagina (quello
@@ -571,6 +629,9 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   useEffect(() => {
+    if (activePage !== "dashboard") {
+      return undefined;
+    }
     const timer = setInterval(() => {
       // Fix (2026-09-07): se la quota e' gia' segnalata esaurita, richiamare
       // l'intera dashboard ogni 60s non serve a nulla (il backend rifiuta
@@ -592,7 +653,7 @@ export default function App() {
       getApiQuota().then(setApiQuota).catch(() => {});
     }, 60000);
     return () => clearInterval(timer);
-  }, [isQuotaExhausted, loadDashboardData, loadMatchDetail, selectedFixtureId]);
+  }, [activePage, isQuotaExhausted, loadDashboardData, loadMatchDetail, selectedFixtureId]);
   useEffect(() => {
     // Ricarica dal backend SOLO quando cambiano data o testo di ricerca
     // (esplicito click "Cerca") - NON piu' su phaseFilter/selectedMarket,
@@ -774,18 +835,27 @@ export default function App() {
     },
     betslip: {
       targetDate: betslipDate,
-      onChangeTargetDate: setBetslipDate,
+      onChangeTargetDate: (value) => {
+        setBetslipDate(value);
+        setBetslipReport(null);
+      },
       report: betslipReport,
       isLoading: betslipLoading,
       error: betslipError,
-      onLoadReport: loadBetslip,
+      onLoadReport: (overrides = {}) => loadBetslip({ ...overrides, persist: true }),
       dayData,
+      bettingStatistics,
+      bettingStatsDays,
+      onLoadStatistics: loadBettingStatistics,
     },
     monitoring: {
       market: monitoringMarket,
       onChangeMarket: setMonitoringMarket,
       markets,
       report: monitoringReport,
+      officialPerformance,
+      officialDays,
+      onChangeOfficialDays: setOfficialDays,
       alerts: monitoringAlerts,
       isLoading: monitoringLoading,
       error: monitoringError,

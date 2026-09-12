@@ -106,11 +106,11 @@ def _canonical_outcome_for_prediction(market: str, prediction: int) -> str:
     mercato -> stesso confine): garantisce che `won` (calcolato confrontando
     `prediction` con `y_true`) corrisponda davvero all'outcome quotato."""
     if market == "h2h":
-        return "Home" if prediction == 1 else "Away"
+        return "Home" if prediction == 1 else "Not Home"
     if market == "goal_no_goal":
         return "Yes" if prediction == 1 else "No"
     if market == "dc":
-        return "1X" if prediction == 1 else "X2"
+        return "1X" if prediction == 1 else "Away"
     if market.startswith("under_over_"):
         threshold = market.replace("under_over_", "").replace("_", ".")
         return f"Over {threshold}" if prediction == 1 else f"Under {threshold}"

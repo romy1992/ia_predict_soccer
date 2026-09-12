@@ -6,27 +6,32 @@ from datetime import date, datetime, time, timedelta, timezone
 import json
 import os
 import re
+import threading
 from typing import Any, Optional
 from zoneinfo import ZoneInfo
 
 import numpy as np
 from dateutil.parser import isoparse
 from sqlalchemy.exc import OperationalError, ProgrammingError
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import load_only, noload, selectinload
 
 from src.ml.baselines.bookmaker_baseline import build_fixture_baseline, get_market_outcome_baseline
 from src.ml.markets.totals.totals_market import enforce_monotonic_over_probabilities
 from src.ml.serving.prediction_snapshot_service import PredictionSnapshotService
 from src.jobs.api_quota_state import is_quota_exhausted_today
 from src.oracle.backtest.market_backtest import _canonical_outcome_for_prediction
-from src.oracle.decision_engine.decision_policy import evaluate_decision_from_fair_odds_outcome
+from src.oracle.decision_engine.decision_policy import (
+    compute_model_void_odd,
+    evaluate_decision,
+    evaluate_decision_from_fair_odds_outcome,
+)
 from src.oracle.decision_engine.over_signal_policy import evaluate_over_signal
 from src.oracle.fair_odds.fair_odds_engine import build_fair_odds_outcome
 from src.oracle.ledger.prediction_ledger import resolve_actual_outcome
 from src.repository.base.repository_db import SessionLocal
 from src.repository.prediction_ledger_repository import PredictionLedgerRepository
 from src.service_ia.config.app_config import load_app_config
-from src.service_ia.model.match import Match
+from src.service_ia.model.match import Match, MatchPredictionSnapshot, Statistics
 from src.service_ia.training.market_service.filter_market_service import FilterMarketService
 from src.service_ia.training.model_registry import ModelRegistry
 from src.service_ia.utility.request_api import base_api_statistics
@@ -77,6 +82,8 @@ class DashboardDayData:
 class DashboardService:
     _api_cache: dict[str, tuple[datetime, Any]] = {}
     _api_cache_ttl_seconds = 60
+    _api_cache_locks: dict[str, threading.Lock] = {}
+    _api_cache_locks_guard = threading.Lock()
     # Fix performance (2026-09-09): _fetch_api_day_fixtures interrogava i
     # campionati configurati (18 di default, APP_LEAGUES) UNO ALLA VOLTA -
     # con quote/timeout/retry di rete per ciascuno, il tempo totale scalava
@@ -156,6 +163,11 @@ class DashboardService:
     def _cache_set(cls, key: str, payload: Any) -> None:
         cls._api_cache[key] = (datetime.now(timezone.utc), payload)
 
+    @classmethod
+    def _cache_lock_for(cls, key: str) -> threading.Lock:
+        with cls._api_cache_locks_guard:
+            return cls._api_cache_locks.setdefault(key, threading.Lock())
+
     @staticmethod
     def _today_in_dashboard_timezone() -> date:
         return datetime.now(_DASHBOARD_TIMEZONE).date()
@@ -202,6 +214,21 @@ class DashboardService:
         return max(lower_or_equal) if lower_or_equal else max(seasons)
 
     def _fetch_api_day_fixtures(self, target_date: date, force_refresh: bool = False) -> list[dict[str, Any]]:
+        cache_key = f"day:{target_date.isoformat()}"
+        if not force_refresh:
+            cached = self._cache_get(cache_key)
+            if cached is not None:
+                return cached
+        with self._cache_lock_for(cache_key):
+            if not force_refresh:
+                cached = self._cache_get(cache_key)
+                if cached is not None:
+                    return cached
+            return self._fetch_api_day_fixtures_uncached(target_date, force_refresh=force_refresh)
+
+    def _fetch_api_day_fixtures_uncached(
+        self, target_date: date, force_refresh: bool = False
+    ) -> list[dict[str, Any]]:
         cache_key = f"day:{target_date.isoformat()}"
         if not force_refresh:
             cached = self._cache_get(cache_key)
@@ -260,6 +287,14 @@ class DashboardService:
         cached = self._cache_get(cache_key)
         if cached is not None:
             return cached
+        with self._cache_lock_for(cache_key):
+            cached = self._cache_get(cache_key)
+            if cached is not None:
+                return cached
+            return self._fetch_api_live_fixtures_uncached()
+
+    def _fetch_api_live_fixtures_uncached(self) -> list[dict[str, Any]]:
+        cache_key = "live"
         if is_quota_exhausted_today():
             return []
         # Risparmio quota (2026-09-09): le partite live sono per definizione
@@ -270,14 +305,20 @@ class DashboardService:
         if not self._is_within_dashboard_api_window():
             return []
 
-        fixtures: list[dict[str, Any]] = []
-        for league in self.cfg.leagues or []:
+        leagues = self.cfg.leagues or []
+
+        def _fetch_one_league(league: int) -> list[dict[str, Any]]:
             try:
-                payload = base_api_statistics(path="fixtures", params={"live": "all", "league": league})
+                return base_api_statistics(path="fixtures", params={"live": "all", "league": league}) or []
             except Exception:
-                payload = []
-            if payload:
-                fixtures.extend(payload)
+                return []
+
+        fixtures: list[dict[str, Any]] = []
+        if leagues:
+            with ThreadPoolExecutor(max_workers=min(self._LEAGUE_FETCH_MAX_WORKERS, len(leagues))) as executor:
+                for payload in executor.map(_fetch_one_league, leagues):
+                    if payload:
+                        fixtures.extend(payload)
 
         deduped = self._dedupe_api_fixtures(fixtures)
         self._cache_set(cache_key, deduped)
@@ -386,8 +427,13 @@ class DashboardService:
             "home/draw": "Home/Draw",
             "draw/away": "Draw/Away",
             "home/away": "Home/Away",
+            "1x": "Home/Draw",
+            "x2": "Draw/Away",
+            "12": "Home/Away",
             "yes": "Yes",
             "no": "No",
+            "goal": "Yes",
+            "no_goal": "No",
         }
         key = val.lower()
         if key in mapping:
@@ -524,7 +570,8 @@ class DashboardService:
             return ("Goal" if pick == "Yes" else "No Goal"), odd
 
         if market == "dc":
-            pick = "Home/Draw" if prediction == 1 else "Draw/Away"
+            # Il modello legacy è P(1X) vs P(2), non 1X vs X2.
+            pick = "Home/Draw" if prediction == 1 else "Away"
             odd = normalized.get(self._normalize_text(pick))
             return pick, odd
 
@@ -533,13 +580,10 @@ class DashboardService:
                 pick = row_context.get("home") or "Home"
                 odd = normalized.get(self._normalize_text("Home"))
             else:
-                # BET-02 ("Usare outcome corretto"): NON usare la quota
-                # "Draw" come fallback per il pick "Away" — sono due
-                # outcome diversi, mixarli produrrebbe un edge/EV calcolato
-                # sulla quota sbagliata. Se manca la quota "Away", l'odd
-                # resta None (gestito esplicitamente dal Value Engine).
-                pick = row_context.get("away") or "Away"
-                odd = normalized.get(self._normalize_text("Away"))
+                # Il binario legacy stima Not Home (Draw + Away): non può
+                # essere prezzato con la sola quota Away.
+                pick = "Non casa"
+                odd = None
             return pick, odd
 
         if market in {"corners", "cards"}:
@@ -569,11 +613,11 @@ class DashboardService:
     @staticmethod
     def _baseline_outcome_for_prediction(market: str, prediction: int, pick_label: str) -> str:
         if market == "h2h":
-            return "Home" if prediction == 1 else "Away"
+            return "Home" if prediction == 1 else "Not Home"
         if market == "goal_no_goal":
             return "Yes" if prediction == 1 else "No"
         if market == "dc":
-            return "Home/Draw" if prediction == 1 else "Draw/Away"
+            return "Home/Draw" if prediction == 1 else "Away"
         if market.startswith("under_over_"):
             threshold = market.replace("under_over_", "").replace("_", ".")
             return f"Over {threshold}" if prediction == 1 else f"Under {threshold}"
@@ -588,6 +632,44 @@ class DashboardService:
     ) -> list[dict[str, Any]]:
         cards: list[dict[str, Any]] = []
         for market, payload in predictions.items():
+            multiclass_probabilities = payload.get("probabilities") if isinstance(payload, dict) else None
+            if market == "1x2" and isinstance(multiclass_probabilities, dict):
+                normalized_probabilities = {
+                    str(key).upper(): self._to_float(value)
+                    for key, value in multiclass_probabilities.items()
+                }
+                if all(normalized_probabilities.get(key) is not None for key in ("HOME", "DRAW", "AWAY")):
+                    outcome_probabilities = {
+                        "Home": normalized_probabilities["HOME"],
+                        "Draw": normalized_probabilities["DRAW"],
+                        "Away": normalized_probabilities["AWAY"],
+                    }
+                    cards.extend(
+                        self._build_multiclass_outcome_cards(
+                            decision_market="1x2",
+                            pricing_market="h2h",
+                            outcome_probabilities=outcome_probabilities,
+                            payload=payload,
+                            odds_summary=odds_summary,
+                            bookmaker_baseline=bookmaker_baseline or {},
+                        )
+                    )
+                    dc_probabilities = {
+                        "Home/Draw": outcome_probabilities["Home"] + outcome_probabilities["Draw"],
+                        "Draw/Away": outcome_probabilities["Draw"] + outcome_probabilities["Away"],
+                        "Home/Away": outcome_probabilities["Home"] + outcome_probabilities["Away"],
+                    }
+                    cards.extend(
+                        self._build_multiclass_outcome_cards(
+                            decision_market="dc",
+                            pricing_market="dc",
+                            outcome_probabilities=dc_probabilities,
+                            payload=payload,
+                            odds_summary=odds_summary,
+                            bookmaker_baseline=bookmaker_baseline or {},
+                        )
+                    )
+                continue
             prediction = int(payload.get("prediction", 0))
             class1_probability = float(payload.get("probability", 0.5))
             predicted_probability = class1_probability if prediction == 1 else (1.0 - class1_probability)
@@ -644,6 +726,7 @@ class DashboardService:
                 {
                     "market": market,
                     "pick": pick,
+                    "outcome": baseline_outcome,
                     "prediction": prediction,
                     "model_name": payload.get("model_name"),
                     "run_id": payload.get("run_id"),
@@ -651,25 +734,135 @@ class DashboardService:
                     "predicted_probability": predicted_probability,
                     "bet_over_signal": bet_over_signal,
                     "odd": odd,
+                    "market_odd": odd,
                     "bookmaker_implied_raw": fair_odds_outcome.p_market_raw,
                     "bookmaker_fair_probability": fair_odds_outcome.p_market_fair,
                     # MATCH-01 ("fair market"): quota equivalente alla fair
                     # probability del bookmaker, gia' calcolata da BET-01
                     # (`fair_odd = 1/p_market_fair`) e finora NON esposta qui.
                     "fair_odd": fair_odds_outcome.fair_odd,
+                    "market_fair_odd": decision.market_fair_odd,
+                    "model_void_odd": decision.model_void_odd,
+                    "odds_edge_absolute": decision.odds_edge_absolute,
+                    "odds_edge_percent": decision.odds_edge_percent,
                     "bookmaker_overround": market_baseline.get("overround"),
                     "bookmakers_count": fair_odds_outcome.bookmakers,
                     "model_minus_fair": decision.prob_edge,
+                    "prob_edge": decision.prob_edge,
                     "edge": decision.prob_edge,
                     "ev": decision.ev,
+                    "expected_roi_percent": decision.expected_roi_percent,
+                    "play_threshold_odd": decision.play_threshold_odd,
+                    "min_edge_percent": decision.min_edge_percent,
+                    "line": (
+                        str(self._extract_line_point(pick))
+                        if self._extract_line_point(pick) is not None
+                        else None
+                    ),
                     "value_label": decision.decision,
                     "value_reason": decision.reason,
                     "policy_version": decision.policy_version,
+                    "is_official": False,
+                    "settlement_status": None,
+                    "pnl": None,
                 }
             )
 
-        cards.sort(key=lambda x: x.get("predicted_probability", 0), reverse=True)
+        self._mark_best_cards_by_market(cards)
+        cards.sort(key=self._decision_card_sort_key)
         return cards
+
+    def _build_multiclass_outcome_cards(
+        self,
+        *,
+        decision_market: str,
+        pricing_market: str,
+        outcome_probabilities: dict[str, float],
+        payload: dict[str, Any],
+        odds_summary: dict[str, list[dict[str, Any]]],
+        bookmaker_baseline: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        rows = odds_summary.get(pricing_market) or []
+        market_baseline = (bookmaker_baseline.get("markets") or {}).get(pricing_market) or {}
+        result: list[dict[str, Any]] = []
+        for outcome, probability in outcome_probabilities.items():
+            odds_row = next(
+                (
+                    row
+                    for row in rows
+                    if self._normalize_text(str(row.get("outcome") or "")) == self._normalize_text(outcome)
+                ),
+                None,
+            )
+            baseline_row = get_market_outcome_baseline(bookmaker_baseline, pricing_market, outcome)
+            odd = self._to_float((odds_row or {}).get("avg_odd"))
+            decision = evaluate_decision(
+                market=decision_market,
+                outcome=outcome,
+                p_model=probability,
+                p_market_fair=(baseline_row or {}).get("fair_probability"),
+                odd=odd,
+                samples=int((odds_row or {}).get("bookmakers") or 0),
+            )
+            result.append(
+                {
+                    "market": decision_market,
+                    "pick": outcome,
+                    "outcome": outcome,
+                    "line": (odds_row or {}).get("line"),
+                    "model_name": payload.get("model_name"),
+                    "run_id": payload.get("run_id"),
+                    "predicted_probability": probability,
+                    "market_odd": odd,
+                    "odd": odd,
+                    "bookmaker_implied_raw": (baseline_row or {}).get("raw_probability"),
+                    "bookmaker_fair_probability": (baseline_row or {}).get("fair_probability"),
+                    "market_fair_odd": decision.market_fair_odd,
+                    "fair_odd": decision.market_fair_odd,
+                    "model_void_odd": decision.model_void_odd,
+                    "odds_edge_absolute": decision.odds_edge_absolute,
+                    "odds_edge_percent": decision.odds_edge_percent,
+                    "prob_edge": decision.prob_edge,
+                    "edge": decision.prob_edge,
+                    "ev": decision.ev,
+                    "expected_roi_percent": decision.expected_roi_percent,
+                    "play_threshold_odd": decision.play_threshold_odd,
+                    "min_edge_percent": decision.min_edge_percent,
+                    "bookmaker_overround": market_baseline.get("overround"),
+                    "bookmakers_count": decision.samples,
+                    "value_label": decision.decision,
+                    "value_reason": decision.reason,
+                    "policy_version": decision.policy_version,
+                    "is_official": False,
+                    "settlement_status": None,
+                    "pnl": None,
+                }
+            )
+        return result
+
+    @staticmethod
+    def _decision_card_sort_key(card: dict[str, Any]) -> tuple[int, float]:
+        label = card.get("value_label")
+        metric = (
+            card.get("predicted_probability")
+            if label == "NO BET"
+            else card.get("expected_roi_percent")
+        )
+        return (
+            _DECISION_LABEL_PRIORITY.get(label, 99),
+            -(float(metric) if metric is not None else float("-inf")),
+        )
+
+    @classmethod
+    def _mark_best_cards_by_market(cls, cards: list[dict[str, Any]]) -> None:
+        for card in cards:
+            card["is_market_best"] = False
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        for card in cards:
+            grouped.setdefault(str(card.get("market") or ""), []).append(card)
+        for market_cards in grouped.values():
+            if market_cards:
+                min(market_cards, key=cls._decision_card_sort_key)["is_market_best"] = True
 
     @staticmethod
     def _select_best_decision_card(cards: list[dict[str, Any]]) -> Optional[dict[str, Any]]:
@@ -680,13 +873,100 @@ class DashboardService:
         piu' alta. `None` se non ci sono card (nessun modello/quota)."""
         if not cards:
             return None
-        return min(
-            cards,
-            key=lambda c: (
-                _DECISION_LABEL_PRIORITY.get(c.get("value_label"), 99),
-                -float(c.get("predicted_probability") or 0.0),
-            ),
-        )
+        return min(cards, key=DashboardService._decision_card_sort_key)
+
+    @staticmethod
+    def _official_card(row: Any) -> dict[str, Any]:
+        settlement = row.settlement_status
+        if not row.is_settled:
+            official_outcome = "PENDING"
+        elif settlement == "settled_win":
+            official_outcome = "WON"
+        elif settlement == "settled_loss":
+            official_outcome = "LOST"
+        elif str(settlement or "").startswith("void_"):
+            official_outcome = "VOID"
+        else:
+            official_outcome = str(settlement or "N/D").upper()
+        model_void_odd = row.model_void_odd or compute_model_void_odd(row.p_model)
+        market_fair_odd = row.market_fair_odd or row.fair_odd
+        odds_edge_absolute = row.odds_edge_absolute
+        if odds_edge_absolute is None and row.odd is not None and model_void_odd is not None:
+            odds_edge_absolute = float(row.odd) - model_void_odd
+        odds_edge_percent = row.odds_edge_percent
+        if odds_edge_percent is None and row.ev is not None:
+            odds_edge_percent = float(row.ev) * 100.0
+        expected_roi_percent = row.expected_roi_percent
+        if expected_roi_percent is None and row.ev is not None:
+            expected_roi_percent = float(row.ev) * 100.0
+        return {
+            "market": row.market,
+            "outcome": row.outcome,
+            "line": row.line,
+            "pick": row.outcome,
+            "predicted_probability": row.p_model,
+            "market_odd": row.odd,
+            "odd": row.odd,
+            "model_void_odd": model_void_odd,
+            "market_fair_odd": market_fair_odd,
+            "fair_odd": market_fair_odd,
+            "odds_edge_absolute": odds_edge_absolute,
+            "odds_edge_percent": odds_edge_percent,
+            "prob_edge": row.prob_edge,
+            "edge": row.prob_edge,
+            "ev": row.ev,
+            "expected_roi_percent": expected_roi_percent,
+            "play_threshold_odd": row.play_threshold_odd,
+            "min_edge_percent": row.min_edge_percent,
+            "value_label": row.value_label or row.decision,
+            "value_reason": row.value_reason or "PLAY ufficiale congelata al momento della cattura",
+            "policy_version": row.policy_version,
+            "bookmakers_count": row.bookmaker_count,
+            "model_name": row.model_name,
+            "run_id": row.model_run_id,
+            "is_official": True,
+            "settlement_status": settlement,
+            "official_outcome": official_outcome,
+            "pnl": row.pnl,
+            "captured_at": row.captured_at.isoformat() if row.captured_at else None,
+        }
+
+    def _merge_official_cards(self, cards: list[dict[str, Any]], ledger_rows: list[Any]) -> list[dict[str, Any]]:
+        merged = list(cards)
+        for ledger_row in ledger_rows:
+            official = self._official_card(ledger_row)
+            market_key = self._normalize_text(official["market"])
+            outcome_key = self._normalize_text(official["outcome"])
+            replaced = False
+            for index, card in enumerate(merged):
+                if (
+                    self._normalize_text(str(card.get("market") or "")) == market_key
+                    and self._normalize_text(str(card.get("outcome") or card.get("pick") or "")) == outcome_key
+                ):
+                    merged[index] = official
+                    replaced = True
+                    break
+            if not replaced:
+                merged.append(official)
+        self._mark_best_cards_by_market(merged)
+        merged.sort(key=self._decision_card_sort_key)
+        return merged
+
+    def _attach_official_cards(self, rows: list[dict[str, Any]]) -> None:
+        fixture_ids = [int(row["fixture_id"]) for row in rows if row.get("fixture_id") is not None]
+        try:
+            ledger_rows = self.ledger_repo.list_for_fixtures(fixture_ids, cohort="official_paper")
+        except (OperationalError, ProgrammingError):
+            return
+        by_fixture: dict[int, list[Any]] = {}
+        for ledger_row in ledger_rows:
+            by_fixture.setdefault(int(ledger_row.fixture_id), []).append(ledger_row)
+        for row in rows:
+            official_rows = by_fixture.get(int(row["fixture_id"])) if row.get("fixture_id") is not None else None
+            if not official_rows:
+                continue
+            row["decision_cards"] = self._merge_official_cards(row.get("decision_cards") or [], official_rows)
+            row["best_decision"] = self._select_best_decision_card(row["decision_cards"])
 
     def _decisions_for_row(
         self,
@@ -704,15 +984,12 @@ class DashboardService:
         una chiamata odds API-Sports per riga: la quota giornaliera e'
         limitata (vedi job history) e centinaia di righe la esaurirebbero
         subito. Se la fixture non e' ancora nel DB locale, resta
-        `([], None)`: aprendo il dettaglio (`get_match_detail`, che gia'
-        fa una fetch odds dedicata per singola fixture) il badge completo
-        resta comunque disponibile."""
+        `SENZA QUOTA`: la quota void IA resta calcolabile dalla probabilita'
+        e nessuna giocata viene registrata."""
         if not predictions or db_match is None:
             return [], None
 
         odds_summary = self._aggregate_odds_from_db(db_match)
-        if not odds_summary:
-            return [], None
 
         bookmaker_baseline = build_fixture_baseline(odds_summary)
         cards = self._build_decision_cards(
@@ -825,9 +1102,23 @@ class DashboardService:
             by_team = {s.statistics_team_id: s for s in stats}
             home_stat = by_team.get(match.id_team_home)
             away_stat = by_team.get(match.id_team_away)
+
+            def required_values(stat: Optional[Statistics]) -> Optional[dict[str, Any]]:
+                if stat is None:
+                    return None
+                # `to_dict()` toccherebbe tutte le colonne deferite da
+                # `load_only`, generando una query lazy per riga.
+                return {
+                    "score_ft": stat.score_ft,
+                    "score_ht": stat.score_ht,
+                    "corners": stat.corners,
+                    "yellow_cards": stat.yellow_cards,
+                    "red_cards": stat.red_cards,
+                }
+
             return (
-                home_stat.to_dict() if home_stat else None,
-                away_stat.to_dict() if away_stat else None,
+                required_values(home_stat),
+                required_values(away_stat),
                 True,
             )
 
@@ -926,7 +1217,11 @@ class DashboardService:
 
         if with_predictions and markets:
             predictions = self._predict_fixture(
-                fixture_id=fixture_id, markets=markets, db_match=db_match, status=status, allow_compute=allow_compute
+                fixture_id=fixture_id,
+                markets=markets,
+                db_match=db_match,
+                status=status,
+                allow_compute=allow_compute,
             )
             if phase == "finished":
                 stat_home, stat_away, has_full_stats = self._resolve_final_stat_dicts(db_match)
@@ -946,6 +1241,7 @@ class DashboardService:
         status: Optional[str] = None,
         allow_compute: bool = True,
         force: bool = False,
+        preloaded_snapshots: Optional[dict[tuple[int, str], MatchPredictionSnapshot]] = None,
     ) -> dict[str, Any]:
         """Delega la risoluzione della predizione grezza per mercato a
         `PredictionSnapshotService` (2026-09-09: cache persistita su DB,
@@ -975,7 +1271,7 @@ class DashboardService:
         if cached is not None:
             return cached
 
-        payload = self._snapshot_service.resolve_predictions(
+        resolve_kwargs = dict(
             fixture_id=fixture_id,
             markets=markets,
             db_match=db_match,
@@ -983,6 +1279,12 @@ class DashboardService:
             allow_compute=allow_compute,
             force=force,
         )
+        snapshot_map = preloaded_snapshots
+        if snapshot_map is None:
+            snapshot_map = getattr(self, "_preloaded_snapshots", None)
+        if snapshot_map is not None:
+            resolve_kwargs["preloaded_snapshots"] = snapshot_map
+        payload = self._snapshot_service.resolve_predictions(**resolve_kwargs)
 
         self._apply_monotonic_projection(payload)
         self._prediction_cache[cache_key] = payload
@@ -1014,7 +1316,11 @@ class DashboardService:
             payload[market]["prediction"] = int(p >= 0.5)
 
     def _serialize_match(
-        self, match: Match, with_predictions: bool, markets: list[str], allow_compute: bool = True
+        self,
+        match: Match,
+        with_predictions: bool,
+        markets: list[str],
+        allow_compute: bool = True,
     ) -> dict[str, Any]:
         dt_value = self._parse_datetime(match.date_match)
         phase = self._classify_phase(match.status, dt_value)
@@ -1060,8 +1366,8 @@ class DashboardService:
 
         return row
 
-    def _fetch_matches(self, target_date: date, day_margin: int = 1) -> list[Match]:
-        """Match del DB locale rilevanti per `target_date` (+- day_margin giorni).
+    def _fetch_matches(self, target_date: date, day_margin: int = 0) -> list[Match]:
+        """Match del DB rilevanti per `target_date` (giorno esatto di default).
 
         Fix performance critico: la query precedente NON aveva alcun filtro
         SQL sulla data, quindi caricava l'INTERO storico (47k+ match, con
@@ -1073,9 +1379,8 @@ class DashboardService:
         confronto lessicografico su range di date (prefisso "YYYY-MM-DD")
         e' equivalente a un confronto temporale e riduce drasticamente le
         righe caricate (da tutto il DB a poche centinaia al massimo). Il
-        margine di 1 giorno assorbe eventuali differenze di fuso orario; il
-        filtro Python esistente su `dt_value.date() == target_date` scarta
-        comunque le righe fuori target.
+        `day_margin` resta disponibile soltanto per chiamanti diagnostici;
+        la Dashboard usa il giorno esatto e non idrata `odds_snapshots`.
         """
         start = (target_date - timedelta(days=day_margin)).isoformat()
         end = (target_date + timedelta(days=day_margin + 1)).isoformat()
@@ -1083,7 +1388,18 @@ class DashboardService:
             with SessionLocal() as session:
                 rows = (
                     session.query(Match)
-                    .options(selectinload(Match.statistics), selectinload(Match.odds))
+                    .options(
+                        selectinload(Match.statistics).load_only(
+                            Statistics.statistics_team_id,
+                            Statistics.score_ft,
+                            Statistics.score_ht,
+                            Statistics.corners,
+                            Statistics.yellow_cards,
+                            Statistics.red_cards,
+                        ),
+                        selectinload(Match.odds),
+                        noload(Match.odds_snapshots),
+                    )
                     .filter(Match.id_fixture.is_not(None))
                     .filter(Match.date_match >= start)
                     .filter(Match.date_match < end)
@@ -1115,6 +1431,24 @@ class DashboardService:
         decision/edge/EV SENZA alcuna nuova fetch odds verso l'API esterna."""
         return {m.id_fixture: m for m in self._fetch_matches(target_date=target_date) if m.id_fixture is not None}
 
+    def _load_snapshot_map(
+        self,
+        fixture_ids: list[int],
+        markets: list[str],
+    ) -> dict[tuple[int, str], MatchPredictionSnapshot]:
+        """Carica in blocco gli snapshot richiesti dalla vista lista.
+
+        Il wrapper mantiene la Dashboard disponibile anche durante un
+        avvio senza migrazioni complete, coerentemente con le altre query
+        read-only del servizio.
+        """
+        if not fixture_ids:
+            return {}
+        try:
+            return self._snapshot_service.repo.get_latest_bulk(fixture_ids, markets=markets)
+        except (ProgrammingError, OperationalError):
+            return {}
+
     def get_day_matches(
         self,
         target_date: date,
@@ -1133,31 +1467,13 @@ class DashboardService:
         # riusata sia per arricchire le righe API (badge decision, MATCH-01)
         # sia per le righe DB-only piu' sotto (nessuna query duplicata).
         db_by_fixture = self._db_matches_lookup(target_date)
-
-        # Fix quota API-Sports (2026-09-07): il DB locale viene sincronizzato
-        # quotidianamente (job "Aggiorna tutto"/`data_daily_refresh` +
-        # `data_sync_today`/`future_sync`, vedi
-        # `AppConfig.daily_refresh_days_ahead`) per la finestra ieri ->
-        # oggi+N giorni, su TUTTI i campionati censiti.
-        #
-        # Distinzione STORICHE vs OGGI/FUTURE (raffinata 2026-09-07): una
-        # partita gia' CONCLUSA (data < oggi UTC) ha risultato/quote ormai
-        # DEFINITIVI - se il DB ha gia' la fixture, il provider esterno non
-        # verra' MAI piu' interrogato per quella data (spreco di quota
-        # altrimenti evitabile). Una partita di OGGI o FUTURA invece puo'
-        # ancora subire cambi (quote in movimento, rinvio/spostamento data,
-        # nuove convocazioni) anche se il DB ha gia' un dato sincronizzato
-        # nelle ultime 24h dal job schedulato - qui l'API resta la fonte
-        # primaria, protetta comunque dalla cache TTL 60s
-        # (`_fetch_api_day_fixtures`) e dal guard "quota esaurita" (nessuno
-        # spreco quando i dati sono gia' freschi o la quota e' finita).
-        today_utc = datetime.now(timezone.utc).date()
-        is_historical_date = target_date < today_utc
-
-        db_has_target_date = any(
-            (dt := self._parse_datetime(match.date_match)) and dt.date() == target_date
-            for match in db_by_fixture.values()
+        preloaded_snapshots = (
+            self._load_snapshot_map(list(db_by_fixture), markets=model_markets)
+            if with_predictions and db_by_fixture
+            else {}
         )
+        self._preloaded_snapshots = preloaded_snapshots
+
         # `force_refresh` (bottone "Forza aggiornamento" in Dashboard, per i
         # rari casi in cui serve ri-sincronizzare a mano anche una data
         # storica gia' a DB - es. dato importato errato, correzione tardiva
@@ -1165,18 +1481,15 @@ class DashboardService:
         # guard "quota esaurita" in `_fetch_api_day_fixtures` (nessun
         # bottone puo' forzare una chiamata quando la quota e' al 100%,
         # stessa policy di tutti gli altri bottoni che chiamano API-Sports).
-        skip_api = not force_refresh and is_historical_date and db_has_target_date
+        # La Dashboard e' una vista DB-first: sincronizzazione quote/fixture
+        # e ricalcolo fingerprint appartengono ai job. Il provider viene
+        # interrogato soltanto dall'azione esplicita "Forza aggiornamento".
+        skip_api = not force_refresh
 
-        # Vista storica SEMPRE veloce (2026-09-10, richiesto esplicitamente
-        # dall'operatore dopo aver segnalato lentezza anche al secondo giro
-        # sulla stessa data): per una data passata, mai un calcolo nuovo di
-        # predizione nella lista - un mercato senza riga gia' salvata
-        # compare semplicemente come non disponibile invece di innescare un
-        # ricalcolo lento (vedi `PredictionSnapshotService.resolve_predictions`).
-        # Il dettaglio di una singola fixture (`get_match_detail`, un click
-        # deliberato) NON e' toccato da questo flag - resta sempre veloce
-        # tanto quanto completo.
-        allow_compute = not is_historical_date
+        # La lista non calcola mai modelli o fingerprint: legge lo snapshot
+        # bulk preparato dal job. Il dettaglio mantiene il ricalcolo
+        # esplicito per la singola fixture.
+        allow_compute = False
 
         if not skip_api:
             for fixture in self._fetch_api_day_fixtures(target_date, force_refresh=force_refresh):
@@ -1208,7 +1521,10 @@ class DashboardService:
                 continue
 
             row = self._serialize_match(
-                match, with_predictions=with_predictions, markets=model_markets, allow_compute=allow_compute
+                match,
+                with_predictions=with_predictions,
+                markets=model_markets,
+                allow_compute=allow_compute,
             )
             if phase and row["phase"] != phase:
                 continue
@@ -1219,11 +1535,16 @@ class DashboardService:
             if row.get("fixture_id") is not None:
                 seen_fixtures.add(row["fixture_id"])
 
+        self._attach_official_cards(rows)
         rows.sort(key=lambda x: (x.get("datetime") or "", x.get("league") or "", x.get("home") or ""))
         total_rows = len(rows)
         if limit > 0:
             rows = rows[:limit]
 
+        # La mappa è valida soltanto per questa richiesta/giorno. Evita che
+        # un riuso esplicito dell'istanza possa leggere snapshot di un'altra
+        # data; gli endpoint FastAPI creano comunque un servizio per request.
+        self._preloaded_snapshots = None
         return DashboardDayData(
             date=target_date.isoformat(),
             total=total_rows,
@@ -1240,47 +1561,14 @@ class DashboardService:
         markets: Optional[list[str]] = None,
     ) -> dict[str, Any]:
         model_markets = self._normalize_market_request(markets) or self.registry.list_markets()
-        rows: list[dict[str, Any]] = []
-        seen_fixtures: set[int] = set()
-
-        # Stessa lookup DB usata da `get_day_matches` (MATCH-01): arricchisce
-        # le righe live-API con badge decision/edge/EV quando la fixture e'
-        # gia' nel DB locale, senza nuove fetch odds verso l'API esterna.
-        db_by_fixture = self._db_matches_lookup(target_date)
-
-        for fixture in self._fetch_api_live_fixtures():
-            fixture_id = self._fixture_id_from_api(fixture)
-            row = self._serialize_api_fixture(
-                fixture,
-                with_predictions=with_predictions,
-                markets=model_markets,
-                db_match=db_by_fixture.get(fixture_id) if fixture_id is not None else None,
-            )
-            if not row or row.get("phase") != "live":
-                continue
-            # Evita sporadici live notturni fuori data target
-            if row.get("date") and row.get("date") != target_date.isoformat():
-                continue
-
-            rows.append(row)
-            seen_fixtures.add(row["fixture_id"])
-
-        # fallback/integrazione da DB per eventuali match live non presenti nel feed API
-        db_live = self.get_day_matches(
+        day = self.get_day_matches(
             target_date=target_date,
             limit=0,
             with_predictions=with_predictions,
             markets=model_markets,
             phase="live",
         )
-        for row in db_live.rows:
-            fixture_id = row.get("fixture_id")
-            if fixture_id in seen_fixtures:
-                continue
-            rows.append(row)
-            if fixture_id is not None:
-                seen_fixtures.add(fixture_id)
-
+        rows = list(day.rows)
         rows.sort(key=lambda x: (x.get("datetime") or "", x.get("league") or "", x.get("home") or ""))
         total_live = len(rows)
         rows = rows[:limit] if limit > 0 else rows
@@ -1305,13 +1593,15 @@ class DashboardService:
         # IDENTICO e completamente inutilizzato di query DB + inferenza
         # modello per ogni cambio data/ricerca.
         day = self.get_day_matches(target_date=target_date, limit=0, with_predictions=False)
+        return self._overview_from_day(day)
 
+    def _overview_from_day(self, day: DashboardDayData) -> dict[str, Any]:
         live_count = 0
         to_play_count = 0
         finished_count = 0
         with_prediction_count = 0
 
-        model_markets = self.registry.list_markets()
+        model_markets = day.model_markets
         for row in day.rows:
             if row["phase"] == "live":
                 live_count += 1
@@ -1327,7 +1617,7 @@ class DashboardService:
         live_preview = [row for row in day.rows if row["phase"] == "live"][:8]
 
         return {
-            "date": target_date.isoformat(),
+            "date": day.date,
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "counts": {
                 "total": len(day.rows),
@@ -1339,6 +1629,43 @@ class DashboardService:
             "model_markets": model_markets,
             "live_preview": live_preview,
             "day_highlights": highlights,
+        }
+
+    def get_dashboard_bundle(
+        self,
+        target_date: date,
+        limit: int = 400,
+        search_text: Optional[str] = None,
+        force_refresh: bool = False,
+    ) -> dict[str, Any]:
+        """Un solo caricamento DB produce tabella, contatori e preview live."""
+        complete_day = self.get_day_matches(
+            target_date=target_date,
+            limit=0,
+            with_predictions=True,
+            search_text=search_text,
+            force_refresh=force_refresh,
+        )
+        overview = self._overview_from_day(complete_day)
+        live_rows = [row for row in complete_day.rows if row.get("phase") == "live"][:30]
+        visible_rows = complete_day.rows[:limit] if limit > 0 else complete_day.rows
+        day = DashboardDayData(
+            date=complete_day.date,
+            total=complete_day.total,
+            returned=len(visible_rows),
+            model_markets=complete_day.model_markets,
+            rows=visible_rows,
+        )
+        return {
+            "overview": overview,
+            "live": {
+                "date": complete_day.date,
+                "total": sum(row.get("phase") == "live" for row in complete_day.rows),
+                "returned": len(live_rows),
+                "model_markets": complete_day.model_markets,
+                "rows": live_rows,
+            },
+            "day": day.__dict__,
         }
 
     _DATES_STATE_FILENAME = "dashboard_dates_state.json"
@@ -1380,17 +1707,17 @@ class DashboardService:
 
         return stored
 
-    def get_available_dates(self) -> dict[str, Any]:
+    def get_available_dates(self, today: Optional[date] = None) -> dict[str, Any]:
         """Elenco date selezionabili in UI (TopFilters): dal primo giorno in
-        cui questa funzionalita' e' stata usata (persistito su file, vedi
-        `_first_seen_date`) fino ad oggi, cosi' che la lista si accumuli
-        automaticamente giorno dopo giorno invece di un calendario libero
-        (richiesta esplicita utente: "elenco di date dal giorno 1 di
-        previsioni ad oggi che man mano viene accumulato"). Se il Prediction
-        Ledger contiene gia' una prediction salvata PRIMA di quella data,
-        vince quella data ancora piu' vecchia."""
-        today = datetime.now(timezone.utc).date()
+        cui questa funzionalita' e' stata usata fino alla finestra futura
+        gestita dal Daily Refresh/Prediction Snapshot job. In questo modo la
+        select espone anche le date per cui il job salva le predizioni prima
+        che l'utente apra la Dashboard. Se il Prediction Ledger contiene una
+        prediction precedente, quella data estende il limite storico."""
+        today = today or datetime.now(timezone.utc).date()
         start = self._first_seen_date(today)
+        future_days = max(0, int(self.cfg.daily_refresh_days_ahead))
+        end = today + timedelta(days=future_days)
 
         earliest_dt = self.ledger_repo.get_earliest_created_date()
         if earliest_dt and earliest_dt.date() < start:
@@ -1398,14 +1725,14 @@ class DashboardService:
         if start > today:
             start = today
 
-        span_days = (today - start).days
+        span_days = (end - start).days
         dates = [(start + timedelta(days=offset)).isoformat() for offset in range(span_days + 1)]
-        dates.reverse()  # oggi per primo: piu' utile in una select
+        dates.reverse()
 
         return {
             "dates": dates,
             "first_date": dates[-1] if dates else today.isoformat(),
-            "last_date": dates[0] if dates else today.isoformat(),
+            "last_date": dates[0] if dates else end.isoformat(),
         }
 
     def get_match_detail(
@@ -1462,6 +1789,15 @@ class DashboardService:
             odds_summary=odds_summary,
             bookmaker_baseline=bookmaker_baseline,
         )
+        try:
+            official_rows = [
+                row
+                for row in self.ledger_repo.list_for_fixture(fixture_id)
+                if row.cohort == "official_paper"
+            ]
+        except (OperationalError, ProgrammingError):
+            official_rows = []
+        decision_cards = self._merge_official_cards(decision_cards, official_rows)
 
         return {
             "fixture": fixture_row,

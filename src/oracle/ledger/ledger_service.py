@@ -27,10 +27,16 @@ from src.oracle.ledger.prediction_ledger import (
     resolve_actual_outcome,
     settle_prediction_record,
 )
+from src.oracle.ledger.settlement_rules import (
+    PENDING_MATCH_STATUSES,
+    RESULT_STATUSES,
+    VOID_STATUS_BY_MATCH_STATUS,
+    SettlementResolution,
+    resolve_settlement,
+)
 from src.repository.match_repository import MatchRepository
 from src.repository.prediction_ledger_repository import PredictionLedgerRepository
 from src.service_ia.model.match import PredictionLedger
-from src.service_ia.pre_processing.settlement_service import FINAL_STATUSES
 from src.service_ia.training.market_service.filter_market_service import FilterMarketService
 from src.service_ia.utility.utils import convert_orm_match_to_dict
 
@@ -44,13 +50,32 @@ def _record_to_orm(record: PredictionRecord) -> PredictionLedger:
         model_name=record.model_name,
         policy_version=record.policy_version,
         p_model=record.p_model,
+        p_market_raw=record.p_market_raw,
         p_market_fair=record.p_market_fair,
         odd=record.odd,
         fair_odd=record.fair_odd,
+        model_void_odd=record.model_void_odd,
+        market_fair_odd=record.market_fair_odd,
+        odds_edge_absolute=record.odds_edge_absolute,
+        odds_edge_percent=record.odds_edge_percent,
         prob_edge=record.prob_edge,
         ev=record.ev,
+        expected_roi_percent=record.expected_roi_percent,
+        play_threshold_odd=record.play_threshold_odd,
+        min_edge_percent=record.min_edge_percent,
+        value_label=record.value_label,
+        value_reason=record.value_reason,
         decision=record.decision,
         stake=record.stake,
+        period=record.period,
+        line=record.line,
+        source=record.source,
+        cohort=record.cohort,
+        captured_at=record.captured_at or record.created_at or datetime.now(timezone.utc),
+        odds_captured_at=record.odds_captured_at,
+        bookmaker_count=record.bookmaker_count,
+        league=int(record.league) if record.league is not None else None,
+        capture_key=record.capture_key,
         kickoff_at=record.kickoff_at,
         created_at=record.created_at or datetime.now(timezone.utc),
         is_settled=record.is_settled,
@@ -77,11 +102,30 @@ def _orm_to_record(row: PredictionLedger) -> PredictionRecord:
         model_name=row.model_name,
         policy_version=row.policy_version,
         p_model=row.p_model,
+        p_market_raw=row.p_market_raw,
         p_market_fair=row.p_market_fair,
         odd=row.odd,
         fair_odd=row.fair_odd,
+        model_void_odd=row.model_void_odd,
+        market_fair_odd=row.market_fair_odd,
+        odds_edge_absolute=row.odds_edge_absolute,
+        odds_edge_percent=row.odds_edge_percent,
         prob_edge=row.prob_edge,
         ev=row.ev,
+        expected_roi_percent=row.expected_roi_percent,
+        play_threshold_odd=row.play_threshold_odd,
+        min_edge_percent=row.min_edge_percent,
+        value_label=row.value_label,
+        value_reason=row.value_reason,
+        period=row.period,
+        line=row.line,
+        source=row.source,
+        cohort=row.cohort,
+        captured_at=row.captured_at,
+        odds_captured_at=row.odds_captured_at,
+        bookmaker_count=row.bookmaker_count,
+        league=str(row.league) if row.league is not None else None,
+        capture_key=row.capture_key,
         kickoff_at=row.kickoff_at,
         created_at=row.created_at,
         is_settled=row.is_settled,
@@ -111,6 +155,16 @@ class PredictionLedgerService:
         kickoff_at: Optional[datetime] = None,
         stake: float = DEFAULT_STAKE,
         dedupe: bool = True,
+        p_market_raw: Optional[float] = None,
+        period: str = "full_time",
+        line: Optional[str] = None,
+        source: str = "manual",
+        cohort: str = "manual",
+        captured_at: Optional[datetime] = None,
+        odds_captured_at: Optional[datetime] = None,
+        bookmaker_count: int = 0,
+        league: Optional[int] = None,
+        capture_key: Optional[str] = None,
     ) -> PredictionLedger:
         """Salva UNA prediction PRIMA del kickoff (acceptance criteria).
 
@@ -120,9 +174,29 @@ class PredictionLedgerService:
         garanzia di immutabilita': una prediction gia' salvata non viene mai
         ri-scritta da una chiamata successiva con lo stesso `model_run_id`.
         """
+        captured_at = captured_at or datetime.now(timezone.utc)
+        is_official = cohort == "official_paper" or source == "scheduled_official_capture"
+        if is_official and kickoff_at is None:
+            raise ValueError("kickoff_at obbligatorio per registrare una giocata")
+        captured_aware = captured_at if captured_at.tzinfo else captured_at.replace(tzinfo=timezone.utc)
+        if is_official and kickoff_at is not None:
+            kickoff_aware = kickoff_at if kickoff_at.tzinfo else kickoff_at.replace(tzinfo=timezone.utc)
+            if captured_aware >= kickoff_aware:
+                raise ValueError("Una giocata non può essere registrata al o dopo il kickoff")
+        if decision.decision == "PLAY" and (decision.odd is None or float(decision.odd) <= 0):
+            raise ValueError("Una PLAY richiede una quota valida")
+
+        if capture_key:
+            existing = self.repo.find_by_capture_key(capture_key)
+            if existing is not None:
+                return existing
         if dedupe:
             existing = self.repo.find_existing(
-                fixture_id=fixture_id, market=decision.market, outcome=decision.outcome, model_run_id=model_run_id
+                fixture_id=fixture_id,
+                market=decision.market,
+                outcome=decision.outcome,
+                model_run_id=model_run_id,
+                cohort=cohort,
             )
             if existing is not None:
                 return existing
@@ -134,25 +208,48 @@ class PredictionLedgerService:
             model_name=model_name,
             kickoff_at=kickoff_at,
             stake=stake,
+            p_market_raw=p_market_raw,
+            period=period,
+            line=line,
+            source=source,
+            cohort=cohort,
+            captured_at=captured_at,
+            odds_captured_at=odds_captured_at,
+            bookmaker_count=bookmaker_count,
+            league=str(league) if league is not None else None,
+            capture_key=capture_key,
         )
         return self.repo.save(_record_to_orm(record))
 
-    def _resolve_outcome_for_fixture(self, fixture_id: int, market: str) -> tuple[Optional[str], Optional[str]]:
-        """Ritorna `(actual_outcome, match_status)`. `match_status` e'
-        `None` se il match non esiste ancora nel DB (fixture non importata):
-        distinto da uno status non-finale, cosi' il chiamante puo' scegliere
-        di trattarli diversamente se necessario."""
+    def _resolve_outcome_for_fixture(
+        self,
+        fixture_id: int,
+        market: str,
+        period: str = "full_time",
+        line: Optional[str] = None,
+    ) -> SettlementResolution:
         match = self.match_repo.filter_by(dict_search={"id_fixture": int(fixture_id)}).first()
         if match is None:
-            return None, None
-
-        status = str(match.status or "")
-        if status not in FINAL_STATUSES:
-            return None, status
+            return SettlementResolution(pending=True)
 
         match_dict = convert_orm_match_to_dict([match])[0]
         stat_home, stat_away = FilterMarketService._resolve_team_stats(match=match_dict, with_full_stats=True)
-        return resolve_actual_outcome(market=market, stat_home=stat_home, stat_away=stat_away), status
+        home_score = match.score_home
+        away_score = match.score_away
+        if home_score is None and stat_home:
+            home_score = stat_home.get("score_ft")
+        if away_score is None and stat_away:
+            away_score = stat_away.get("score_ft")
+        return resolve_settlement(
+            market=market,
+            match_status=str(match.status or ""),
+            home_score=home_score,
+            away_score=away_score,
+            stat_home=stat_home,
+            stat_away=stat_away,
+            period=period,
+            line=line,
+        )
 
     def settle_prediction(self, id_prediction: str) -> Optional[PredictionLedger]:
         """Settlement di UNA prediction: nessun effetto se il match non e'
@@ -161,11 +258,21 @@ class PredictionLedgerService:
         if row is None or row.is_settled:
             return row
 
-        actual_outcome, status = self._resolve_outcome_for_fixture(fixture_id=row.fixture_id, market=row.market)
-        if status not in FINAL_STATUSES:
+        resolution = self._resolve_outcome_for_fixture(
+            fixture_id=row.fixture_id,
+            market=row.market,
+            period=row.period,
+            line=row.line,
+        )
+        if resolution.pending:
             return row  # match non ancora concluso: resta pending, nessuna modifica
 
-        record = settle_prediction_record(record=_orm_to_record(row), actual_outcome=actual_outcome)
+        record = settle_prediction_record(
+            record=_orm_to_record(row),
+            actual_outcome=resolution.actual_outcome,
+            void_status=resolution.void_status,
+            is_push=resolution.is_push,
+        )
         return self.repo.save(_record_to_orm(record))
 
     def settle_pending(self, before: Optional[datetime] = None, limit: int = 500) -> dict[str, Any]:
@@ -175,24 +282,49 @@ class PredictionLedgerService:
         restano pending, mai forzate."""
         pending = self.repo.list_pending_settlement(before=before, limit=limit)
         report = {
-            "candidates": len(pending),
-            "settled": 0,
-            "still_pending": 0,
-            "void_no_result": 0,
+            "ledger_candidates": len(pending),
+            "ledger_settled_win": 0,
+            "ledger_settled_loss": 0,
+            "ledger_void": 0,
+            "ledger_still_pending": 0,
+            "errors": [],
         }
 
         for row in pending:
-            actual_outcome, status = self._resolve_outcome_for_fixture(fixture_id=row.fixture_id, market=row.market)
-            if status not in FINAL_STATUSES:
-                report["still_pending"] += 1
-                continue
+            try:
+                resolution = self._resolve_outcome_for_fixture(
+                    fixture_id=row.fixture_id,
+                    market=row.market,
+                    period=row.period,
+                    line=row.line,
+                )
+                if resolution.pending:
+                    report["ledger_still_pending"] += 1
+                    continue
 
-            record = settle_prediction_record(record=_orm_to_record(row), actual_outcome=actual_outcome)
-            self.repo.save(_record_to_orm(record))
-            report["settled"] += 1
-            if actual_outcome is None:
-                report["void_no_result"] += 1
+                record = settle_prediction_record(
+                    record=_orm_to_record(row),
+                    actual_outcome=resolution.actual_outcome,
+                    void_status=resolution.void_status,
+                    is_push=resolution.is_push,
+                )
+                saved = self.repo.save(_record_to_orm(record))
+                if saved.settlement_status == "settled_win":
+                    report["ledger_settled_win"] += 1
+                elif saved.settlement_status == "settled_loss":
+                    report["ledger_settled_loss"] += 1
+                else:
+                    report["ledger_void"] += 1
+            except Exception as exc:
+                report["errors"].append(
+                    {"fixture_id": row.fixture_id, "id_prediction": row.id_prediction, "message": str(exc)}
+                )
 
+        # Alias retro-compatibili per consumer BET-06 precedenti.
+        report["candidates"] = report["ledger_candidates"]
+        report["settled"] = report["ledger_settled_win"] + report["ledger_settled_loss"] + report["ledger_void"]
+        report["still_pending"] = report["ledger_still_pending"]
+        report["void_no_result"] = report["ledger_void"]
         return report
 
     def list_ledger(
@@ -207,18 +339,26 @@ class PredictionLedgerService:
         fonte di verita' minimale per "PnL paper calcolabile" (acceptance
         criteria), sempre coerente per costruzione con quanto salvato."""
         rows = self.repo.list_all(market=market, is_settled=True, limit=1_000_000)
-        settled_with_pnl = [row for row in rows if row.pnl is not None]
-
-        wins = sum(1 for row in settled_with_pnl if row.won)
+        wins = sum(1 for row in rows if row.settlement_status == "settled_win")
+        losses = sum(1 for row in rows if row.settlement_status == "settled_loss")
+        voids = [row for row in rows if str(row.settlement_status or "").startswith("void_")]
+        realised_rows = [
+            row
+            for row in rows
+            if str(row.settlement_status or "").startswith("void_")
+            or row.settlement_status in {"settled_win", "settled_loss", "settled"}
+        ]
         return {
             "market": market,
             "settled_total": len(rows),
-            "settled_with_pnl": len(settled_with_pnl),
-            "void": len(rows) - len(settled_with_pnl),
+            "settled_with_pnl": wins + losses,
+            "void": len(voids),
             "wins": wins,
-            "losses": len(settled_with_pnl) - wins,
-            "total_pnl": float(sum(row.pnl for row in settled_with_pnl)),
-            "total_staked": float(sum(row.stake for row in settled_with_pnl)),
+            "losses": losses,
+            "total_pnl": float(sum(float(row.pnl or 0.0) for row in realised_rows)),
+            "total_staked": float(
+                sum(row.stake for row in realised_rows if not str(row.settlement_status or "").startswith("void_"))
+            ),
         }
 
     def paper_pnl_report(

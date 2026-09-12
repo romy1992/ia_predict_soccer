@@ -266,6 +266,12 @@ class DashboardOverviewResponse(BaseModel):
     day_highlights: list[dict[str, Any]]
 
 
+class DashboardBundleResponse(BaseModel):
+    overview: dict[str, Any]
+    live: dict[str, Any]
+    day: dict[str, Any]
+
+
 class DashboardAvailableDatesResponse(BaseModel):
     """Elenco date selezionabili nel filtro UI (TopFilters): dal giorno 1 di
     prediction salvata ad oggi, accumulato progressivamente (mai un
@@ -364,16 +370,45 @@ class PredictionLedgerResponse(BaseModel):
 
 
 class PredictionSettlementResponse(BaseModel):
-    candidates: int
-    settled: int
-    still_pending: int
-    void_no_result: int
+    ledger_candidates: int
+    ledger_settled_win: int
+    ledger_settled_loss: int
+    ledger_void: int
+    ledger_still_pending: int
+    errors: list[dict[str, Any]] = []
 
 
 class PaperPnlResponse(BaseModel):
     market: Optional[str] = None
     raw_summary: dict[str, Any]
     report: dict[str, Any]
+
+
+class OfficialPerformanceResponse(BaseModel):
+    source: str
+    cohort: str
+    generated_at: str
+    filters: dict[str, Any]
+    sample_size: int
+    settled_count: int
+    void_count: int
+    pending_count: int
+    overall: dict[str, Any]
+    breakdowns: dict[str, Any]
+
+
+class OfficialClvResponse(BaseModel):
+    source: str
+    cohort: str
+    generated_at: str
+    filters: dict[str, Any]
+    sample_size: int
+    settled_count: int
+    void_count: int
+    pending_count: int
+    overall: dict[str, Any]
+    breakdowns: dict[str, Any]
+    rows: list[dict[str, Any]]
 
 
 class BetslipPoolResponse(BaseModel):
@@ -404,7 +439,31 @@ class BetslipGenerateResponse(BaseModel):
     pool_policy_version: Optional[str] = None
     pool_considered: int
     profiles: dict[str, list[dict[str, Any]]] = {}
+    decision_groups: dict[str, dict[str, list[dict[str, Any]]]] = {}
     warnings: list[str] = []
+    snapshot_report: Optional[dict[str, int]] = None
+
+
+class OfficialBetslipListResponse(BaseModel):
+    total: int
+    rows: list[dict[str, Any]] = []
+
+
+class BetslipProposalListResponse(BaseModel):
+    total: int
+    rows: list[dict[str, Any]] = []
+
+
+class OfficialBetslipStatisticsResponse(BaseModel):
+    statistics: dict[str, Any]
+
+
+class BettingStatisticsResponse(BaseModel):
+    generated_at: str
+    filters: dict[str, Any]
+    overview: dict[str, Any]
+    markets: dict[str, Any]
+    slips: dict[str, Any]
 
 
 class ModelRegistryOverviewResponse(BaseModel):

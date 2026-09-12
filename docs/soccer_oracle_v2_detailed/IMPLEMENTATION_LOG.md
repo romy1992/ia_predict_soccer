@@ -1,3 +1,32 @@
+## 2026-09-10 — Correzione quota void IA e Match Center per mercato
+
+- Introdotta `decision_policy_v2_model_break_even`, senza modificare la v1
+  storica: `model_void_odd = 1 / p_model`, soglia PLAY configurabile tramite
+  `min_edge_percent` (default 2%), classificazioni `PLAY`, `BORDERLINE`,
+  `NO BET`, `SENZA QUOTA` e `N/D` con motivazione esplicita.
+- Distinte le grandezze `model_void_odd` e `market_fair_odd`; aggiunti edge
+  quota assoluto/percentuale, EV, ROI atteso e soglia PLAY. L'edge
+  probabilistico preesistente resta invariato.
+- Esteso il Prediction Ledger in modo additivo per congelare le nuove
+  metriche e la motivazione al momento della cattura. Nessun record
+  preesistente viene aggiornato retroattivamente.
+- Dashboard e cattura ufficiale continuano a usare lo stesso entry point
+  della Decision Policy. Il dettaglio supporta inoltre output 1X2
+  multiclass Home/Draw/Away e Double Chance derivata, prezzando ogni outcome
+  soltanto con la propria quota.
+- Match Center esteso con selettore mercato, filtro Situazione, contatori,
+  colonne separate per quota mercato/quota void/edge/ROI atteso/stato
+  ufficiale e card mobile. Le NO BET restano visibili.
+- Per fixture con Ledger ufficiale, Match Center usa i valori congelati e
+  mostra PENDING/WON/LOST/VOID e PnL; in assenza di record mostra
+  “Non ufficiale”.
+- Rifinitura vista “Tutti i mercati”: mantenuti i chip storici di ogni
+  previsione (con colore di correttezza/confidenza), aggiunto su ciascun chip
+  lo stato economico prodotto dal backend e affiancato il “Pronostico
+  vincitore” con probabilità, quota mercato, quota void IA, edge, ROI atteso
+  ed esito ufficiale. Se viene selezionato un singolo mercato resta la vista
+  analitica dedicata a quel mercato.
+
 # Soccer Oracle V2 - Implementation Log
 
 ## Baseline (SOCCER-00)
@@ -276,6 +305,102 @@ Prima di ogni task viene applicata la premessa in `AI_MASTER_PROMPT.md`:
 ## Migrazioni applicate (locale + docker)
 - locale: `alembic stamp 55bbb5f0a367` + `alembic upgrade head` (ora include anche `f3a9c1d8e2b7`, vedi sotto)
 - docker: nessuna piu' necessaria, l'API Docker riusa lo schema del DB locale (nessun Postgres containerizzato)
+
+- **Schedine ufficiali e metriche decisionali complete (2026-09-10)**:
+  esteso il generatore esistente senza introdurre un secondo motore.
+  `CandidatePick` trasporta le metriche già prodotte dalla Decision Policy;
+  `GeneratedSlip` espone quota combinata, probabilità ingenua e corretta,
+  quota void combinata, edge, expected ROI, rischio, situazione e versioni.
+  I profili mantengono le soglie tecniche precedenti ma sono versionati
+  `*_v2_play_only`: solo selezioni `PLAY`, una fixture per schedina di
+  default. Aggiunte le tabelle additive `betting_slips` e
+  `betting_slip_picks` (migration `8f7d3c2a1b09`) con capture key
+  deterministica, snapshot pre-partita, settlement `PENDING/WON/LOST/VOID`,
+  quota effettiva con VOID a fattore 1, ritorno e PnL. Il job ufficiale
+  cattura le schedine dopo le singole PLAY; il job settlement aggiorna
+  anche le schedine. Nuove API GET read-only per lista e statistiche
+  ufficiali. La pagina Schedina mostra profili Prudente/Bilanciata/Spinta,
+  metriche aggregate e tutte le metriche di ogni selezione, distinguendo
+  quota void modello da esito VOID.
+
+- **Ottimizzazione end-to-end Dashboard (2026-09-11)**:
+  eliminato il collo di bottiglia N×M degli snapshot con
+  `MatchPredictionSnapshotRepository.get_latest_bulk`, che usa una window
+  function per leggere soltanto l'ultima riga di ogni coppia
+  fixture/mercato. `DashboardService.get_day_matches` carica quella mappa
+  una volta e la riusa per tutte le righe senza consentire inferenza inline.
+  La vista è DB-first per passato, oggi e futuro; API-Sports viene consultata
+  soltanto da refresh esplicito o dai job dedicati.
+
+  Aggiunto `GET /dashboard/bundle`: overview, live e day derivano dallo
+  stesso dataset anziché eseguire fino a quattro letture del giorno. La
+  query ORM usa il giorno esatto, limita le colonne di `statistics` e non
+  carica `odds_snapshots`. Le fetch API concorrenti con la stessa cache key
+  sono serializzate in single-flight e il recupero multi-lega è parallelo.
+  Il frontend usa una sola richiesta bundle, filtra fase/mercato in memoria,
+  protegge il mount iniziale duplicato e sospende il polling quando la
+  Dashboard non è attiva.
+
+  Migration additiva `c3a7e2f91d44_dashboard_query_indexes.py`: indici su
+  `statistics.id_match`, `odds.id_match`,
+  `prediction_ledger(cohort, fixture_id)` e
+  `prediction_ledger.created_at`. Nessun dato o contratto API precedente è
+  stato rimosso. Misura comparativa sullo stesso carico (7 fixture × 7
+  mercati): da 54 query SQL totali, incluse 49 query snapshot, a 5 query
+  totali con una sola query snapshot bulk. Sul database SQLite isolato il
+  percorso consolidato ha impiegato 0,0126 s; il precedente rilievo sul
+  percorso remoto era 6,438 s, quindi i tempi assoluti non sono direttamente
+  confrontabili ma il numero di round-trip sì. Validazione: 111 test mirati
+  Dashboard/snapshot/frontend passati; suite completa 904 test passati;
+  build Vite riuscita; migration verificata con ciclo
+  upgrade/downgrade/upgrade su database isolato.
+
+- **Persistenza proposte e statistiche betting unificate (2026-09-11)**:
+  introdotta la migration additiva
+  `d9b4f6a21c73_betslip_proposal_snapshots.py`. Ogni proposta generata viene
+  salvata come snapshot append-only con chiave idempotente, lineage logica,
+  indicatore di revisione corrente, metriche combinate, versioni e payload
+  completo delle selezioni. Quote o metriche immutate non producono righe
+  duplicate; una variazione reale crea una nuova revisione senza modificare
+  la precedente.
+
+  Aggiunti `POST /betslip/generate/snapshot` per l'azione manuale esplicita
+  e `GET /betting/statistics` per la vista aggregata. Il job
+  `prediction_snapshot_refresh` salva automaticamente le proposte delle
+  giornate future dopo aver aggiornato le prediction. La GET storica
+  `/betslip/generate` resta read-only.
+
+  La Schedina Oracle espone ora le viste Panoramica, Mercati e Schedine:
+  tabella giornaliera per mercato, attività generata e performance
+  giornaliera delle schedine ufficiali. Proposte e performance ufficiale
+  sono deliberatamente separate: ROI, profitto e bankroll continuano a
+  derivare soltanto dalle schedine ufficiali congelate pre-kickoff.
+
+  Correzione anti-hindsight: `POST /betslip/generate/snapshot` rifiuta date
+  passate e, per la giornata corrente, salva solo schedine con tutti i
+  kickoff futuri e validi. `GET /betslip/proposals` permette di consultare
+  gli snapshot storici senza rigenerarli; il frontend passa automaticamente
+  alla modalità “Solo consultazione” quando viene selezionata una data
+  precedente a oggi.
+
+  Estensione diversificazione/shadow tracking: policy
+  `betslip_diversification_v2_soft_fallback` e profili
+  `*_v4_soft_diversification`. Il pool è stratificato per famiglia di
+  mercato; il ranking preferisce famiglie diverse e combinazioni poco
+  sovrapposte, ma una sola famiglia disponibile attiva un fallback
+  esplicitamente segnalato invece di produrre zero schedine. La risposta è
+  limitata in modo deterministico a 18 proposte complessive, con obiettivo
+  minimo 10 e warning se i candidati validi non sono sufficienti. Il
+  generatore espone tre gruppi distinti: Consigliate (`PLAY`), Sperimentali
+  (`BORDERLINE`) e Non consigliate (`NO BET`).
+
+  Migration additiva `e4c8a17d5b92_shadow_betslip_settlement.py`: gli
+  snapshot delle tre coorti ricevono settlement simulato
+  `PENDING/WON/LOST/VOID`, stake unitario, quota effettiva, ritorno e PnL.
+  Il job settlement riusa le regole centrali esistenti. Le statistiche
+  espongono portafoglio simulato complessivo e portafogli separati per
+  stato, usando solo l'ultima revisione pre-kickoff; le revisioni precedenti
+  restano nel DB per ricerca. Nessun dato simulato entra nel ROI ufficiale.
 
 ## Connessione DB runtime
 - **AGGIORNATO 2026-09-04**: sorgente runtime ora fissata sul DB dev remoto Railway: `DATABASE_URL=postgresql://postgres:...@sakura.proxy.rlwy.net:18862/railway` (credenziali complete in `properties/config.env`), unica per locale/Docker/Alembic - vedi entry INFRA sopra. Il valore storico sotto (`localhost:5432/match_db`) e la narrazione del fix Docker restano come riferimento della situazione PRECEDENTE al cambio Railway.
