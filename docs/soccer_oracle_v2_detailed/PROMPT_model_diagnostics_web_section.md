@@ -1,3 +1,13 @@
+> **STATO: IMPLEMENTATO (2026-09-12)**. Vedi `IMPLEMENTATION_LOG.md`, voce
+> "Model Diagnostics: report out-of-fold per mercato nel frontend web", per
+> il dettaglio completo di backend/API/frontend consegnati. Decisioni prese
+> sui due punti lasciati aperti qui sotto: (1) menu — nuova voce top-level
+> "Model Diagnostics" (confermata con l'operatore); (2) identita' visiva —
+> mantenuta quella distinta dell'Artifact (teal/amber), scoped sotto
+> `.model-diagnostics-page` per non toccare la palette generale dell'app.
+> Questo file resta come riferimento storico del design/dei requisiti
+> originali, non piu' come lavoro da fare.
+
 # Prompt: sezione "Model Diagnostics" nel frontend web
 
 Richiesto esplicitamente dall'operatore (prima il 2026-09-08 come nota per il
