@@ -551,14 +551,24 @@ def _save_line_model(result: CardsLineTrainResult) -> dict[str, Any]:
 
 
 def run_cards_benchmark(
-    matches: list[dict[str, Any]],
+    matches: Optional[list[dict[str, Any]]] = None,
     lines: tuple[float, ...] = DEFAULT_LINES,
     odds_market: str = ODDS_MARKET,
     save_model: bool = True,
+    frame: Optional[pd.DataFrame] = None,
 ) -> CardsBenchmarkRunResult:
     """Costruisce il dataset reale, addestra+calibra ciascuna linea e,
-    se richiesto, registra ciascun modello come 'candidate' separato."""
-    frame = build_cards_frame_from_records(matches, lines=lines, odds_market=odds_market)
+    se richiesto, registra ciascun modello come 'candidate' separato.
+
+    `frame` (2026-09-12, additivo): se gia' fornito (es. caricato da un CSV
+    esportato da un ambiente con accesso DB reale - vedi
+    `export_corners_cards_for_cloud_training.py`/
+    `train_corners_cards_from_export.py`, stesso pattern gia' in uso per
+    Under/Over/`train_from_export.py`), viene usato DIRETTAMENTE e `matches`
+    e' ignorato (mai ricostruito da zero) - permette di eseguire il training
+    pesante in un ambiente SENZA accesso diretto al DB."""
+    if frame is None:
+        frame = build_cards_frame_from_records(matches or [], lines=lines, odds_market=odds_market)
     if frame.empty:
         return CardsBenchmarkRunResult(market=MARKET_NAME, rows=0, status="skipped_no_data", lines_trained=[], details={})
 
