@@ -15,10 +15,19 @@ Aggiunge:
   estratte da `FilterMarketService`): media storica corner fatti/concessi
   per squadra (`mean_statistics['Corner Kicks']`), totale medio atteso e
   differenziale — nessuna nuova query DB, solo un secondo utilizzo mirato
-  di un campo gia' disponibile;
+  di un campo gia' disponibile. NESSUNA feature arbitro (a differenza di
+  Cards, MARKET-06): discusso e confermato esplicitamente con l'operatore
+  il 2026-09-12 - l'arbitro non ha un'influenza diretta/nota sul numero di
+  calci d'angolo, a differenza dei cartellini;
 - calibrazione (Platt/isotonic) via `CalibrationService` (ML-06, gia'
   esistente, non duplicata) per il modello di CIASCUNA linea;
-- report con metriche PER LINEA (acceptance criteria).
+- report con metriche PER LINEA, ora COMPLETO (acceptance criteria +
+  richiesta esplicita "tutte le metriche possibili", 2026-09-12): oltre a
+  log loss/Brier/ECE/AUC pre/post calibrazione (gia' esistenti), ogni linea
+  espone anche un report di classificazione completo (accuracy, confusion
+  matrix, precision/recall/F1 per classe e pesati, curva ROC+PR, soglia
+  ottimale di Youden) via `classification_report.py` (NUOVO, condiviso e
+  identico a quello usato da cards_market.py, mai duplicato).
 """
 
 from __future__ import annotations
@@ -33,6 +42,8 @@ import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
 
 from src.ml.calibration.calibration_service import CalibrationResult, CalibrationService
+from src.ml.evaluation.classification_report import compute_full_classification_report
+from src.ml.evaluation.probability_metrics import champion_probability_score
 from src.ml.validation.temporal_split import expanding_window_splits
 from src.repository.match_repository import MatchRepository
 from src.service_ia.training.market_service.filter_market_service import FilterMarketService
@@ -167,16 +178,32 @@ class CornersBenchmarkReport:
     results: dict[str, CornersLineTrainResult]
 
     def metrics_summary(self) -> dict[str, dict[str, Any]]:
-        return {
-            label: {
+        """Report COMPLETO per linea (2026-09-12, "tutte le metriche
+        possibili"): oltre a `pre_metrics`/`post_metrics` (log loss/Brier/
+        ECE/AUC/reliability, gia' esistenti), aggiunge un report di
+        classificazione completo (accuracy/confusion matrix/precision/
+        recall/F1/ROC/PR/soglia ottimale, via `classification_report.py`)
+        calcolato sugli STESSI array OOF gia' prodotti dalla calibrazione -
+        nessun nuovo giro di walk-forward."""
+        summary: dict[str, dict[str, Any]] = {}
+        for label, result in self.results.items():
+            calibration = result.calibration
+            classification_pre = compute_full_classification_report(
+                y_true=calibration.pre_y_true, probabilities=calibration.pre_probabilities
+            )
+            classification_post = compute_full_classification_report(
+                y_true=calibration.post_y_true, probabilities=calibration.post_probabilities
+            )
+            summary[label] = {
                 "line": result.line,
                 "sample_size": result.sample_size,
-                "pre_metrics": result.calibration.pre_metrics,
-                "post_metrics": result.calibration.post_metrics,
-                "calibration_method": result.calibration.method,
+                "pre_metrics": calibration.pre_metrics,
+                "post_metrics": calibration.post_metrics,
+                "calibration_method": calibration.method,
+                "classification_report_pre": classification_pre,
+                "classification_report_post": classification_post,
             }
-            for label, result in self.results.items()
-        }
+        return summary
 
 
 def train_corners_all_lines(
@@ -299,22 +326,54 @@ def _save_line_model(result: CornersLineTrainResult) -> dict[str, Any]:
     os.makedirs(os.path.dirname(model_path), exist_ok=True)
     joblib.dump(result.calibration.calibrator, model_path)
 
+    calibration = result.calibration
+    classification_pre = compute_full_classification_report(
+        y_true=calibration.pre_y_true, probabilities=calibration.pre_probabilities
+    )
+    classification_post = compute_full_classification_report(
+        y_true=calibration.post_y_true, probabilities=calibration.post_probabilities
+    )
+    post_weighted_f1 = classification_post.get("weighted", {}).get("f1", 0.0)
+    selection_score = champion_probability_score(metrics=calibration.post_metrics, f1_weighted=post_weighted_f1)
+
     registry = ModelRegistry()
     return registry.register(
         model_path=model_path,
         market=f"{MARKET_NAME}_{line_label}",
         model_name="calibrated_random_forest",
         feature_names=result.feature_names,
+        # Metriche SCALARI (2026-09-12, "tutte le metriche possibili" +
+        # compatibilita' col gate di promozione, OPS-02, che legge
+        # esplicitamente post_log_loss/post_brier/post_ece/post_auc/
+        # sample_size/selection_score - PRIMA mancavano post_ece/post_auc/
+        # sample_size, quindi il gate avrebbe sempre bloccato la promozione
+        # di questi mercati per "sample_size non disponibile").
         metrics={
-            "pre_log_loss": result.calibration.pre_metrics.get("log_loss"),
-            "post_log_loss": result.calibration.post_metrics.get("log_loss"),
-            "pre_brier": result.calibration.pre_metrics.get("brier"),
-            "post_brier": result.calibration.post_metrics.get("brier"),
+            "sample_size": result.sample_size,
+            "pre_log_loss": calibration.pre_metrics.get("log_loss"),
+            "pre_brier": calibration.pre_metrics.get("brier"),
+            "pre_ece": calibration.pre_metrics.get("ece"),
+            "pre_auc": calibration.pre_metrics.get("auc"),
+            "post_log_loss": calibration.post_metrics.get("log_loss"),
+            "post_brier": calibration.post_metrics.get("brier"),
+            "post_ece": calibration.post_metrics.get("ece"),
+            "post_auc": calibration.post_metrics.get("auc"),
+            "post_accuracy": classification_post.get("accuracy"),
+            "post_f1_weighted": post_weighted_f1,
+            "selection_score": selection_score,
         },
+        # Report NESTED completo (confusion matrix/ROC/PR/soglia ottimale +
+        # reliability): troppo voluminoso per il dict `metrics` (letto dal
+        # gate di promozione e da liste/dashboard sintetiche), ma conservato
+        # per intero qui per l'analisi/debug per-linea.
         extra={
             "line": result.line,
-            "calibration_method": result.calibration.method,
+            "calibration_method": calibration.method,
             "sample_size": result.sample_size,
+            "reliability_pre": calibration.pre_metrics.get("reliability"),
+            "reliability_post": calibration.post_metrics.get("reliability"),
+            "classification_report_pre": classification_pre,
+            "classification_report_post": classification_post,
         },
         stage="candidate",
     )

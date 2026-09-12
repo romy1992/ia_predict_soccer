@@ -160,6 +160,18 @@ class TestTrainCornersAllLines(unittest.TestCase):
             self.assertIn("pre_metrics", entry)
             self.assertIn("post_metrics", entry)
             self.assertIn("line", entry)
+            # "Tutte le metriche possibili" (2026-09-12): confusion matrix,
+            # precision/recall/F1, ROC/PR e soglia ottimale, per pre e post
+            # calibrazione, sugli stessi array OOF gia' calcolati.
+            for report_key in ("classification_report_pre", "classification_report_post"):
+                self.assertIn(report_key, entry)
+                classification = entry[report_key]
+                self.assertIn(classification["status"], {"ok", "single_class"})
+                if classification["status"] == "ok":
+                    self.assertIn("confusion_matrix", classification)
+                    self.assertIn("roc", classification)
+                    self.assertIn("pr_curve", classification)
+                    self.assertIn("optimal_threshold", classification)
 
     def test_raises_when_dataset_too_small_for_temporal_cv(self):
         matches = _synthetic_matches(n=10)

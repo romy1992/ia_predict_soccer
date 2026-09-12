@@ -44,6 +44,15 @@ class TestCalibrationService(unittest.TestCase):
         self.assertIsInstance(result.post_metrics["brier"], float)
         self.assertEqual(result.sample_size, n_rows)
 
+        # 2026-09-12: array OOF grezzi esposti per un report di
+        # classificazione completo a valle (vedi classification_report.py),
+        # senza dover rifare il walk-forward OOF una seconda volta.
+        self.assertEqual(len(result.pre_probabilities), len(result.pre_y_true))
+        self.assertEqual(len(result.post_probabilities), len(result.post_y_true))
+        self.assertGreater(len(result.pre_probabilities), 0)
+        self.assertGreater(len(result.post_probabilities), 0)
+        self.assertTrue(set(np.unique(result.pre_y_true)).issubset({0, 1}))
+
     def test_calibrator_is_associated_with_model_run_metadata(self):
         # Acceptance ML-06: il calibratore deve poter essere versionato/associato al run.
         # In train_multi_market.py il calibratore fitted viene salvato come modello
