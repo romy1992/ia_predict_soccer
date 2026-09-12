@@ -37,6 +37,7 @@ from sklearn.impute import SimpleImputer
 from sklearn.metrics import f1_score
 from sklearn.pipeline import Pipeline
 
+from src.ml.evaluation.classification_report import compute_full_classification_report
 from src.ml.evaluation.probability_metrics import champion_probability_score, compute_probability_metrics
 from src.ml.validation.temporal_split import expanding_window_splits
 
@@ -128,11 +129,16 @@ def evaluate_line(frame: pd.DataFrame, mean_cols: list[str], extra_cols: list[st
     line_score = _selection_score(y_true, oof_line[idx])
     delta = line_score["selection_score"] - pooled_score["selection_score"]
 
+    pooled_classification = compute_full_classification_report(y_true, oof_pooled[idx])
+    line_classification = compute_full_classification_report(y_true, oof_line[idx])
+
     return {
         "n_rows": int(len(working)),
         "n_oof": int(len(idx)),
         "pooled": pooled_score,
         "line_specific": line_score,
+        "pooled_classification": pooled_classification,
+        "line_specific_classification": line_classification,
         "delta_selection_score": delta,
         "verdict": (
             f"ADOTTATO: delta {delta:+.4f} supera {ADOPTION_DELTA_THRESHOLD}"
@@ -155,8 +161,10 @@ def main() -> None:
             result = evaluate_line(frame, mean_cols, config["extra_cols"], line_label)
             results[market][line_label] = result
             print(f"n_rows={result['n_rows']} n_oof={result['n_oof']} elapsed={time.time()-t1:.1f}s")
-            print(f"  pooled        : selection_score={result['pooled']['selection_score']:.4f} auc={result['pooled']['auc']:.4f}")
-            print(f"  line_specific : selection_score={result['line_specific']['selection_score']:.4f} auc={result['line_specific']['auc']:.4f}")
+            pooled_acc = result["pooled_classification"].get("accuracy")
+            line_acc = result["line_specific_classification"].get("accuracy")
+            print(f"  pooled        : selection_score={result['pooled']['selection_score']:.4f} auc={result['pooled']['auc']:.4f} accuracy={pooled_acc:.4f}")
+            print(f"  line_specific : selection_score={result['line_specific']['selection_score']:.4f} auc={result['line_specific']['auc']:.4f} accuracy={line_acc:.4f}")
             print(f"  -> {result['verdict']}\n", flush=True)
 
     print(f"elapsed totale={time.time()-t0:.1f}s")
