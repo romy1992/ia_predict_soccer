@@ -42,6 +42,12 @@ export const MENU_ITEMS = [
       "Sorveglianza modelli in produzione: alert, ROI rolling, drift calibrazione, feature coverage. Es: alert ECE drift sul mercato Over 2.5.",
   },
   {
+    id: "model-diagnostics",
+    label: "Model Diagnostics",
+    description:
+      "Report out-of-fold per ogni mercato con un modello registrato: confusion matrix, precision/recall/F1 per classe e curva ROC. Es: AUC 0.58 su Over/Under 2.5, 7620 righe OOF.",
+  },
+  {
     id: "settings",
     label: "Impostazioni",
     description:

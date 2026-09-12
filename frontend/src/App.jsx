@@ -14,6 +14,7 @@ import {
   getJobs,
   getJobSettings,
   getMarkets,
+  getModelDiagnostics,
   getMonitoringAlerts,
   getMonitoringOverview,
   getOfficialPerformance,
@@ -72,6 +73,9 @@ export default function App() {
   const [officialDays, setOfficialDays] = useState(30);
   const [monitoringLoading, setMonitoringLoading] = useState(false);
   const [monitoringError, setMonitoringError] = useState("");
+  const [modelDiagnosticsReport, setModelDiagnosticsReport] = useState(null);
+  const [modelDiagnosticsLoading, setModelDiagnosticsLoading] = useState(false);
+  const [modelDiagnosticsError, setModelDiagnosticsError] = useState("");
   const [predictOutput, setPredictOutput] = useState("");
   const [opsMessage, setOpsMessage] = useState("");
   const [error, setError] = useState("");
@@ -330,6 +334,24 @@ export default function App() {
       setMonitoringLoading(false);
     }
   }, [monitoringMarket, officialDays]);
+  const loadModelDiagnostics = useCallback(async ({ forceRefresh = false } = {}) => {
+    // GET /models/diagnostics: walk-forward OOF ricalcolato server-side
+    // (cache TTL 15 min li' - vedi `ModelDiagnosticsService`), qui solo
+    // fetch + stato, nessun calcolo di metriche lato client.
+    setModelDiagnosticsLoading(true);
+    setModelDiagnosticsError("");
+    try {
+      const payload = await getModelDiagnostics({ forceRefresh });
+      setModelDiagnosticsReport(payload);
+      return payload;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setModelDiagnosticsError(message);
+      throw err;
+    } finally {
+      setModelDiagnosticsLoading(false);
+    }
+  }, []);
   const loadEverything = useCallback(async (manual = true) => {
     // Ricarica SOLO dati gia' presenti a DB (health/markets/jobs/dashboard) -
     // NESSUNA sync col provider esterno API-Sports qui (per quello vedi
@@ -671,6 +693,15 @@ export default function App() {
     loadMonitoring().catch(() => {});
   }, [activePage, monitoringMarket, loadMonitoring]);
   useEffect(() => {
+    if (activePage !== "model-diagnostics") {
+      return;
+    }
+    if (modelDiagnosticsReport) {
+      return;
+    }
+    loadModelDiagnostics().catch(() => {});
+  }, [activePage, modelDiagnosticsReport, loadModelDiagnostics]);
+  useEffect(() => {
     if (activePage !== "settings") {
       return undefined;
     }
@@ -829,6 +860,12 @@ export default function App() {
       isLoading: monitoringLoading,
       error: monitoringError,
       onLoadReport: loadMonitoring,
+    },
+    modelDiagnostics: {
+      report: modelDiagnosticsReport,
+      isLoading: modelDiagnosticsLoading,
+      error: modelDiagnosticsError,
+      onRefresh: () => loadModelDiagnostics({ forceRefresh: true }).catch(() => {}),
     },
     settings: {
       jobs: jobSettingsRows,
