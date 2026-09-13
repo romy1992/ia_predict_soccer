@@ -147,6 +147,180 @@ def _shrink_toward_baseline(raw_average: float, matches_officiated: int, baselin
     return ((n * raw_average) + (k * baseline)) / (n + k)
 
 
+def _referee_prior_features(
+    referee: str,
+    league: Any,
+    referee_states: dict[str, "_RefereeState"],
+    league_states: dict[Any, "_RefereeState"],
+    global_state: "_RefereeState",
+    default_prior_cards: float,
+    shrinkage_k: float,
+) -> dict[str, Any]:
+    """Le 4 feature arbitro per UNA partita, dato lo STATO CORRENTE
+    (point-in-time) di arbitro/lega/globale - estratta da
+    `build_referee_features_dataset` (2026-09-13, comportamento INVARIATO)
+    per essere riusata anche da `current_referee_state` (serving live),
+    senza duplicare la logica di shrinkage/fallback."""
+    league_state = league_states[league]
+    baseline = league_state.average_cards
+    if baseline is None:
+        baseline = global_state.average_cards
+    if baseline is None:
+        baseline = float(default_prior_cards)
+
+    if not referee:
+        avg_value = float(default_prior_cards)
+        matches_officiated = 0
+        has_history = 0
+        severity_index = 1.0
+    else:
+        state = referee_states[referee]
+        raw_average = state.average_cards
+        matches_officiated = state.matches_officiated
+        has_history = int(raw_average is not None)
+        avg_value = baseline if raw_average is None else _shrink_toward_baseline(
+            raw_average=raw_average, matches_officiated=matches_officiated, baseline=baseline, k=shrinkage_k
+        )
+        severity_index = (avg_value / baseline) if baseline > 0 else 1.0
+
+    return {
+        "referee_avg_cards_prior": float(avg_value),
+        "referee_severity_index_prior": float(severity_index),
+        "referee_matches_officiated_prior": int(matches_officiated),
+        "referee_has_history": int(has_history),
+    }
+
+
+@dataclass
+class _RefereeIndex:
+    """Stato arbitro/lega/globale AGGIORNATO (dopo l'ultima partita conclusa
+    disponibile) - risultato del replay, riusabile per PIU' lookup senza
+    rifare il replay ogni volta (vedi `get_cached_referee_index` sotto)."""
+
+    referee_states: dict[str, _RefereeState]
+    league_states: dict[Any, _RefereeState]
+    global_state: _RefereeState
+
+
+def build_current_referee_index(matches: list[dict[str, Any]]) -> _RefereeIndex:
+    """Replay dell'intero storico cronologico disponibile (stessa identica
+    logica di accumulo di `build_referee_features_dataset`) per ottenere lo
+    STATO FINALE di ogni arbitro/lega/globale - stesso principio di
+    `TeamStrengthExpert.current_ratings` (`team_strength_expert.py`), ma
+    esposto come indice riusabile (una volta calcolato, si puo' interrogare
+    per QUALUNQUE arbitro/lega senza rifare il replay - vedi
+    `referee_features_from_index`)."""
+    referee_states: dict[str, _RefereeState] = defaultdict(_RefereeState)
+    league_states: dict[Any, _RefereeState] = defaultdict(_RefereeState)
+    global_state = _RefereeState()
+
+    for _, match in _sorted_matches_chronologically(matches):
+        match_referee = str(match.get("referee") or "").strip()
+        match_league = match.get("current_league")
+        stats = match.get("statistics") or []
+        home_id = match.get("id_team_home")
+        away_id = match.get("id_team_away")
+        stat_home = next((s for s in stats if s.get("statistics_team_id") == home_id), None)
+        stat_away = next((s for s in stats if s.get("statistics_team_id") == away_id), None)
+        if stat_home is None or stat_away is None:
+            continue
+
+        total_cards = _team_total_cards(stat_home) + _team_total_cards(stat_away)
+        if match_referee:
+            referee_states[match_referee].update(total_cards)
+        league_states[match_league].update(total_cards)
+        global_state.update(total_cards)
+
+    return _RefereeIndex(referee_states=referee_states, league_states=league_states, global_state=global_state)
+
+
+def referee_features_from_index(
+    index: _RefereeIndex,
+    referee: str,
+    league: Any,
+    default_prior_cards: float = DEFAULT_REFEREE_PRIOR_CARDS,
+    shrinkage_k: float = REFEREE_SHRINKAGE_K,
+) -> dict[str, Any]:
+    """Lookup ECONOMICO (nessun replay) delle 4 feature arbitro per una
+    fixture futura/live, dato un indice gia' calcolato da
+    `build_current_referee_index`."""
+    return _referee_prior_features(
+        referee=str(referee or "").strip(),
+        league=league,
+        referee_states=index.referee_states,
+        league_states=index.league_states,
+        global_state=index.global_state,
+        default_prior_cards=default_prior_cards,
+        shrinkage_k=shrinkage_k,
+    )
+
+
+def current_referee_state(
+    matches: list[dict[str, Any]],
+    referee: str,
+    league: Any,
+    default_prior_cards: float = DEFAULT_REFEREE_PRIOR_CARDS,
+    shrinkage_k: float = REFEREE_SHRINKAGE_K,
+) -> dict[str, Any]:
+    """Stato arbitro AGGIORNATO per una fixture FUTURA/live, in UNA sola
+    chiamata (replay + lookup) - comodo per un uso una tantum/nei test.
+    `matches` deve includere tutte le partite concluse rilevanti (quelle
+    dello stesso arbitro, della sua lega, e - per il fallback globale - un
+    campione quanto piu' ampio possibile): la query e' a carico del
+    chiamante, stesso principio di targeting gia' usato in
+    `oracle_match_detail_service.py` (mai l'intero DB in un colpo solo).
+    Per risolvere PIU' fixture nella stessa richiesta (es. Dashboard),
+    preferire `get_cached_referee_index`/`referee_features_from_index`
+    (un replay solo, non uno per fixture) invece di richiamare questa più
+    volte."""
+    index = build_current_referee_index(matches)
+    return referee_features_from_index(
+        index, referee=referee, league=league, default_prior_cards=default_prior_cards, shrinkage_k=shrinkage_k
+    )
+
+
+_REFEREE_INDEX_CACHE: dict[str, Any] = {"index": None, "computed_at": None}
+_REFEREE_INDEX_CACHE_TTL_SECONDS = 900.0
+
+
+def get_cached_referee_index(ttl_seconds: float = _REFEREE_INDEX_CACHE_TTL_SECONDS) -> _RefereeIndex:
+    """Indice arbitro CACHED a livello di MODULO (TTL 15 minuti, stesso
+    compromesso "dato quasi fresco invece di ricalcolo costante" gia'
+    scelto per `ModelDiagnosticsService`/`DashboardService._api_cache") -
+    evita di rifare una query + replay dell'intero storico arbitri per
+    OGNI fixture richiesta in Dashboard (altrimenti lo stesso problema di
+    performance N+1 gia' risolto altrove in questo progetto per
+    `FilterMarketService.build_prediction_frames`). Query LEGGERA: servono
+    solo referee/current_league/date_match/statistics, MAI odds/
+    mean_statistics (non usati dal replay arbitro)."""
+    now = datetime.now(timezone.utc)
+    cached_index = _REFEREE_INDEX_CACHE.get("index")
+    computed_at = _REFEREE_INDEX_CACHE.get("computed_at")
+    if cached_index is not None and computed_at is not None and (now - computed_at).total_seconds() < ttl_seconds:
+        return cached_index
+
+    match_repo = MatchRepository()
+    matches = convert_orm_match_to_dict(match_repo.search_filter(filters={"statistics": "not None", "status": ["FT"]}))
+    index = build_current_referee_index(matches)
+    _REFEREE_INDEX_CACHE["index"] = index
+    _REFEREE_INDEX_CACHE["computed_at"] = now
+    return index
+
+
+def current_referee_features_cached(
+    referee: str,
+    league: Any,
+    default_prior_cards: float = DEFAULT_REFEREE_PRIOR_CARDS,
+    shrinkage_k: float = REFEREE_SHRINKAGE_K,
+) -> dict[str, Any]:
+    """Feature arbitro per una fixture futura/live usando l'indice CACHED
+    (vedi `get_cached_referee_index`) - il percorso da usare in serving."""
+    index = get_cached_referee_index()
+    return referee_features_from_index(
+        index, referee=referee, league=league, default_prior_cards=default_prior_cards, shrinkage_k=shrinkage_k
+    )
+
+
 def build_referee_features_dataset(
     matches: list[dict[str, Any]],
     default_prior_cards: float = DEFAULT_REFEREE_PRIOR_CARDS,
@@ -190,43 +364,27 @@ def build_referee_features_dataset(
         if stat_home is None or stat_away is None:
             continue
 
-        league_state = league_states[league]
-        baseline = league_state.average_cards
-        if baseline is None:
-            baseline = global_state.average_cards
-        if baseline is None:
-            baseline = float(default_prior_cards)
-
-        if not referee:
-            avg_value = float(default_prior_cards)
-            matches_officiated = 0
-            has_history = 0
-            severity_index = 1.0
-        else:
-            state = referee_states[referee]
-            raw_average = state.average_cards
-            matches_officiated = state.matches_officiated
-            has_history = int(raw_average is not None)
-            avg_value = baseline if raw_average is None else _shrink_toward_baseline(
-                raw_average=raw_average, matches_officiated=matches_officiated, baseline=baseline, k=shrinkage_k
-            )
-            severity_index = (avg_value / baseline) if baseline > 0 else 1.0
-
+        row_values = _referee_prior_features(
+            referee=referee,
+            league=league,
+            referee_states=referee_states,
+            league_states=league_states,
+            global_state=global_state,
+            default_prior_cards=default_prior_cards,
+            shrinkage_k=shrinkage_k,
+        )
         rows.append(
             {
                 "id_fixture": match.get("id_fixture"),
                 "prediction_at": prediction_at.isoformat(),
-                "referee_avg_cards_prior": float(avg_value),
-                "referee_severity_index_prior": float(severity_index),
-                "referee_matches_officiated_prior": int(matches_officiated),
-                "referee_has_history": int(has_history),
+                **row_values,
             }
         )
 
         total_cards = _team_total_cards(stat_home) + _team_total_cards(stat_away)
         if referee:
             referee_states[referee].update(total_cards)
-        league_state.update(total_cards)
+        league_states[league].update(total_cards)
         global_state.update(total_cards)
 
     if not rows:
@@ -265,6 +423,45 @@ def _line_specific_odds_features(match: dict[str, Any], odds_market: str, lines:
         for key, value in line_features.items():
             features[f"{key}_{_line_label(line)}"] = value
     return features
+
+
+def build_cards_prediction_row(
+    match: dict[str, Any],
+    referee_matches: Optional[list[dict[str, Any]]] = None,
+    referee_features: Optional[dict[str, Any]] = None,
+    lines: tuple[float, ...] = DEFAULT_LINES,
+    odds_market: str = ODDS_MARKET,
+    default_prior_cards: float = DEFAULT_REFEREE_PRIOR_CARDS,
+    referee_shrinkage_k: float = REFEREE_SHRINKAGE_K,
+) -> Optional[dict[str, Any]]:
+    """Riga di feature per UNA fixture live/futura (mai training - nessun
+    target). A differenza di Corners, l'arbitro e' STATEFUL (dipende dallo
+    storico), quindi NON riusata dentro `build_cards_frame_from_records`
+    (che calcola il prior arbitro in batch per efficienza, O(n) sull'intero
+    dataset invece di un replay per riga).
+
+    Due modi per fornire le feature arbitro (mutuamente esclusivi):
+    - `referee_features` gia' calcolate (tipicamente da
+      `current_referee_features_cached`, indice condiviso/cached - il
+      percorso da preferire in serving, un replay solo per l'intera
+      richiesta invece di uno per fixture);
+    - `referee_matches` (storico grezzo, replay fatto qui via
+      `current_referee_state` - comodo per un uso una tantum/nei test)."""
+    service = FilterMarketService()
+    row = service._build_row(match=match, market=odds_market, with_target=False)
+    if not row:
+        return None
+    row.update(_line_specific_odds_features(match, odds_market, lines))
+    if referee_features is None:
+        referee_features = current_referee_state(
+            referee_matches or [],
+            referee=str(match.get("referee") or ""),
+            league=match.get("current_league"),
+            default_prior_cards=default_prior_cards,
+            shrinkage_k=referee_shrinkage_k,
+        )
+    row.update(referee_features)
+    return row
 
 
 def build_cards_frame_from_records(

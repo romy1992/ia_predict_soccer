@@ -15,6 +15,7 @@ from src.ml.markets.corners.corners_market import (
     _line_independent_oof,
     _line_specific_odds_features,
     build_corners_frame_from_records,
+    build_corners_prediction_row,
     compute_monotonicity_report,
     label_corners_over,
     run_corners_benchmark,
@@ -171,6 +172,37 @@ class TestBuildCornersFrameFromRecords(unittest.TestCase):
 
         row = frame.iloc[0]
         self.assertNotAlmostEqual(row["odds_mean_line_8_5"], row["odds_mean_line_11_5"])
+
+
+class TestBuildCornersPredictionRow(unittest.TestCase):
+    """2026-09-13: builder feature per UNA fixture live/futura (serving),
+    non solo in batch per il training - riusa la stessa logica pura di
+    `build_corners_frame_from_records` (nessuna feature dedicata Corners
+    dipende dallo storico, a differenza dell'arbitro per Cards)."""
+
+    def test_matches_batch_builder_for_same_single_match(self):
+        matches = _synthetic_matches(n=5)
+        match = matches[0]
+
+        row = build_corners_prediction_row(match)
+        frame = build_corners_frame_from_records([match])
+
+        self.assertIsNotNone(row)
+        self.assertFalse(frame.empty)
+        frame_row = frame.iloc[0]
+        for col in ["corner_mean_home_dedicated", "corner_mean_away_dedicated", "odds_mean_line_8_5", "odds_mean"]:
+            self.assertAlmostEqual(row[col], frame_row[col])
+
+    def test_no_target_columns_present(self):
+        matches = _synthetic_matches(n=5)
+        row = build_corners_prediction_row(matches[0])
+        self.assertNotIn("total_corners", row)
+        for line in DEFAULT_LINES:
+            self.assertNotIn(f"y_line_{str(line).replace('.', '_')}", row)
+
+    def test_missing_odds_returns_none(self):
+        match = {"odds": [], "mean_statistics": [], "id_fixture": 1, "season": 2025, "current_league": 39, "date_match": "2026-01-01T00:00:00+00:00"}
+        self.assertIsNone(build_corners_prediction_row(match))
 
 
 class TestLineSpecificOddsFeatures(unittest.TestCase):

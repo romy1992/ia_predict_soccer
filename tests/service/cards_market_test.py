@@ -18,8 +18,12 @@ from src.ml.markets.cards.cards_market import (
     _line_specific_odds_features,
     _shrink_toward_baseline,
     build_cards_frame_from_records,
+    build_cards_prediction_row,
     build_referee_features_dataset,
     compute_monotonicity_report,
+    current_referee_features_cached,
+    current_referee_state,
+    get_cached_referee_index,
     label_cards_over,
     run_cards_benchmark,
     run_cards_benchmark_from_db,
@@ -259,6 +263,104 @@ class TestBuildRefereeFeaturesDataset(unittest.TestCase):
             self.assertIn(col, frame.columns)
 
 
+class TestCurrentRefereeState(unittest.TestCase):
+    """2026-09-13: stato arbitro AGGIORNATO per una fixture futura/live
+    (serving) - stesso principio di `TeamStrengthExpert.current_ratings`.
+    Ogni scenario verifica che `current_referee_state` dia lo STESSO
+    risultato che `build_referee_features_dataset` darebbe per una
+    ipotetica riga successiva (stessa identica logica riusata via
+    `_referee_prior_features`)."""
+
+    def test_matches_hypothetical_next_row_for_known_referee(self):
+        base_date = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        matches = [
+            _make_match(1, base_date, "Rossi", home_cards_yellow=2, away_cards_yellow=1),  # totale 3
+            _make_match(2, base_date + timedelta(days=1), "Rossi", home_cards_yellow=4, away_cards_yellow=2),  # totale 6
+            _make_match(3, base_date + timedelta(days=2), "Rossi", home_cards_yellow=1, away_cards_yellow=1),  # totale 2
+        ]
+        state = current_referee_state(matches, referee="Rossi", league=39)
+
+        self.assertEqual(state["referee_matches_officiated_prior"], 3)
+        self.assertEqual(state["referee_has_history"], 1)
+        self.assertAlmostEqual(state["referee_avg_cards_prior"], (3.0 + 6.0 + 2.0) / 3.0)
+
+    def test_unknown_referee_uses_default_prior(self):
+        base_date = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        matches = [_make_match(1, base_date, "Rossi", home_cards_yellow=5, away_cards_yellow=5, league=39)]
+        state = current_referee_state(matches, referee="", league=39)
+
+        self.assertEqual(state["referee_has_history"], 0)
+        self.assertAlmostEqual(state["referee_avg_cards_prior"], DEFAULT_REFEREE_PRIOR_CARDS)
+        self.assertAlmostEqual(state["referee_severity_index_prior"], 1.0)
+
+    def test_never_seen_referee_falls_back_to_league_baseline(self):
+        base_date = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        matches = [
+            _make_match(1, base_date, "Rossi", home_cards_yellow=5, away_cards_yellow=5, league=39),  # totale 10
+            _make_match(2, base_date + timedelta(days=1), "Rossi", home_cards_yellow=5, away_cards_yellow=5, league=39),
+        ]
+        state = current_referee_state(matches, referee="Bianchi", league=39)
+
+        self.assertEqual(state["referee_has_history"], 0)
+        self.assertAlmostEqual(state["referee_avg_cards_prior"], 10.0)
+
+    def test_no_matches_uses_default_prior(self):
+        state = current_referee_state([], referee="Rossi", league=39)
+        self.assertEqual(state["referee_has_history"], 0)
+        self.assertEqual(state["referee_matches_officiated_prior"], 0)
+        self.assertAlmostEqual(state["referee_avg_cards_prior"], DEFAULT_REFEREE_PRIOR_CARDS)
+
+
+class TestCachedRefereeIndex(unittest.TestCase):
+    """2026-09-13: indice arbitro CACHED a livello di modulo (serving) -
+    evita una query+replay per OGNI fixture nella stessa richiesta
+    Dashboard. `_REFEREE_INDEX_CACHE` e' condiviso tra i test: azzerato in
+    `setUp` per isolamento."""
+
+    def setUp(self):
+        import src.ml.markets.cards.cards_market as cards_market_module
+
+        cards_market_module._REFEREE_INDEX_CACHE["index"] = None
+        cards_market_module._REFEREE_INDEX_CACHE["computed_at"] = None
+
+    def _matches(self):
+        base_date = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        return [
+            _make_match(1, base_date, "Rossi", home_cards_yellow=2, away_cards_yellow=1, league=39),
+            _make_match(2, base_date + timedelta(days=1), "Rossi", home_cards_yellow=4, away_cards_yellow=2, league=39),
+        ]
+
+    def test_queries_db_once_and_reuses_cache_within_ttl(self):
+        with mock.patch("src.ml.markets.cards.cards_market.MatchRepository") as repo_cls, mock.patch(
+            "src.ml.markets.cards.cards_market.convert_orm_match_to_dict", side_effect=lambda x: x
+        ):
+            repo_cls.return_value.search_filter.return_value = self._matches()
+            index_a = get_cached_referee_index(ttl_seconds=900)
+            index_b = get_cached_referee_index(ttl_seconds=900)
+            self.assertEqual(repo_cls.return_value.search_filter.call_count, 1)
+        self.assertIs(index_a, index_b)
+
+    def test_ttl_zero_forces_requery_every_call(self):
+        with mock.patch("src.ml.markets.cards.cards_market.MatchRepository") as repo_cls, mock.patch(
+            "src.ml.markets.cards.cards_market.convert_orm_match_to_dict", side_effect=lambda x: x
+        ):
+            repo_cls.return_value.search_filter.return_value = self._matches()
+            get_cached_referee_index(ttl_seconds=0.0)
+            get_cached_referee_index(ttl_seconds=0.0)
+            self.assertEqual(repo_cls.return_value.search_filter.call_count, 2)
+
+    def test_current_referee_features_cached_matches_uncached_replay(self):
+        matches = self._matches()
+        with mock.patch("src.ml.markets.cards.cards_market.MatchRepository") as repo_cls, mock.patch(
+            "src.ml.markets.cards.cards_market.convert_orm_match_to_dict", side_effect=lambda x: x
+        ):
+            repo_cls.return_value.search_filter.return_value = matches
+            cached_features = current_referee_features_cached(referee="Rossi", league=39)
+
+        uncached_features = current_referee_state(matches, referee="Rossi", league=39)
+        self.assertEqual(cached_features, uncached_features)
+
+
 class TestShrinkTowardBaseline(unittest.TestCase):
     def test_no_history_edge_case_is_not_called_by_the_dataset_builder(self):
         # Documenta il contratto: con matches_officiated=0 la formula
@@ -279,6 +381,49 @@ class TestShrinkTowardBaseline(unittest.TestCase):
     def test_raw_equal_to_baseline_is_a_no_op(self):
         result = _shrink_toward_baseline(raw_average=5.0, matches_officiated=3, baseline=5.0, k=REFEREE_SHRINKAGE_K)
         self.assertAlmostEqual(result, 5.0)
+
+
+class TestBuildCardsPredictionRow(unittest.TestCase):
+    """2026-09-13: builder feature per UNA fixture live/futura (serving).
+    A differenza di Corners, l'arbitro richiede `referee_matches` (storico
+    passato fornito dal chiamante) per `current_referee_state`."""
+
+    def test_matches_batch_builder_values_for_odds_and_line_specific(self):
+        matches = _synthetic_matches(n=5)
+        match = matches[0]
+
+        row = build_cards_prediction_row(match, referee_matches=matches)
+        frame = build_cards_frame_from_records(matches)
+
+        self.assertIsNotNone(row)
+        frame_row = frame[frame["id_fixture"] == match["id_fixture"]].iloc[0]
+        for col in ["odds_mean", "odds_mean_line_3_5"]:
+            self.assertAlmostEqual(row[col], frame_row[col])
+
+    def test_no_target_columns_present(self):
+        matches = _synthetic_matches(n=5)
+        row = build_cards_prediction_row(matches[0], referee_matches=matches)
+        self.assertNotIn("total_cards", row)
+        for line in DEFAULT_LINES:
+            self.assertNotIn(f"y_line_{str(line).replace('.', '_')}", row)
+
+    def test_referee_features_reflect_only_past_matches(self):
+        base_date = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        past = [
+            _make_match(1, base_date, "Rossi", home_cards_yellow=2, away_cards_yellow=1, league=39),  # 3
+            _make_match(2, base_date + timedelta(days=1), "Rossi", home_cards_yellow=4, away_cards_yellow=2, league=39),  # 6
+        ]
+        upcoming = _make_match(3, base_date + timedelta(days=2), "Rossi", home_cards_yellow=0, away_cards_yellow=0, league=39)
+
+        row = build_cards_prediction_row(upcoming, referee_matches=past)
+
+        self.assertEqual(row["referee_matches_officiated_prior"], 2)
+        self.assertEqual(row["referee_has_history"], 1)
+        self.assertAlmostEqual(row["referee_avg_cards_prior"], (3.0 + 6.0) / 2.0)
+
+    def test_missing_odds_returns_none(self):
+        match = {"odds": [], "mean_statistics": [], "id_fixture": 1, "season": 2025, "current_league": 39, "date_match": "2026-01-01T00:00:00+00:00", "referee": ""}
+        self.assertIsNone(build_cards_prediction_row(match, referee_matches=[]))
 
 
 class TestBuildCardsFrameFromRecords(unittest.TestCase):
