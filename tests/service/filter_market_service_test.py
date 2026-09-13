@@ -2,6 +2,8 @@ import unittest
 import uuid
 from unittest import mock
 
+import numpy as np
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -294,6 +296,52 @@ class TestExtractLineSpecificOddsFeatures(unittest.TestCase):
         self.assertAlmostEqual(low_line["odds_mean"], (1.30 + 3.20) / 2)
         self.assertAlmostEqual(high_line["odds_mean"], (6.75 + 1.06) / 2)
         self.assertNotAlmostEqual(low_line["odds_mean"], high_line["odds_mean"])
+
+
+class TestMissingStatsArePreservedForAnalysis(unittest.TestCase):
+    """2026-09-13: `_safe_float` azzera i mancanti ALLA FONTE, quindi dopo
+    l'estrazione un dato assente e uno zero reale sono indistinguibili. Su
+    `expected_goals` (assente sul 46% delle partite) significa dare al modello
+    "squadra che non tira mai in porta" invece di "non lo sappiamo". Il
+    default resta l'azzeramento (i modelli registrati sono addestrati cosi'),
+    ma serve un percorso che preservi i NaN per poter fare EDA."""
+
+    MATCH = {
+        "id_team_home": 10,
+        "id_team_away": 20,
+        "mean_statistics": [
+            {"id_team": 10, "expected_goals": None, "shots_on_goal": 4.2},
+            {"id_team": 20, "expected_goals": 1.3, "shots_on_goal": 5.1},
+        ],
+    }
+
+    def test_default_still_zeroes_missing_values(self):
+        features = FilterMarketService._extract_mean_features(self.MATCH)
+        self.assertEqual(features["expected_goals_home_stat"], 0.0)
+        self.assertEqual(features["expected_goals_diff_stat"], -1.3)
+
+    def test_keep_missing_preserves_nan_and_propagates_to_the_difference(self):
+        features = FilterMarketService._extract_mean_features(self.MATCH, keep_missing=True)
+        self.assertTrue(np.isnan(features["expected_goals_home_stat"]))
+        # La differenza con un termine ignoto e' a sua volta ignota: azzerarla
+        # inventerebbe un vantaggio/svantaggio mai osservato.
+        self.assertTrue(np.isnan(features["expected_goals_diff_stat"]))
+        # I valori realmente presenti non vengono toccati.
+        self.assertAlmostEqual(features["expected_goals_away_stat"], 1.3)
+        self.assertAlmostEqual(features["shots_on_goal_home_stat"], 4.2)
+
+    def test_a_real_zero_stays_zero_in_both_modes(self):
+        match = {
+            "id_team_home": 10,
+            "id_team_away": 20,
+            "mean_statistics": [
+                {"id_team": 10, "red_cards": 0},
+                {"id_team": 20, "red_cards": 0},
+            ],
+        }
+        for keep in (False, True):
+            features = FilterMarketService._extract_mean_features(match, keep_missing=keep)
+            self.assertEqual(features["red_cards_home_stat"], 0.0, f"keep_missing={keep}")
 
 
 class TestPerOutcomeOddsFeatures(unittest.TestCase):

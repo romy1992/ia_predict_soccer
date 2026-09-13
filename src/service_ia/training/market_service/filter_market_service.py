@@ -315,19 +315,39 @@ class FilterMarketService:
         return features
 
     @staticmethod
-    def _extract_mean_features(match: dict) -> dict:
+    def _float_or_nan(value) -> float:
+        """Come `_safe_float`, ma un dato ASSENTE resta assente (NaN) invece
+        di diventare 0.0 (2026-09-13).
+
+        `_safe_float` azzera i mancanti alla fonte, prima ancora che il
+        DataFrame esista: per il modello "non lo sappiamo" diventa cosi'
+        "squadra che non tira mai in porta". Su `expected_goals` (assente sul
+        46% delle partite) e `goals_prevented` (73%) questo falsa proprio le
+        statistiche piu' legate ai gol. Usato SOLO dal percorso di analisi
+        (`build_dataset(fill_missing=False)`): il default resta l'azzeramento,
+        perche' i modelli gia' registrati sono stati addestrati cosi'.
+        """
+        if value is None:
+            return float("nan")
+        if isinstance(value, str) and value.replace("%", "").strip() == "":
+            return float("nan")
+        return FilterMarketService._safe_float(value)
+
+    @staticmethod
+    def _extract_mean_features(match: dict, keep_missing: bool = False) -> dict:
         mean_home, mean_away = FilterMarketService._resolve_mean_stats(match)
         if not mean_home or not mean_away:
             return {}
 
+        converti = FilterMarketService._float_or_nan if keep_missing else FilterMarketService._safe_float
         features = {}
         keys = set(mean_home.keys()).union(set(mean_away.keys()))
         for key in keys:
             if key == "id_team":
                 continue
 
-            home_v = FilterMarketService._safe_float(mean_home.get(key))
-            away_v = FilterMarketService._safe_float(mean_away.get(key))
+            home_v = converti(mean_home.get(key))
+            away_v = converti(mean_away.get(key))
             normalized = FilterMarketService._normalize_feature_name(key)
             if normalized == "":
                 continue
@@ -338,7 +358,7 @@ class FilterMarketService:
 
         return features
 
-    def _build_row(self, match: dict, market: str, with_target: bool) -> Optional[dict]:
+    def _build_row(self, match: dict, market: str, with_target: bool, keep_missing: bool = False) -> Optional[dict]:
         odds_list = match.get("odds") or []
         if not odds_list:
             return None
@@ -360,7 +380,7 @@ class FilterMarketService:
         # per esito sono quelle che i modelli nuovi useranno davvero.
         row.update(self._extract_market_odds_features(market_odds))
         row.update(self._extract_per_outcome_odds_features(market_odds))
-        row.update(self._extract_mean_features(match))
+        row.update(self._extract_mean_features(match, keep_missing=keep_missing))
 
         # Senza feature utili non ha senso produrre la riga.
         if len(row) <= 3:
@@ -378,21 +398,38 @@ class FilterMarketService:
 
         return row
 
-    def build_dataset(self, market: str, seasons: Optional[list[int]] = None) -> pd.DataFrame:
+    def build_dataset(
+        self, market: str, seasons: Optional[list[int]] = None, fill_missing: bool = True
+    ) -> pd.DataFrame:
+        """`fill_missing=False` (2026-09-13) restituisce i NaN cosi' come sono,
+        invece di azzerarli.
+
+        L'azzeramento di default e' storico e resta il comportamento per il
+        training (i modelli registrati sono stati addestrati cosi'), ma rende
+        impossibile QUALUNQUE analisi sui valori mancanti: dopo `fillna(0)`
+        un dato assente e uno zero reale sono lo stesso numero. Su
+        `expected_goals`, assente sul 46% delle partite, questo significa
+        dare in pasto al modello "squadra che non tira mai in porta" invece
+        di "non lo sappiamo" - e infatti la statistica piu' predittiva per i
+        gol risulta penultima per importanza. Serve quindi un modo di
+        estrarre il dataset GREZZO per l'EDA.
+        """
         if market not in self.SUPPORTED_MARKETS:
             raise ValueError(f"Mercato non supportato: {market}")
 
         rows = []
         for match in self._search_matches(seasons=seasons, status="FT"):
-            row = self._build_row(match=match, market=market, with_target=True)
+            row = self._build_row(
+                match=match, market=market, with_target=True, keep_missing=not fill_missing
+            )
             if row:
                 rows.append(row)
 
         if not rows:
             return pd.DataFrame()
 
-        df = pd.DataFrame(rows).replace([np.inf, -np.inf], np.nan).fillna(0)
-        return df
+        df = pd.DataFrame(rows).replace([np.inf, -np.inf], np.nan)
+        return df.fillna(0) if fill_missing else df
 
     def _fetch_match_dict(self, fixture_id: int) -> Optional[dict]:
         match = self.match_repo.filter_by(dict_search={"id_fixture": fixture_id}).first()
