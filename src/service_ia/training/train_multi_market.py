@@ -477,7 +477,21 @@ def train_market(
     seasons: Optional[list[int]] = None,
     selection_method: str = "kbest",
     save_model: bool = True,
+    feature_columns: Optional[list[str]] = None,
 ) -> MarketTrainResult:
+    """`feature_columns` (2026-09-13) restringe il training a un sottoinsieme
+    ESPLICITO di colonne, invece di partire da tutte quelle che il builder
+    produce.
+
+    Serve dopo la misura su Under/Over 1.5: un set ragionato di 33 colonne
+    (quote non ridondanti + tiri + disciplina) batte le 60 complete su AUC,
+    log-loss e Brier, perche' possesso/xG/corner aggiungevano rumore. Il
+    selettore dentro la grid (`selector__k`) continua a lavorare, ma su un
+    bacino gia' ripulito invece che su tutto.
+
+    `None` (default) lascia il comportamento storico: tutte le colonne non
+    meta finiscono nel bacino di partenza.
+    """
     service = FilterMarketService()
     df = service.build_dataset(market=market, seasons=seasons)
 
@@ -503,6 +517,16 @@ def train_market(
     league_series = df["league"] if "league" in df.columns else pd.Series([None] * len(df))
     X = df.drop(columns=["y", "market"], errors="ignore")
     X = X.drop(columns=["id_fixture", "season", "league", "prediction_at"], errors="ignore")
+
+    if feature_columns:
+        mancanti = [colonna for colonna in feature_columns if colonna not in X.columns]
+        if mancanti:
+            # Meglio fallire subito che addestrare in silenzio su meno
+            # colonne del previsto: un nome sbagliato qui produrrebbe un
+            # modello diverso da quello misurato, senza alcun segnale.
+            raise ValueError(f"Colonne richieste assenti dal dataset di {market}: {mancanti}")
+        X = X[list(feature_columns)]
+
     feature_names = X.columns.tolist()
 
     if X.empty:
