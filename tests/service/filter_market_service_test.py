@@ -428,6 +428,40 @@ class TestPerOutcomeOddsFeatures(unittest.TestCase):
         self.assertAlmostEqual(features["odds_mean_under_8_5"], 2.49)
         self.assertNotIn("odds_mean_over_11_5", features)
 
+    def test_alias_prefixes_merge_into_the_same_outcome(self):
+        """2026-09-13: il provider ha cambiato convenzione a meta' 2025 -
+        'alternate over 1.5' e 'over 1.5' sono la stessa scommessa, usate in
+        periodi DISGIUNTI (verificato sui dati: fino a giugno 2025 la prima,
+        da agosto 2025 la seconda, distribuzioni sovrapponibili). Senza
+        unificarle ogni feature resta vuota su meta' delle partite."""
+        market_odds = {
+            "over 1.5_Bet365": "1.25",
+            "alternate over 1.5_Pinnacle": "1.27",
+            "under 1.5_Bet365": "3.80",
+            "alternate under 1.5_Pinnacle": "3.90",
+        }
+        features = FilterMarketService._extract_per_outcome_odds_features(market_odds)
+
+        # Un solo gruppo per lato, con ENTRAMBI i bookmaker dentro.
+        self.assertEqual(features["odds_count_over_1_5"], 2.0)
+        self.assertAlmostEqual(features["odds_mean_over_1_5"], (1.25 + 1.27) / 2)
+        self.assertNotIn("odds_mean_alternate_over_1_5", features)
+        # L'overround torna quello di un mercato a due esiti, non la somma
+        # di due mercati sovrapposti.
+        self.assertLess(features["overround"], 1.2)
+
+    def test_corner_and_card_prefixes_merge_too(self):
+        market_odds = {"corner over 8.5_bookA": "1.50", "over 8.5_bookB": "1.54"}
+        features = FilterMarketService._extract_per_outcome_odds_features(market_odds)
+
+        self.assertEqual(features["odds_count_over_8_5"], 2.0)
+        self.assertAlmostEqual(features["odds_mean_over_8_5"], (1.50 + 1.54) / 2)
+
+    def test_a_prefix_that_is_the_whole_outcome_is_not_stripped(self):
+        """Togliere il prefisso non deve mai svuotare l'esito."""
+        self.assertEqual(FilterMarketService._normalize_outcome_name("card"), "card")
+        self.assertEqual(FilterMarketService._normalize_outcome_name("corner"), "corner")
+
     def test_empty_or_invalid_odds_return_empty_like_legacy(self):
         self.assertEqual(FilterMarketService._extract_per_outcome_odds_features({}), {})
         self.assertEqual(

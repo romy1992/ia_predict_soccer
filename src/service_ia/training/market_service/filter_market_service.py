@@ -168,16 +168,38 @@ class FilterMarketService:
             return key.strip(), ""
         return outcome.strip(), bookmaker.strip()
 
+    # Prefissi che il provider antepone all'esito senza cambiarne il
+    # significato: 'alternate over 1.5' e 'over 1.5' sono la STESSA
+    # scommessa (2026-09-13, verificato sui dati - le due forme coprono
+    # periodi disgiunti, `alternate` fino a giugno 2025 e la forma semplice
+    # da agosto 2025, con distribuzioni di quota e correlazione col target
+    # sovrapponibili). Analogamente 'corner over 8.5' e 'over 8.5' dentro il
+    # mercato corners, 'card over 3.5' e 'over 3.5' dentro cards.
+    #
+    # Senza questa unificazione ogni feature per esito resta vuota sulla
+    # meta' delle partite in cui il provider usava l'altro nome: su
+    # Under/Over 1.5 la copertura passa dal 44% al 100%.
+    _OUTCOME_ALIAS_PREFIXES: tuple[str, ...] = ("alternate", "corner", "card")
+
     @staticmethod
     def _normalize_outcome_name(outcome: str) -> str:
         """Slug stabile per comporre il nome della feature: 'over 2.5' ->
-        'over_2_5', 'no_goal_' -> 'no_goal', '1X' -> '1x'."""
+        'over_2_5', 'no_goal_' -> 'no_goal', '1X' -> '1x',
+        'alternate over 1.5' -> 'over_1_5'."""
         slug = outcome.strip().lower()
         for char in (" ", ".", "-", "/"):
             slug = slug.replace(char, "_")
         while "__" in slug:
             slug = slug.replace("__", "_")
-        return slug.strip("_")
+        slug = slug.strip("_")
+
+        # Un solo prefisso alla volta e SOLO se resta qualcosa dopo: cosi'
+        # l'esito 'card' di un ipotetico mercato binario non diventa vuoto.
+        for prefisso in FilterMarketService._OUTCOME_ALIAS_PREFIXES:
+            atteso = f"{prefisso}_"
+            if slug.startswith(atteso) and len(slug) > len(atteso):
+                return slug[len(atteso):]
+        return slug
 
     @staticmethod
     def _extract_per_outcome_odds_features(market_odds: dict) -> dict:
