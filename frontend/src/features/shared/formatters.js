@@ -37,7 +37,19 @@ export function marketLabel(market) {
     under_over_3_5: "Over/Under 3.5",
     under_over_4_5: "Over/Under 4.5",
   };
-  return map[market] || market;
+  if (map[market]) {
+    return map[market];
+  }
+  // Corners/Cards a linea configurabile (MARKET-05/06, 2026-09-13): stesso
+  // principio generico gia' usato per under_over_* sotto, non un'etichetta
+  // per linea hardcoded (le linee configurate potrebbero cambiare in futuro).
+  if (market && market.startsWith("corners_line_")) {
+    return `Corners Over/Under ${market.replace("corners_line_", "").replace("_", ".")}`;
+  }
+  if (market && market.startsWith("cards_line_")) {
+    return `Cards Over/Under ${market.replace("cards_line_", "").replace("_", ".")}`;
+  }
+  return market;
 }
 
 export function predictionLabel(market, prediction, row) {
@@ -59,6 +71,14 @@ export function predictionLabel(market, prediction, row) {
   }
   if (market === "cards") {
     return prediction === 1 ? "Over cards" : "Under cards";
+  }
+  if (market && market.startsWith("corners_line_")) {
+    const threshold = market.replace("corners_line_", "").replace("_", ".");
+    return prediction === 1 ? `Over ${threshold}` : `Under ${threshold}`;
+  }
+  if (market && market.startsWith("cards_line_")) {
+    const threshold = market.replace("cards_line_", "").replace("_", ".");
+    return prediction === 1 ? `Over ${threshold}` : `Under ${threshold}`;
   }
   return String(prediction);
 }
@@ -88,6 +108,14 @@ export function marketClassLabels(market) {
   }
   if (market && market.startsWith("under_over_")) {
     const threshold = market.replace("under_over_", "").replace("_", ".");
+    return [`Under ${threshold}`, `Over ${threshold}`];
+  }
+  if (market && market.startsWith("corners_line_")) {
+    const threshold = market.replace("corners_line_", "").replace("_", ".");
+    return [`Under ${threshold}`, `Over ${threshold}`];
+  }
+  if (market && market.startsWith("cards_line_")) {
+    const threshold = market.replace("cards_line_", "").replace("_", ".");
     return [`Under ${threshold}`, `Over ${threshold}`];
   }
   return ["Classe 0", "Classe 1"];
