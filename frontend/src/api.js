@@ -119,6 +119,21 @@ export function recomputeMatchPredictions(fixtureId, { markets } = {}) {
   });
 }
 
+/**
+ * Bottone "Ricalcola previsioni del giorno" (2026-09-13): forza subito il
+ * giro schedulato delle predizioni sulla sola data selezionata, cosi' un
+ * mercato appena promosso a production si popola senza aspettare il job
+ * automatico. `async_run: false` perche' il chiamante ricarica la lista
+ * appena finito (con true tornerebbe prima che le righe esistano).
+ */
+export function refreshDayPredictions(targetDate) {
+  return request("/jobs/prediction-snapshot-refresh", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ target_date: targetDate, async_run: false }),
+  });
+}
+
 export function getOracleMatchDetail(fixtureId, { markets } = {}) {
   const params = new URLSearchParams();
   if (markets && markets.length > 0) {

@@ -456,6 +456,7 @@ def run_prediction_snapshot_refresh(
     days_ahead: Optional[int] = None,
     recently_finished_days: Optional[int] = None,
     job_id: Optional[str] = None,
+    target_date: Optional[str] = None,
 ) -> dict:
     """Ricalcola/popola in BACKGROUND la banca dati predizioni
     (`match_prediction_snapshot`) per due categorie di fixture, riusando
@@ -491,6 +492,18 @@ def run_prediction_snapshot_refresh(
     principale della lentezza percepita indipendentemente dalla data,
     diagnosticata il 2026-09-09).
 
+    `target_date` (2026-09-13, bottone "Ricalcola previsioni del giorno")
+    sostituisce ENTRAMBE le finestre sopra con un solo giorno: tutte le
+    fixture di quella data, qualunque sia lo status, invece di "prossimi N
+    giorni NS" + "ultimi N giorni conclusi". Nasce dal caso reale di un
+    mercato appena promosso a production (Corners/Cards a linea
+    configurabile): le fixture gia' a DB restano senza riga per quel
+    mercato nuovo finche' il giro schedulato non le ripassa, e l'operatore
+    vuole popolare SUBITO il giorno che sta guardando in Dashboard senza
+    aspettare. Resta comunque il regime normale di `resolve_predictions`
+    (nessun `force`): le partite concluse gia' congelate non vengono
+    ricalcolate, i mercati senza riga si'.
+
     Un fallimento su una SINGOLA fixture non blocca le altre (stesso
     principio "provider errors isolati" gia' applicato in LIVE-01) - finisce
     in `errors`, mai un'eccezione che interrompe l'intero giro."""
@@ -499,8 +512,14 @@ def run_prediction_snapshot_refresh(
     recently_finished_days = (
         recently_finished_days if recently_finished_days is not None else _RECENTLY_FINISHED_WINDOW_DAYS
     )
+    if target_date:
+        try:
+            datetime.fromisoformat(target_date).date()
+        except ValueError as exc:
+            raise ValueError(f"target_date non valida (atteso YYYY-MM-DD): {target_date}") from exc
+
     history = JobHistory()
-    params = {"days_ahead": days_ahead, "recently_finished_days": recently_finished_days}
+    params = {"days_ahead": days_ahead, "recently_finished_days": recently_finished_days, "target_date": target_date}
     if job_id:
         history.mark_running(job_id=job_id, params=params)
     else:
@@ -512,30 +531,44 @@ def run_prediction_snapshot_refresh(
     start = time.perf_counter()
     try:
         today = datetime.now(timezone.utc).date()
-        window_start_iso = today.isoformat()
-        window_end_iso = (today + timedelta(days=days_ahead + 1)).isoformat()
+        if target_date:
+            # Un solo giorno esplicito: la distinzione NS/concluse non serve
+            # (le si processano tutte, e' `resolve_predictions` a decidere
+            # cosa e' gia' congelato), quindi tutta la giornata finisce nella
+            # lista processata incondizionatamente e l'anti-join sulle
+            # concluse resta vuoto.
+            window_start_iso = target_date
+            window_end_iso = (datetime.fromisoformat(target_date).date() + timedelta(days=1)).isoformat()
+        else:
+            window_start_iso = today.isoformat()
+            window_end_iso = (today + timedelta(days=days_ahead + 1)).isoformat()
         finished_window_start_iso = (today - timedelta(days=recently_finished_days)).isoformat()
         finished_window_end_iso = (today + timedelta(days=1)).isoformat()
 
         try:
             with SessionLocal() as session:
-                upcoming_matches = (
+                upcoming_query = (
                     session.query(Match)
                     .options(selectinload(Match.statistics), selectinload(Match.odds))
                     .filter(Match.id_fixture.is_not(None))
-                    .filter(Match.status == "NS")
                     .filter(Match.date_match >= window_start_iso)
                     .filter(Match.date_match < window_end_iso)
-                    .all()
                 )
+                if not target_date:
+                    upcoming_query = upcoming_query.filter(Match.status == "NS")
+                upcoming_matches = upcoming_query.all()
                 finished_matches = (
-                    session.query(Match)
-                    .options(selectinload(Match.statistics), selectinload(Match.odds))
-                    .filter(Match.id_fixture.is_not(None))
-                    .filter(Match.status.in_(_FINAL_STATUSES))
-                    .filter(Match.date_match >= finished_window_start_iso)
-                    .filter(Match.date_match < finished_window_end_iso)
-                    .all()
+                    []
+                    if target_date
+                    else (
+                        session.query(Match)
+                        .options(selectinload(Match.statistics), selectinload(Match.odds))
+                        .filter(Match.id_fixture.is_not(None))
+                        .filter(Match.status.in_(_FINAL_STATUSES))
+                        .filter(Match.date_match >= finished_window_start_iso)
+                        .filter(Match.date_match < finished_window_end_iso)
+                        .all()
+                    )
                 )
         except (OperationalError, ProgrammingError):
             upcoming_matches = []
@@ -575,26 +608,33 @@ def run_prediction_snapshot_refresh(
             "proposals_unchanged": 0,
             "errors": [],
         }
-        for target_date in sorted(
+        for proposal_date in sorted(
             {
                 datetime.fromisoformat(match.date_match).date()
                 for match in upcoming_matches
                 if match.date_match
             }
         ):
+            # Le proposte esistono solo da oggi in avanti (il generatore
+            # rifiuta per policy le giornate passate): con `target_date` su
+            # una data storica la lista qui sopra ne conterrebbe una, e
+            # tentarla produrrebbe solo un errore atteso nel report.
+            if proposal_date < today:
+                continue
             proposal_report["dates_considered"] += 1
             try:
-                _, _, saved = BetslipService().generate_and_snapshot_for_day(target_date)
+                _, _, saved = BetslipService().generate_and_snapshot_for_day(proposal_date)
                 for key in ("proposals_seen", "proposals_created", "proposals_unchanged"):
                     proposal_report[key] += saved[key]
             except Exception as exc:
                 proposal_report["errors"].append(
-                    {"reference_date": target_date.isoformat(), "message": str(exc)}
+                    {"reference_date": proposal_date.isoformat(), "message": str(exc)}
                 )
 
         summary = {
             "days_ahead": days_ahead,
             "recently_finished_days": recently_finished_days,
+            "target_date": target_date,
             "fixtures_considered": fixtures_considered,
             "fixtures_upcoming": len(upcoming_matches),
             "fixtures_recently_finished": len(finished_matches_needing_snapshot),

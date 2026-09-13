@@ -12,6 +12,9 @@ export default function TopFilters({
   onApplySearch,
   onForceRefresh,
   forceRefreshDisabled,
+  onRefreshDayPredictions,
+  refreshingDayPredictions,
+  refreshDayPredictionsError,
 }) {
   const dateOptions = availableDates && availableDates.length > 0 ? availableDates : [selectedDate];
 
@@ -85,6 +88,31 @@ export default function TopFilters({
           </button>
           <small>Usalo solo per richiedere nuovi dati al provider.</small>
         </div>
+
+        {/* Distinto da "Forza aggiornamento" qui sopra: quello richiede dati
+            NUOVI al provider esterno (consuma quota API), questo ricalcola
+            solo le previsioni ML sui dati gia' a DB per la data selezionata
+            (nessuna quota). Serve quando un mercato appena promosso a
+            production lascia le partite gia' salvate senza riga per quel
+            mercato, in attesa del giro schedulato. */}
+        {onRefreshDayPredictions && (
+          <div className="filter-card filter-refresh">
+            <span className="filter-label">Previsioni del giorno</span>
+            <button
+              className="btn-secondary"
+              onClick={onRefreshDayPredictions}
+              disabled={refreshingDayPredictions}
+              title="Ricalcola e salva subito le previsioni ML per tutte le partite della data selezionata, senza aspettare il giro automatico. Non chiama il provider esterno: nessuna quota API consumata."
+            >
+              {refreshingDayPredictions ? "Ricalcolo in corso..." : "Ricalcola previsioni"}
+            </button>
+            <small>
+              {refreshDayPredictionsError
+                ? `Errore: ${refreshDayPredictionsError}`
+                : "Popola i mercati ancora “In coda” per questo giorno."}
+            </small>
+          </div>
+        )}
       </div>
     </header>
   );

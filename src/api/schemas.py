@@ -96,6 +96,18 @@ class JobDataQualityReportRequest(BaseModel):
     async_run: bool = True
 
 
+class JobPredictionSnapshotRefreshRequest(BaseModel):
+    """Bottone "Ricalcola previsioni del giorno" della Dashboard: forza ORA
+    il giro che normalmente gira a schedule ogni N minuti
+    (`run_prediction_snapshot_refresh`), scopato al solo `target_date`
+    (la data selezionata nel filtro) invece delle finestre "prossimi N
+    giorni" + "ultimi N conclusi". Senza `target_date` esegue il giro
+    completo di default. Non chiama alcun provider esterno."""
+
+    target_date: Optional[str] = None
+    async_run: bool = True
+
+
 class JobSettlementRequest(BaseModel):
     from_date: Optional[str] = None
     to_date: Optional[str] = None
