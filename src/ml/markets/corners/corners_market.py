@@ -119,6 +119,32 @@ def _line_specific_odds_features(match: dict[str, Any], odds_market: str, lines:
     return features
 
 
+def build_corners_prediction_row(
+    match: dict[str, Any],
+    lines: tuple[float, ...] = DEFAULT_LINES,
+    odds_market: str = ODDS_MARKET,
+) -> Optional[dict[str, Any]]:
+    """Riga di feature per UNA fixture live/futura (mai training - nessun
+    target, il risultato non esiste ancora). Stessa identica logica per-
+    partita di `build_corners_frame_from_records` (odds pooled generiche +
+    mean_stats + feature dedicate corner + quote line-specific per OGNI
+    linea configurata), riusata qui senza duplicazione: entrambe le feature
+    dedicate/quote sono funzioni PURE del singolo `match` (nessuna query
+    storica necessaria, a differenza dell'arbitro per Cards), quindi
+    calcolabili identiche sia in batch (training) sia per una fixture sola
+    (serving) - stesso principio gia' seguito da
+    `FilterMarketService.build_prediction_frames_from_match` per gli altri
+    mercati. Ritorna `None` quando mancano le quote 'corners' (stesso
+    requisito minimo del training)."""
+    service = FilterMarketService()
+    row = service._build_row(match=match, market=odds_market, with_target=False)
+    if not row:
+        return None
+    row.update(_corner_dedicated_features(match))
+    row.update(_line_specific_odds_features(match, odds_market, lines))
+    return row
+
+
 def build_corners_frame_from_records(
     matches: list[dict[str, Any]],
     lines: tuple[float, ...] = DEFAULT_LINES,
@@ -126,10 +152,9 @@ def build_corners_frame_from_records(
 ) -> pd.DataFrame:
     """Dataset (feature odds/mean_stats generiche + feature dedicate corner +
     target reale PER OGNI linea) sulle fixture con quote 'corners' disponibili."""
-    service = FilterMarketService()
     rows: list[dict[str, Any]] = []
     for match in matches:
-        row = service._build_row(match=match, market=odds_market, with_target=False)
+        row = build_corners_prediction_row(match, lines=lines, odds_market=odds_market)
         if not row:
             continue
 
@@ -143,8 +168,6 @@ def build_corners_frame_from_records(
 
         total_corners = int(home_corners) + int(away_corners)
         row["total_corners"] = total_corners
-        row.update(_corner_dedicated_features(match))
-        row.update(_line_specific_odds_features(match, odds_market, lines))
         for line in lines:
             row[f"y_{_line_label(line)}"] = int(label_corners_over(total_corners, line))
         rows.append(row)

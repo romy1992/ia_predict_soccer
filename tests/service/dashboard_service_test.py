@@ -10,7 +10,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 import src.api.dashboard_service as dashboard_service_module
-from src.api.dashboard_service import DashboardService
+from src.api.dashboard_service import CARDS_LINE_MARKETS, CARDS_LINES, CORNERS_LINE_MARKETS, CORNERS_LINES, DashboardService
 from src.service_ia.model.match import Base, Match, Statistics
 
 
@@ -1150,6 +1150,64 @@ class TestApplyMonotonicProjection(unittest.TestCase):
         payload = self._payload(goal_no_goal={"prediction": 1, "probability": 0.55, "model_name": "m", "run_id": "r5"})
         DashboardService._apply_monotonic_projection(payload)
         self.assertEqual(payload["goal_no_goal"]["probability"], 0.55)
+
+
+class TestApplyLineMarketsMonotonicProjection(unittest.TestCase):
+    """2026-09-13: stesso principio di `TestApplyMonotonicProjection` ma
+    per Corners/Cards a linea configurabile (MARKET-05/06) - Over 10.5
+    implica Over 9.5, che implica Over 8.5."""
+
+    def _corners_payload(self, **overrides):
+        payload = {
+            "corners_line_8_5": {"prediction": 1, "probability": 0.6, "model_name": "m", "run_id": "r1"},
+            "corners_line_9_5": {"prediction": 1, "probability": 0.7, "model_name": "m", "run_id": "r2"},
+            "corners_line_10_5": {"prediction": 0, "probability": 0.3, "model_name": "m", "run_id": "r3"},
+            "corners_line_11_5": {"prediction": 0, "probability": 0.1, "model_name": "m", "run_id": "r4"},
+        }
+        payload.update(overrides)
+        return payload
+
+    def test_projects_violating_probabilities_to_monotone(self):
+        payload = self._corners_payload()
+        DashboardService._apply_line_markets_monotonic_projection(payload, CORNERS_LINE_MARKETS, CORNERS_LINES)
+
+        probs = [payload[m]["probability"] for m in CORNERS_LINE_MARKETS]
+        self.assertEqual(probs, sorted(probs, reverse=True))
+        # 9.5 (0.7) violava 8.5 (0.6): deve essere abbassata al minimo cumulativo.
+        self.assertEqual(payload["corners_line_9_5"]["probability"], 0.6)
+
+    def test_skipped_when_a_line_is_missing(self):
+        payload = self._corners_payload()
+        del payload["corners_line_10_5"]
+        original = dict(payload["corners_line_9_5"])
+        DashboardService._apply_line_markets_monotonic_projection(payload, CORNERS_LINE_MARKETS, CORNERS_LINES)
+        self.assertEqual(payload["corners_line_9_5"], original)
+
+    def test_cards_lines_projected_independently_from_corners(self):
+        payload = {
+            "cards_line_3_5": {"prediction": 1, "probability": 0.5, "model_name": "m", "run_id": "r1"},
+            "cards_line_4_5": {"prediction": 1, "probability": 0.65, "model_name": "m", "run_id": "r2"},
+            "cards_line_5_5": {"prediction": 0, "probability": 0.2, "model_name": "m", "run_id": "r3"},
+            "cards_line_6_5": {"prediction": 0, "probability": 0.05, "model_name": "m", "run_id": "r4"},
+        }
+        DashboardService._apply_line_markets_monotonic_projection(payload, CARDS_LINE_MARKETS, CARDS_LINES)
+        probs = [payload[m]["probability"] for m in CARDS_LINE_MARKETS]
+        self.assertEqual(probs, sorted(probs, reverse=True))
+        self.assertEqual(payload["cards_line_4_5"]["probability"], 0.5)
+
+
+class TestApplyLineMarketSignals(unittest.TestCase):
+    def test_injects_signal_for_every_present_line_market(self):
+        payload = {
+            "corners_line_8_5": {"prediction": 1, "probability": 0.65},
+            "cards_line_6_5": {"prediction": 0, "probability": 0.20},
+            "h2h": {"prediction": 1, "probability": 0.55},
+        }
+        DashboardService._apply_line_market_signals(payload)
+
+        self.assertIsNotNone(payload["corners_line_8_5"]["line_market_signal"])
+        self.assertTrue(payload["cards_line_6_5"]["line_market_signal"]["signal"])  # 0.20 >= soglia 0.1686
+        self.assertNotIn("line_market_signal", payload["h2h"])
 
 
 class TestDashboardApiWindow(unittest.TestCase):

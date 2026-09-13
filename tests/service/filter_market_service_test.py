@@ -1,5 +1,6 @@
 import unittest
 import uuid
+from unittest import mock
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -148,6 +149,80 @@ class TestBuildPredictionFrames(unittest.TestCase):
     def test_build_prediction_frames_empty_markets_returns_empty_dict(self):
         service = FilterMarketService.__new__(FilterMarketService)
         self.assertEqual(service.build_prediction_frames_from_match({"odds": []}, markets=[]), {})
+
+
+class TestBuildPredictionFramesLineMarkets(unittest.TestCase):
+    """2026-09-13: Corners/Cards a linea configurabile (`LINE_MARKETS`) -
+    wiring nel percorso di predizione condiviso con gli altri mercati
+    (`build_prediction_frames_from_match`, usato da `PredictionSnapshotService`)."""
+
+    def _match(self):
+        return {
+            "id_fixture": 999,
+            "season": 2026,
+            "current_league": 39,
+            "date_match": "2026-09-13T18:00:00+00:00",
+            "referee": "Rossi",
+            "mean_statistics": [
+                {"id_team": 100, "Corner Kicks": 5.5, "Yellow Cards": 2.0},
+                {"id_team": 200, "Corner Kicks": 4.5, "Yellow Cards": 1.5},
+            ],
+            "id_team_home": 100,
+            "id_team_away": 200,
+            "odds": [
+                {
+                    "corners": {"Over 8.5_bookA": 1.90, "Under 8.5_bookA": 1.95, "Over 9.5_bookA": 2.10, "Under 9.5_bookA": 1.75},
+                    "cards": {"Over 3.5_bookA": 1.80, "Under 3.5_bookA": 2.00},
+                }
+            ],
+        }
+
+    def test_corners_line_market_produces_line_specific_columns(self):
+        service = FilterMarketService.__new__(FilterMarketService)
+        frames = service.build_prediction_frames_from_match(self._match(), markets=["corners_line_8_5"])
+
+        self.assertIn("corners_line_8_5", frames)
+        row = frames["corners_line_8_5"].iloc[0]
+        self.assertIn("odds_mean_line_8_5", row.index)
+        self.assertIn("corner_mean_home_dedicated", row.index)
+        # La riga grezza contiene le quote di TUTTE le linee (stesso
+        # comportamento del training, vedi build_corners_frame_from_records):
+        # e' il caricamento del modello (feature_names dal registry, in
+        # PredictionSnapshotService) a restringere alla sola linea attiva,
+        # non questo builder.
+        self.assertIn("odds_mean_line_9_5", row.index)
+
+    def test_cards_line_market_includes_referee_features_via_cached_index(self):
+        with mock.patch("src.ml.markets.cards.cards_market.MatchRepository") as repo_cls, mock.patch(
+            "src.ml.markets.cards.cards_market.convert_orm_match_to_dict", side_effect=lambda x: x
+        ):
+            repo_cls.return_value.search_filter.return_value = []
+            service = FilterMarketService.__new__(FilterMarketService)
+            frames = service.build_prediction_frames_from_match(self._match(), markets=["cards_line_3_5"])
+
+        self.assertIn("cards_line_3_5", frames)
+        row = frames["cards_line_3_5"].iloc[0]
+        self.assertIn("odds_mean_line_3_5", row.index)
+        for col in [
+            "referee_avg_cards_prior",
+            "referee_severity_index_prior",
+            "referee_matches_officiated_prior",
+            "referee_has_history",
+        ]:
+            self.assertIn(col, row.index)
+
+    def test_line_markets_included_in_normalized_dashboard_market_request(self):
+        from src.api.dashboard_service import DashboardService
+
+        normalized = DashboardService._normalize_market_request(["cards_line_3_5", "corners_line_8_5", "bogus_market"])
+        self.assertIn("cards_line_3_5", normalized)
+        self.assertIn("corners_line_8_5", normalized)
+        self.assertNotIn("bogus_market", normalized)
+
+    def test_unknown_market_prefix_is_ignored(self):
+        service = FilterMarketService.__new__(FilterMarketService)
+        frames = service.build_prediction_frames_from_match(self._match(), markets=["corners_line_99_5"])
+        self.assertEqual(frames, {})
 
 
 class TestExtractLineFromOddsKey(unittest.TestCase):

@@ -25,6 +25,7 @@ from src.oracle.decision_engine.decision_policy import (
     evaluate_decision,
     evaluate_decision_from_fair_odds_outcome,
 )
+from src.oracle.decision_engine.line_market_signal_policy import evaluate_line_market_signal
 from src.oracle.decision_engine.over_signal_policy import evaluate_over_signal
 from src.oracle.fair_odds.fair_odds_engine import build_fair_odds_outcome
 from src.oracle.ledger.prediction_ledger import resolve_actual_outcome
@@ -51,6 +52,17 @@ _DECISION_LABEL_PRIORITY = {"PLAY": 0, "BORDERLINE": 1, "NO BET": 2}
 # effetto sul selection_score sempre leggermente positivo o nullo, mai
 # negativo - vedi `apply_monotonic_to_champions.py`). Vedi `_apply_monotonic_projection`.
 UNDER_OVER_MARKETS = ["under_over_1_5", "under_over_2_5", "under_over_3_5", "under_over_4_5"]
+
+# Stesso principio di coerenza monotona per Corners/Cards a linea
+# configurabile (MARKET-05/06, 2026-09-13): Over 10.5 corner implica Over
+# 9.5, che implica Over 8.5 (eventi annidati sullo stesso conteggio totale)
+# - verificato offline (33.1%/22.7% di violazioni pairwise pre-proiezione
+# sui champion reali, vedi IMPLEMENTATION_LOG.md). Vedi
+# `_apply_line_markets_monotonic_projection`.
+CORNERS_LINE_MARKETS = ["corners_line_8_5", "corners_line_9_5", "corners_line_10_5", "corners_line_11_5"]
+CORNERS_LINES = (8.5, 9.5, 10.5, 11.5)
+CARDS_LINE_MARKETS = ["cards_line_3_5", "cards_line_4_5", "cards_line_5_5", "cards_line_6_5"]
+CARDS_LINES = (3.5, 4.5, 5.5, 6.5)
 
 # Finestra oraria per interrogare l'API-Sports da Dashboard per le partite
 # ODIERNE (risparmio quota, 2026-09-09, richiesto esplicitamente
@@ -144,7 +156,7 @@ class DashboardService:
         normalized = [m.strip() for m in markets if m and m.strip()]
         if not normalized:
             return None
-        allowed = FilterMarketService.SUPPORTED_MARKETS
+        allowed = FilterMarketService.SUPPORTED_MARKETS | FilterMarketService.LINE_MARKETS
         return [m for m in normalized if m in allowed]
 
     @classmethod
@@ -1287,8 +1299,51 @@ class DashboardService:
         payload = self._snapshot_service.resolve_predictions(**resolve_kwargs)
 
         self._apply_monotonic_projection(payload)
+        self._apply_line_markets_monotonic_projection(payload, CORNERS_LINE_MARKETS, CORNERS_LINES)
+        self._apply_line_markets_monotonic_projection(payload, CARDS_LINE_MARKETS, CARDS_LINES)
+        self._apply_line_market_signals(payload)
         self._prediction_cache[cache_key] = payload
         return payload
+
+    @staticmethod
+    def _apply_line_markets_monotonic_projection(payload: dict[str, Any], markets: list[str], lines: tuple[float, ...]) -> None:
+        """Come `_apply_monotonic_projection`, generalizzata a Corners/Cards
+        a linea configurabile (MARKET-05/06): Over linea_alta implica Over
+        linea_bassa (eventi annidati sullo stesso conteggio totale) - stessa
+        funzione pura `enforce_monotonic_over_probabilities`, riusata con
+        `label_fn` per la convenzione di chiave di questo modulo (il nome
+        mercato stesso, es. 'corners_line_8_5', invece di 'over_1_5').
+        Applicata SOLO se tutte le linee hanno gia' una predizione in
+        `payload` (mai una proiezione parziale)."""
+        if not all(market in payload for market in markets):
+            return
+
+        def label_fn(line: float) -> str:
+            return markets[lines.index(line)]
+
+        probabilities_by_threshold = {market: np.array([payload[market]["probability"]]) for market in markets}
+        projected = enforce_monotonic_over_probabilities(probabilities_by_threshold, thresholds=lines, label_fn=label_fn)
+
+        for market in markets:
+            p = float(projected[market][0])
+            payload[market]["probability"] = p
+            payload[market]["prediction"] = int(p >= 0.5)
+
+    @staticmethod
+    def _apply_line_market_signals(payload: dict[str, Any]) -> None:
+        """Segnale a soglia OTTIMALE per Corners/Cards (vedi
+        `line_market_signal_policy.py`, stesso principio di
+        `bet_over_signal` per i gol - qui pero' iniettato direttamente nel
+        payload GREZZO invece che nella decision card, perche' questi
+        mercati non passano ancora per `_build_decision_cards`/il motore
+        fair-odds/EV, MAI esteso a quello in questa fase): calcolato SEMPRE
+        sulla probabilita' gia' proiettata (coerente tra le linee), non
+        quella grezza pre-proiezione."""
+        for market in CORNERS_LINE_MARKETS + CARDS_LINE_MARKETS:
+            entry = payload.get(market)
+            if entry is None:
+                continue
+            entry["line_market_signal"] = evaluate_line_market_signal(market=market, p_over=entry.get("probability"))
 
     @staticmethod
     def _apply_monotonic_projection(payload: dict[str, Any]) -> None:

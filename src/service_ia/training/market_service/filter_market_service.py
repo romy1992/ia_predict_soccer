@@ -25,6 +25,23 @@ class FilterMarketService:
         "dc",
     }
 
+    # Corners/Cards a linea configurabile (MARKET-05/06, 2026-09-13):
+    # mercati INDIPENDENTI da quelli legacy "corners"/"cards" sopra (soglia
+    # fissa) - stringhe hardcoded (non importate da corners_market.py/
+    # cards_market.py per evitare un import circolare: quei moduli
+    # importano gia' `FilterMarketService`) - devono restare in sync con
+    # `DEFAULT_LINES`/`MARKET_NAME`/`_line_label` li' definiti.
+    LINE_MARKETS = {
+        "corners_line_8_5",
+        "corners_line_9_5",
+        "corners_line_10_5",
+        "corners_line_11_5",
+        "cards_line_3_5",
+        "cards_line_4_5",
+        "cards_line_5_5",
+        "cards_line_6_5",
+    }
+
     def __init__(self):
         self.match_repo = MatchRepository()
 
@@ -267,11 +284,37 @@ class FilterMarketService:
             return None
         return convert_orm_match_to_dict([match])[0]
 
+    @staticmethod
+    def _build_line_market_row(match: dict, market: str) -> Optional[dict]:
+        """Riga di feature per un mercato Corners/Cards a linea configurabile
+        (`LINE_MARKETS`) - import LOCALE (lazy) per evitare il ciclo
+        d'importazione (`corners_market.py`/`cards_market.py` importano
+        gia' `FilterMarketService` a livello di modulo). Cards usa l'indice
+        arbitro CACHED (`current_referee_features_cached`, TTL 15 minuti,
+        un replay condiviso per l'intera richiesta invece di uno per
+        fixture) - unica eccezione al "nessuna query qui sotto" della
+        pooled `_build_row`, ma economicamente innocua (cache hit nella
+        stragrande maggioranza delle chiamate)."""
+        if market.startswith("corners_line_"):
+            from src.ml.markets.corners.corners_market import build_corners_prediction_row
+
+            return build_corners_prediction_row(match)
+        if market.startswith("cards_line_"):
+            from src.ml.markets.cards.cards_market import build_cards_prediction_row, current_referee_features_cached
+
+            referee_features = current_referee_features_cached(
+                referee=str(match.get("referee") or ""), league=match.get("current_league")
+            )
+            return build_cards_prediction_row(match, referee_features=referee_features)
+        return None
+
     def build_prediction_frames_from_match(self, match, markets: list[str]) -> dict[str, pd.DataFrame]:
         """Come `build_prediction_frame` ma per PIU' mercati sulla STESSA
         fixture GIA' caricata (`match`: ORM `Match` o dict gia' convertito),
-        SENZA alcuna query: `_build_row` e' puro calcolo in-memory (nessun
-        accesso a `self.match_repo`/DB qui sotto).
+        SENZA alcuna query (eccetto l'indice arbitro cached per i mercati
+        Cards a linea configurabile, vedi `_build_line_market_row`):
+        `_build_row` resta puro calcolo in-memory per tutti gli altri
+        mercati.
 
         Fix performance (cambio giorno lento in Dashboard): il chiamante puo'
         riusare un `Match` gia' caricato in BATCH altrove (es.
@@ -286,9 +329,12 @@ class FilterMarketService:
 
         match_dict = match if isinstance(match, dict) else convert_orm_match_to_dict([match])[0]
         for market in markets:
-            if market not in self.SUPPORTED_MARKETS:
+            if market in self.LINE_MARKETS:
+                row = self._build_line_market_row(match_dict, market)
+            elif market in self.SUPPORTED_MARKETS:
+                row = self._build_row(match=match_dict, market=market, with_target=False)
+            else:
                 continue
-            row = self._build_row(match=match_dict, market=market, with_target=False)
             if not row:
                 continue
             frames[market] = pd.DataFrame([row]).replace([np.inf, -np.inf], np.nan).fillna(0)
@@ -311,7 +357,7 @@ class FilterMarketService:
         return self.build_prediction_frames_from_match(match_dict, markets)
 
     def build_prediction_frame(self, market: str, fixture_id: int) -> Optional[pd.DataFrame]:
-        if market not in self.SUPPORTED_MARKETS:
+        if market not in self.SUPPORTED_MARKETS and market not in self.LINE_MARKETS:
             raise ValueError(f"Mercato non supportato: {market}")
         return self.build_prediction_frames(fixture_id=fixture_id, markets=[market]).get(market)
 
