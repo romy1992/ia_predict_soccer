@@ -6,6 +6,7 @@ import {
   marketLabel,
   phaseClass,
   phaseLabel,
+  predictionLabel,
   valueClass,
 } from "../../shared/formatters";
 
@@ -41,6 +42,15 @@ export default function MatchDetailPanel({
   const timeline = matchDetail?.timeline || [];
   const oddsSummary = matchDetail?.odds_summary || {};
   const oddsMarkets = Object.keys(oddsSummary);
+  // Corners/Cards a linea configurabile (MARKET-05/06, 2026-09-13): servite
+  // come predizione ML grezza (pick/probabilita'/segnale a soglia ottima),
+  // NON ancora come decision card completa - il motore fair-odds/EV lavora
+  // per outcome di mercato "intero", non per linea configurabile dentro lo
+  // stesso mercato quote (vedi IMPLEMENTATION_LOG.md). Lette da `predictions`
+  // (non da `decisionCards`, dove queste linee non compaiono mai).
+  const linePredictions = Object.entries(matchDetail?.predictions || {}).filter(
+    ([marketKey]) => marketKey.startsWith("corners_line_") || marketKey.startsWith("cards_line_")
+  );
 
   return (
     <section className="panel detail-panel">
@@ -142,6 +152,34 @@ export default function MatchDetailPanel({
           )}
         </article>
       </div>
+
+      {linePredictions.length > 0 && (
+        <article className="detail-block">
+          <h4>Corners / Cards (linee)</h4>
+          <div className="decision-grid">
+            {linePredictions.map(([marketKey, payload]) => (
+              <div className="decision-card" key={marketKey}>
+                <div className="decision-head">
+                  <strong>{marketLabel(marketKey)}</strong>
+                </div>
+                <p className="decision-pick">{predictionLabel(marketKey, payload.prediction, fixture)}</p>
+                {payload.line_market_signal?.signal && (
+                  <span
+                    className="bet-over-badge"
+                    title={`Soglia ottimale (Youden): P(Over) >= ${formatPercent(payload.line_market_signal.threshold)} (accuracy attesa ${formatPercent(payload.line_market_signal.expected_accuracy)}). Segnale indipendente dal pick sopra.`}
+                  >
+                    OVER (soglia ottima)
+                  </span>
+                )}
+                <div className="decision-metrics">
+                  <span>Conf.: {formatPercent(payload.probability)}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+          <small>Solo predizione ML: nessun motore fair-odds/EV per queste linee (ancora non esteso a Corners/Cards).</small>
+        </article>
+      )}
 
       <article className="detail-block">
         <h4>Quote medie bookmaker</h4>
