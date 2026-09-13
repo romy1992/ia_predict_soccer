@@ -21,6 +21,7 @@ import {
   getPredictions,
   predict,
   recomputeMatchPredictions,
+  refreshDayPredictions,
   refreshApiQuota,
   saveBetslipGeneration,
   triggerDailyRefresh,
@@ -101,6 +102,8 @@ export default function App() {
   const [matchDetailError, setMatchDetailError] = useState("");
   const [recomputingPredictions, setRecomputingPredictions] = useState(false);
   const [recomputePredictionsError, setRecomputePredictionsError] = useState("");
+  const [refreshingDayPredictions, setRefreshingDayPredictions] = useState(false);
+  const [refreshDayPredictionsError, setRefreshDayPredictionsError] = useState("");
   const [oracleFixtureId, setOracleFixtureId] = useState(null);
   const [previousPage, setPreviousPage] = useState("dashboard");
   const marketsQuery = useMemo(() => {
@@ -601,6 +604,26 @@ export default function App() {
     },
     [marketsQuery, loadMatchDetail]
   );
+  // "Ricalcola previsioni del giorno" (2026-09-13): stesso giro del job
+  // schedulato ma solo sulla data selezionata - serve quando un mercato
+  // viene promosso a production e le fixture gia' a DB restano "In coda"
+  // finche' il job automatico non le ripassa. Ricarica la lista al termine
+  // (la chiamata e' sincrona lato API apposta, vedi `refreshDayPredictions`).
+  const refreshDayPredictionsNow = useCallback(async () => {
+    if (!selectedDate) {
+      return;
+    }
+    setRefreshingDayPredictions(true);
+    setRefreshDayPredictionsError("");
+    try {
+      await refreshDayPredictions(selectedDate);
+      await loadDashboardData("full", { forceRefresh: true });
+    } catch (err) {
+      setRefreshDayPredictionsError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setRefreshingDayPredictions(false);
+    }
+  }, [selectedDate, loadDashboardData]);
   const openOracleDetail = useCallback(
     (fixtureId) => {
       setPreviousPage((current) => (activePage === "oracle-detail" ? current : activePage));
@@ -912,6 +935,9 @@ export default function App() {
             onApplySearch={() => setSearchFilter(searchInput.trim())}
             onForceRefresh={handleForceRefreshDay}
             forceRefreshDisabled={isQuotaExhausted || isFilterLoading || isLoading}
+            onRefreshDayPredictions={refreshDayPredictionsNow}
+            refreshingDayPredictions={refreshingDayPredictions}
+            refreshDayPredictionsError={refreshDayPredictionsError}
           />
         )}
         {error && <div className="error-box">Errore: {error}</div>}

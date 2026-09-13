@@ -5,9 +5,26 @@ import {
   formatSignedNumber,
   phaseClass,
   phaseLabel,
+  predictionLabel,
   valueClass,
 } from "../../shared/formatters";
 import PredictionBadges from "./PredictionBadges";
+
+/**
+ * Pick/probabilita' del modello per il mercato filtrato quando NON esiste
+ * una decision card (2026-09-13): la tabella per singolo mercato leggeva
+ * solo da `best_decision`, quindi un mercato senza motore fair-odds/EV
+ * (oggi le linee Corners/Cards) spariva del tutto una volta filtrato,
+ * pur essendo visibile fra i badge di "Tutti i mercati" - incoerenza
+ * segnalata dall'operatore. Quota/edge/ROI restano giustamente N/D: quelli
+ * mancano davvero, la predizione no.
+ */
+function rawPredictionFor(row, selectedMarket, showAllMarkets) {
+  if (showAllMarkets || !selectedMarket) {
+    return null;
+  }
+  return row?.predictions?.[selectedMarket] || null;
+}
 
 export default function MatchTable({
   rows,
@@ -48,6 +65,9 @@ export default function MatchTable({
         <tbody>
           {rows.map((row) => {
             const decision = row.best_decision;
+            const raw = rawPredictionFor(row, selectedMarket, showAllMarkets);
+            const pick = decision?.pick || (raw ? predictionLabel(selectedMarket, raw.prediction, row) : "N/D");
+            const probability = decision?.predicted_probability ?? raw?.probability;
             return (
             <tr
               key={`match-${row.fixture_id}`}
@@ -64,8 +84,8 @@ export default function MatchTable({
                 <span className={`phase-badge ${phaseClass(row.phase)}`}>{phaseLabel(row.phase)}</span>
               </td>
               {showAllMarkets && <td className="all-markets-cell"><PredictionBadges row={row} modelMarkets={modelMarkets} /></td>}
-              <td>{decision?.pick || "N/D"}</td>
-              <td>{decision?.predicted_probability == null ? "N/D" : formatPercent(decision.predicted_probability)}</td>
+              <td>{pick}</td>
+              <td>{probability == null ? "N/D" : formatPercent(probability)}</td>
               <td>{decision?.market_odd == null ? "N/D" : formatOdd(decision.market_odd)}</td>
               <td>{decision?.model_void_odd == null ? "N/D" : formatOdd(decision.model_void_odd)}</td>
               <td title={decision?.odds_edge_percent == null ? "" : `Edge percentuale: ${formatPercentagePoints(decision.odds_edge_percent)}`}>
@@ -101,6 +121,9 @@ export default function MatchTable({
     <div className="match-center-mobile">
       {rows.map((row) => {
         const decision = row.best_decision;
+        const raw = rawPredictionFor(row, selectedMarket, showAllMarkets);
+        const pick = decision?.pick || (raw ? predictionLabel(selectedMarket, raw.prediction, row) : "N/D");
+        const probability = decision?.predicted_probability ?? raw?.probability;
         return (
           <article className="match-mobile-card" key={`mobile-${row.fixture_id}`}>
             <div className="match-mobile-head">
@@ -114,8 +137,8 @@ export default function MatchTable({
               </div>
             )}
             <dl>
-              <div><dt>{showAllMarkets ? "Pronostico vincitore" : "Pronostico"}</dt><dd>{decision?.pick || "N/D"}</dd></div>
-              <div><dt>Probabilità IA</dt><dd>{decision?.predicted_probability == null ? "N/D" : formatPercent(decision.predicted_probability)}</dd></div>
+              <div><dt>{showAllMarkets ? "Pronostico vincitore" : "Pronostico"}</dt><dd>{pick}</dd></div>
+              <div><dt>Probabilità IA</dt><dd>{probability == null ? "N/D" : formatPercent(probability)}</dd></div>
               <div><dt>Quota mercato</dt><dd>{decision?.market_odd == null ? "N/D" : formatOdd(decision.market_odd)}</dd></div>
               <div><dt>Quota void IA</dt><dd>{decision?.model_void_odd == null ? "N/D" : formatOdd(decision.model_void_odd)}</dd></div>
               <div><dt>Edge</dt><dd>{decision?.odds_edge_absolute == null ? "N/D" : formatSignedNumber(decision.odds_edge_absolute)}</dd></div>

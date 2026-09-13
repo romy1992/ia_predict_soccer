@@ -34,6 +34,7 @@ from src.api.schemas import (
     JobFutureSyncRequest,
     JobImportRequest,
     JobLiveSyncRequest,
+    JobPredictionSnapshotRefreshRequest,
     JobResponse,
     JobRetrainRequest,
     JobScheduleResponse,
@@ -110,6 +111,7 @@ from src.jobs.scheduler import (
     run_manual_retrain,
     run_manual_settlement,
     run_manual_today_update,
+    run_prediction_snapshot_refresh,
 )
 from src.service_ia.config.app_config import load_app_config
 from src.service_ia.pre_processing.api_sports_provider import ApiSportsProvider
@@ -633,6 +635,41 @@ def trigger_daily_refresh(payload: JobDailyRefreshRequest, background_tasks: Bac
         days_ahead=payload.days_ahead,
     )
     return JobResponse(queued=False, message="Daily refresh job completed", details=report)
+
+
+@app.post("/jobs/prediction-snapshot-refresh", response_model=JobResponse)
+def trigger_prediction_snapshot_refresh(
+    payload: JobPredictionSnapshotRefreshRequest, background_tasks: BackgroundTasks
+) -> JobResponse:
+    """Bottone "Ricalcola previsioni del giorno" della Dashboard (2026-09-13):
+    esegue ORA lo stesso giro del job schedulato `prediction_snapshot_refresh`
+    ma scopato alla sola data richiesta, cosi' un mercato appena promosso a
+    production (caso reale: Corners/Cards a linea configurabile) si popola
+    subito sul giorno che si sta guardando invece di aspettare il prossimo
+    giro automatico. Lavora solo su dati gia' a DB: nessuna chiamata
+    API-Sports, nessuna quota consumata."""
+    if payload.target_date:
+        try:
+            date.fromisoformat(payload.target_date)
+        except ValueError:
+            raise HTTPException(
+                status_code=400, detail=f"target_date non valida (atteso YYYY-MM-DD): {payload.target_date}"
+            )
+
+    params = {"target_date": payload.target_date}
+    if payload.async_run:
+        row = JobHistory().queue_job(job_type="prediction_snapshot_refresh", params=params)
+        background_tasks.add_task(
+            run_prediction_snapshot_refresh,
+            target_date=payload.target_date,
+            job_id=row["job_id"],
+        )
+        return JobResponse(
+            queued=True, message="Prediction snapshot refresh job queued", details={"job_id": row["job_id"]}
+        )
+
+    report = run_prediction_snapshot_refresh(target_date=payload.target_date)
+    return JobResponse(queued=False, message="Prediction snapshot refresh job completed", details=report)
 
 
 @app.post("/jobs/settlement", response_model=JobResponse)

@@ -197,6 +197,84 @@ class TestRunPredictionSnapshotRefresh(unittest.TestCase):
         self.assertIn("days_ahead", result)
         self.assertIsInstance(result["days_ahead"], int)
 
+    # --- `target_date` (2026-09-13): bottone "Ricalcola previsioni del
+    # giorno". Sostituisce ENTRAMBE le finestre di default con un solo
+    # giorno, qualunque sia lo status delle fixture. ---
+
+    def _today_iso(self) -> str:
+        return datetime.now(timezone.utc).date().isoformat()
+
+    def _mock_betslip_service(self):
+        """`BetslipService` apre una connessione DB reale: qui interessa solo
+        il giro delle predizioni, non la generazione delle proposte (coperta
+        dai suoi test). Mockarlo tiene questi test deterministici e senza
+        dipendenze di rete."""
+        service = mock.Mock()
+        service.generate_and_snapshot_for_day.return_value = (
+            None,
+            None,
+            {"proposals_seen": 0, "proposals_created": 0, "proposals_unchanged": 0},
+        )
+        return service
+
+    def test_target_date_covers_every_status_of_that_day(self):
+        """Il caso d'uso reale (mercato appena promosso) riguarda tutte le
+        partite del giorno guardato in Dashboard, non solo quelle NS: a
+        differenza del giro di default qui non si filtra per status."""
+        self._seed_match(20, status="NS", days_from_today=0)
+        self._seed_match(21, status="FT", days_from_today=0)
+        self._seed_match(22, status="1H", days_from_today=0)
+
+        fake_service = _FakeSnapshotService()
+        betslip_service = self._mock_betslip_service()
+        with mock.patch.object(scheduler_module, "PredictionSnapshotService", lambda: fake_service):
+            with mock.patch.object(scheduler_module, "BetslipService", lambda: betslip_service):
+                result = scheduler_module.run_prediction_snapshot_refresh(target_date=self._today_iso())
+
+        self.assertEqual(sorted(fake_service.calls), [20, 21, 22])
+        self.assertEqual(result["fixtures_considered"], 3)
+        self.assertEqual(result["target_date"], self._today_iso())
+
+    def test_target_date_excludes_other_days_even_inside_default_windows(self):
+        """Una fixture NS di domani rientrerebbe nella finestra di default
+        `days_ahead`: con `target_date` su oggi non deve essere toccata."""
+        self._seed_match(30, status="NS", days_from_today=0)
+        self._seed_match(31, status="NS", days_from_today=1)
+        self._seed_match(32, status="FT", days_from_today=-1)
+
+        fake_service = _FakeSnapshotService()
+        betslip_service = self._mock_betslip_service()
+        with mock.patch.object(scheduler_module, "PredictionSnapshotService", lambda: fake_service):
+            with mock.patch.object(scheduler_module, "BetslipService", lambda: betslip_service):
+                result = scheduler_module.run_prediction_snapshot_refresh(target_date=self._today_iso())
+
+        self.assertEqual(fake_service.calls, [30])
+        self.assertEqual(result["fixtures_recently_finished"], 0)
+
+    def test_past_target_date_does_not_attempt_betslip_proposals(self):
+        """Le proposte esistono solo da oggi in avanti (il generatore
+        rifiuta le giornate passate): ricalcolare un giorno storico non
+        deve neppure provarci, altrimenti il report si riempirebbe di
+        errori attesi."""
+        yesterday = (datetime.now(timezone.utc).date() - timedelta(days=1)).isoformat()
+        self._seed_match(40, status="FT", days_from_today=-1)
+
+        fake_service = _FakeSnapshotService()
+        betslip_service = mock.Mock()
+        with mock.patch.object(scheduler_module, "PredictionSnapshotService", lambda: fake_service):
+            with mock.patch.object(scheduler_module, "BetslipService", lambda: betslip_service):
+                result = scheduler_module.run_prediction_snapshot_refresh(target_date=yesterday)
+
+        self.assertEqual(fake_service.calls, [40])
+        betslip_service.generate_and_snapshot_for_day.assert_not_called()
+        self.assertEqual(result["betslip_proposals"]["dates_considered"], 0)
+
+    def test_invalid_target_date_is_rejected(self):
+        fake_service = _FakeSnapshotService()
+        with mock.patch.object(scheduler_module, "PredictionSnapshotService", lambda: fake_service):
+            with self.assertRaises(ValueError):
+                scheduler_module.run_prediction_snapshot_refresh(target_date="13-09-2026")
+
 
 if __name__ == "__main__":
     unittest.main()
