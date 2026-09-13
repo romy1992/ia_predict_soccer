@@ -48,6 +48,7 @@ import os
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from collections.abc import Iterable
 from typing import Any, Optional
 
 import joblib
@@ -531,9 +532,32 @@ def build_cards_frame_from_records(
 _ODDS_METRIC_KEYS = ["odds_count", "odds_mean", "odds_std", "odds_min", "odds_max"] + [f"odds_slot_{i}" for i in range(1, 11)]
 
 
-def _line_specific_odds_columns(line: float) -> set[str]:
+def _line_specific_odds_columns(line: float, columns: Optional[Iterable[str]] = None) -> set[str]:
+    """Colonne quote riferite a QUESTA linea.
+
+    Con `columns` (le colonne reali del frame) riconosce anche le feature
+    per esito introdotte il 2026-09-13 (`odds_mean_over_3_5`,
+    `prob_norm_under_3_5`, `overround_line_3_5`, ...), che non derivano da
+    `_ODDS_METRIC_KEYS` e quindi non sarebbero enumerabili a priori. Senza
+    `columns` resta il comportamento originario (solo le legacy).
+
+    Senza questo riconoscimento le nuove colonne sfuggirebbero
+    all'esclusione in `_feature_columns_for` e il modello di una linea
+    vedrebbe le quote delle ALTRE linee - esattamente il leak che le
+    quote per-linea erano nate per eliminare.
+    """
     label = _line_label(line)
-    return {f"{key}_{label}" for key in _ODDS_METRIC_KEYS}
+    legacy = {f"{key}_{label}" for key in _ODDS_METRIC_KEYS}
+    if columns is None:
+        return legacy
+    # Due suffissi: `_line_specific_odds_features` produce
+    # '..._over_3_5_line_3_5', mentre `_build_row` sul bucket intero produce
+    # '..._over_3_5' (linea gia' dentro il nome dell'esito). Senza il secondo
+    # le colonne delle ALTRE linee sfuggirebbero all'esclusione.
+    raw_label = label.replace("line_", "", 1)
+    return legacy | {
+        col for col in columns if col.endswith(f"_{label}") or col.endswith(f"_{raw_label}")
+    }
 
 
 def _feature_columns_for(
@@ -557,12 +581,15 @@ def _feature_columns_for(
 
     all_line_odds_columns: set[str] = set()
     for line in lines:
-        all_line_odds_columns |= _line_specific_odds_columns(line)
+        all_line_odds_columns |= _line_specific_odds_columns(line, frame.columns)
 
     if use_line_specific_odds and active_line is not None:
-        active_columns = _line_specific_odds_columns(active_line)
+        active_columns = _line_specific_odds_columns(active_line, frame.columns)
         excluded |= (all_line_odds_columns - active_columns)
-        excluded |= set(_ODDS_METRIC_KEYS)
+        # Quote pooled legacy + `overround` sull'intero bucket (somma le
+        # probabilita' implicite di TUTTE le linee: privo di senso per una
+        # linea singola, a differenza di `overround_line_X_Y`).
+        excluded |= set(_ODDS_METRIC_KEYS) | {"overround"}
     else:
         excluded |= all_line_odds_columns
 
