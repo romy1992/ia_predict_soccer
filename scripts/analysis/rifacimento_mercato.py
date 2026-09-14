@@ -110,20 +110,39 @@ def oof_casuale(df: pd.DataFrame, feature: list[str]) -> tuple[np.ndarray, np.nd
     return np.array(y_all), np.array(p_all)
 
 
-def righe_sospette(df: pd.DataFrame, linea: str) -> pd.Series:
-    """Quote impossibili da un bookmaker reale.
+# Quanto puo' staccarsi la quota piu' alta dalla media delle altre, sulla
+# STESSA partita, prima di essere incredibile. Tarato su Under/Over 2.5: da
+# 2,5 in su riproduce esattamente le righe che la vecchia regola a soglia fissa
+# marcava (17 su 15.023), e su 3.5 e 4.5 non marca niente. Tenuto a 3,0 per
+# stare largo.
+STACCO_MASSIMO = 3.0
 
-    `overround < 1` significa che la somma delle probabilita' implicite sta
-    sotto il 100%: nessun bookmaker quota in perdita, quindi o una quota e'
-    gonfiata o le quote mediate non sono dello stesso evento. La soglia su
-    `odds_max` prende i casi eclatanti (un "Over 2.5" a 23.00) anche quando
-    l'overround resta sopra 1 perche' l'altro esito compensa.
+
+def righe_sospette(df: pd.DataFrame, linea: str) -> pd.Series:
+    """Quote che un bookmaker reale non puo' avere fatto.
+
+    Due segnali, entrambi indipendenti dalla linea:
+
+    - `overround < 1`: la somma delle probabilita' implicite sta sotto il
+      100%, cioe' il bookmaker starebbe quotando in perdita. O una quota e'
+      gonfiata, o le due quote mediate non sono dello stesso evento.
+    - quota massima molto sopra la media delle altre SULLA STESSA PARTITA:
+      prende i casi in cui l'overround resta sopra 1 perche' l'esito opposto
+      compensa.
+
+    La versione precedente usava soglie fisse (`odds_max_over > 6`), tarate su
+    2.5. Applicate a 3.5 o 4.5 avrebbero buttato via dati buoni: su Over 4.5 la
+    quota mediana e' 5,67 e un 20.00 e' una partita chiusa, non un errore. Il
+    rapporto con la media della stessa partita non ha questo problema.
     """
-    return (
-        (df["overround"] < 1.0)
-        | (df[f"odds_max_over_{linea}"] > 6.0)
-        | (df[f"odds_max_under_{linea}"] > 8.0)
-    )
+    sospette = df["overround"] < 1.0
+    for lato in ("over", "under"):
+        massima, media = f"odds_max_{lato}_{linea}", f"odds_mean_{lato}_{linea}"
+        if massima in df.columns and media in df.columns:
+            with np.errstate(divide="ignore", invalid="ignore"):
+                rapporto = df[massima] / df[media].replace(0, np.nan)
+            sospette = sospette | (rapporto > STACCO_MASSIMO)
+    return sospette.fillna(False)
 
 
 def curva(y: np.ndarray, p: np.ndarray, etichetta: str) -> None:
