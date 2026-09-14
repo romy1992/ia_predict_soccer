@@ -110,12 +110,16 @@ def main() -> int:
     print(f"   {risultato.selected_features}")
 
     dettagli = risultato.details or {}
+    # La chiave e' `models`: `model_results` non esiste e il confronto usciva
+    # vuoto in silenzio.
     print("\nCONFRONTO FRA I CANDIDATI:")
-    for nome, payload in (dettagli.get("model_results") or {}).items():
-        metriche = payload.get("probability_metrics") or {}
+    for nome, payload in (dettagli.get("models") or {}).items():
+        m = payload.get("probability_metrics") or {}
+        def num(x):
+            return f"{x:.4f}" if isinstance(x, (int, float)) else str(x)
         print(
-            f"   {nome:26} score {payload.get('selection_score')} | "
-            f"auc {metriche.get('auc')} | logloss {metriche.get('log_loss')} | brier {metriche.get('brier')}"
+            f"   {nome:22} score {num(payload.get('selection_score'))} | auc {num(m.get('auc'))} | "
+            f"logloss {num(m.get('log_loss'))} | brier {num(m.get('brier'))} | ece {num(m.get('ece'))}"
         )
 
     calibrazione = dettagli.get("calibration") or {}
