@@ -64,6 +64,7 @@ CSV_GREZZO = os.path.join("src", "service_ia", "dataset", "odds", "id_odds_h2h_t
 BACKUP = os.path.join("scripts", "maintenance", "_backup_under_over_2_5.jsonl")
 LINEA = 2.5
 PREFISSI_DA_RIFARE = ("over_2.5_", "under_2.5_")
+BATCH_COMMIT = 500  # una transazione sola con ~13k UPDATE fa cadere la connessione al Postgres remoto (Railway)
 
 
 def carica_quote_corrette(percorso: str) -> tuple[dict[str, dict[str, float]], Counter]:
@@ -159,6 +160,7 @@ def main() -> int:
     from src.service_ia.model.match import Match  # noqa: E402
 
     sessione = SessionLocal()
+    sessione.expire_on_commit = False  # i commit a lotti non devono invalidare gli oggetti gia' caricati
     try:
         partite = (
             sessione.query(Match)
@@ -171,49 +173,70 @@ def main() -> int:
         conta = Counter()
         backup_righe = []
         toccate = 0
+        righe_da_commit = 0
+        backup_handle = None
+        if args.apply:
+            os.makedirs(os.path.dirname(BACKUP), exist_ok=True)
+            backup_handle = open(BACKUP, "w", encoding="utf-8")
 
-        for partita in partite:
-            if args.limite and toccate >= args.limite:
-                break
-            quote = corrette.get(partita.id_events)
-            if quote is None and partita.id_alternate_events:
-                quote = corrette.get(partita.id_alternate_events)
-            if quote is None:
-                conta["partite_senza_payload"] += 1
-                continue
-
-            for riga_odds in partita.odds or []:
-                if riga_odds.odds_from != "odds-api":
-                    conta["righe_non_odds_api_saltate"] += 1
-                    continue
-                bucket = riga_odds.under_over_2_5
-                if not isinstance(bucket, dict) or not bucket:
-                    conta["righe_senza_bucket"] += 1
+        try:
+            for partita in partite:
+                if args.limite and toccate >= args.limite:
+                    break
+                quote = corrette.get(partita.id_events)
+                if quote is None and partita.id_alternate_events:
+                    quote = corrette.get(partita.id_alternate_events)
+                if quote is None:
+                    conta["partite_senza_payload"] += 1
                     continue
 
-                nuovo, rimosse, riscritte = ricostruisci(bucket, quote)
-                if nuovo == bucket:
-                    conta["righe_gia_corrette"] += 1
-                    continue
+                for riga_odds in partita.odds or []:
+                    if riga_odds.odds_from != "odds-api":
+                        conta["righe_non_odds_api_saltate"] += 1
+                        continue
+                    bucket = riga_odds.under_over_2_5
+                    if not isinstance(bucket, dict) or not bucket:
+                        conta["righe_senza_bucket"] += 1
+                        continue
 
-                backup_righe.append(
-                    {
+                    nuovo, rimosse, riscritte = ricostruisci(bucket, quote)
+                    if nuovo == bucket:
+                        conta["righe_gia_corrette"] += 1
+                        continue
+
+                    riga_backup = {
                         "id_odds_fk": riga_odds.id_odds_fk,
                         "id_match": riga_odds.id_match,
                         "id_events": partita.id_events,
                         "prima": bucket,
                     }
-                )
-                conta["chiavi_rimosse"] += rimosse
-                conta["chiavi_riscritte"] += riscritte
-                conta["righe_modificate"] += 1
-                if not nuovo:
-                    conta["righe_rimaste_vuote"] += 1
+                    backup_righe.append(riga_backup)
+                    if backup_handle:
+                        backup_handle.write(json.dumps(riga_backup, ensure_ascii=False) + "\n")
+                    conta["chiavi_rimosse"] += rimosse
+                    conta["chiavi_riscritte"] += riscritte
+                    conta["righe_modificate"] += 1
+                    if not nuovo:
+                        conta["righe_rimaste_vuote"] += 1
 
-                if args.apply:
-                    riga_odds.under_over_2_5 = nuovo
-                    flag_modified(riga_odds, "under_over_2_5")
-            toccate += 1
+                    if args.apply:
+                        riga_odds.under_over_2_5 = nuovo
+                        flag_modified(riga_odds, "under_over_2_5")
+                        righe_da_commit += 1
+                        if righe_da_commit % BATCH_COMMIT == 0:
+                            sessione.commit()
+                            print(
+                                f"  commit parziale: {righe_da_commit:,} righe scritte "
+                                f"({datetime.now(timezone.utc).isoformat()})",
+                                flush=True,
+                            )
+                toccate += 1
+
+            if args.apply and righe_da_commit % BATCH_COMMIT != 0:
+                sessione.commit()
+        finally:
+            if backup_handle:
+                backup_handle.close()
 
         print("\n" + "=" * 62)
         print("SIMULAZIONE" if not args.apply else "APPLICATO")
@@ -231,13 +254,8 @@ def main() -> int:
             print(f"  {chiave:28} {conta[chiave]:8,}")
 
         if args.apply:
-            os.makedirs(os.path.dirname(BACKUP), exist_ok=True)
-            with open(BACKUP, "w", encoding="utf-8") as handle:
-                for r in backup_righe:
-                    handle.write(json.dumps(r, ensure_ascii=False) + "\n")
             print(f"\nbackup del PRIMA salvato in {BACKUP} ({len(backup_righe):,} righe)")
-            sessione.commit()
-            print(f"commit eseguito alle {datetime.now(timezone.utc).isoformat()}")
+            print(f"commit (a lotti da {BATCH_COMMIT}) completato alle {datetime.now(timezone.utc).isoformat()}")
         else:
             sessione.rollback()
             print("\nNiente scritto. Rilancia con --apply per applicare.")
