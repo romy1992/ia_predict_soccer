@@ -87,7 +87,9 @@ def modello() -> Pipeline:
     )
 
 
-def oof(df: pd.DataFrame, feature: list[str]) -> tuple[np.ndarray, np.ndarray]:
+def oof(df: pd.DataFrame, feature: list[str], linea: str | None = None):
+    """Probabilita' out-of-fold. Con `linea` restituisce anche quella del
+    mercato (`prob_norm_over_<linea>`) sulle stesse righe, per il confronto."""
     frame = df.sort_values("prediction_at").reset_index(drop=True)
     splits = _filter_valid_splits(frame["y"], _build_temporal_cv(frame) or [])
     y_all, p_all = [], []
@@ -96,7 +98,11 @@ def oof(df: pd.DataFrame, feature: list[str]) -> tuple[np.ndarray, np.ndarray]:
         m.fit(frame.loc[tr, feature], frame.loc[tr, "y"])
         p_all.extend(m.predict_proba(frame.loc[va, feature])[:, 1])
         y_all.extend(frame.loc[va, "y"])
-    return np.array(y_all), np.array(p_all)
+    if linea is None:
+        return np.array(y_all), np.array(p_all)
+    indici = np.concatenate([np.asarray(va) for tr, va in splits if len(tr) and len(va)])
+    mercato = frame[f"prob_norm_over_{linea}"].to_numpy()[indici]
+    return np.array(y_all), np.array(p_all), mercato
 
 
 def oof_casuale(df: pd.DataFrame, feature: list[str]) -> tuple[np.ndarray, np.ndarray]:
@@ -145,36 +151,47 @@ def righe_sospette(df: pd.DataFrame, linea: str) -> pd.Series:
     return sospette.fillna(False)
 
 
-def curva(y: np.ndarray, p: np.ndarray, etichetta: str) -> None:
-    base = y.mean()
+def _riga_curva(esito: np.ndarray, scelte: np.ndarray, mercato: np.ndarray, soglia: float, n_tot: int) -> None:
+    n = int(scelte.sum())
+    if n < 30:
+        print(f"     {soglia:7.2f} {'-':>11} {n:9} {'poche':>7}")
+        return
+    prec = esito[scelte].mean()
+    q = mercato[scelte].mean()
+    print(f"     {soglia:7.2f} {prec:10.1%} {n:9,} {n/n_tot:6.1%} {q:9.1%} {prec/q:7.3f}")
+
+
+def curva(y: np.ndarray, p: np.ndarray, etichetta: str, mercato: np.ndarray) -> None:
+    """Precisione, volume, e soprattutto il confronto col PREZZO.
+
+    La versione precedente confrontava la precisione col base rate. E' il
+    riferimento sbagliato, e su Under/Over 3.5 portava alla conclusione
+    opposta a quella giusta: puntando Over la precisione risultava +23% sopra
+    il base rate, ma il mercato quotava quelle stesse partite al 51-55% e il
+    modello ne azzeccava il 45-49%. Quel +23% era tutto merito del prezzo, non
+    del modello, e giocarlo rendeva -15%.
+
+    Quello che decide se si guadagna e' `p/q`, il rapporto fra la precisione
+    del modello e la probabilita' del mercato SULLE STESSE partite:
+    `ROI = p * quota - 1` e `quota ~ 1/(q * margine)`, quindi
+    `ROI ~ (p/q)/margine - 1`. Sotto 1 si perde comunque, e serve stare sopra
+    il margine del bookmaker (circa 1,05) per guadagnare davvero.
+    """
     print(f"\n  {etichetta}")
-    print(f"     {'soglia':>7} {'precisione':>11} {'partite':>9} {'% tot':>7} {'vs base':>9}")
-    print("     " + "-" * 46)
+    print(f"     {'soglia':>7} {'precisione':>11} {'partite':>9} {'% tot':>7} {'mercato':>9} {'p/q':>7}")
+    print("     " + "-" * 56)
     for soglia in (0.50, 0.55, 0.60, 0.65, 0.70, 0.75):
-        scelte = p >= soglia
-        n = int(scelte.sum())
-        if n < 30:
-            print(f"     {soglia:7.2f} {'-':>11} {n:9} {'poche':>7}")
-            continue
-        prec = y[scelte].mean()
-        print(f"     {soglia:7.2f} {prec:10.1%} {n:9,} {n/len(y):6.1%} {prec-base:+8.1%}")
+        _riga_curva(y, p >= soglia, mercato, soglia, len(y))
 
 
-def curva_negativa(y: np.ndarray, p: np.ndarray, etichetta: str) -> None:
-    """Stessa curva sulla classe 0 (Under): si scommette quando la
-    probabilita' di Over e' BASSA, e la precisione e' sugli Under azzeccati."""
-    base = 1 - y.mean()
+def curva_negativa(y: np.ndarray, p: np.ndarray, etichetta: str, mercato: np.ndarray) -> None:
+    """Come `curva`, sulla classe 0: si punta quando la probabilita' di Over
+    e' BASSA, e sia la precisione sia il prezzo si leggono sull'Under."""
     print(f"\n  {etichetta}")
-    print(f"     {'soglia':>7} {'precisione':>11} {'partite':>9} {'% tot':>7} {'vs base':>9}")
-    print("     " + "-" * 46)
+    print(f"     {'soglia':>7} {'precisione':>11} {'partite':>9} {'% tot':>7} {'mercato':>9} {'p/q':>7}")
+    print("     " + "-" * 56)
     for soglia in (0.50, 0.45, 0.40, 0.35, 0.30, 0.25):
-        scelte = p <= soglia
-        n = int(scelte.sum())
-        if n < 30:
-            print(f"     {soglia:7.2f} {'-':>11} {n:9} {'poche':>7}")
-            continue
-        prec = 1 - y[scelte].mean()
-        print(f"     {soglia:7.2f} {prec:10.1%} {n:9,} {n/len(y):6.1%} {prec-base:+8.1%}")
+        _riga_curva(1 - y, p <= soglia, 1 - mercato, soglia, len(y))
 
 
 def main() -> int:
@@ -258,8 +275,8 @@ def main() -> int:
     print("-" * 62)
     risultati = {}
     for nome, feature in configurazioni.items():
-        y, p = oof(df_pulito, feature)
-        risultati[nome] = (y, p)
+        y, p, mercato = oof(df_pulito, feature, linea=linea)
+        risultati[nome] = (y, p, mercato)
         print(f"{nome:28} {len(feature):5} {roc_auc_score(y,p):8.4f} {log_loss(y,p):9.4f} {brier_score_loss(y,p):8.4f}")
 
     base_over = df_pulito["y"].mean()
@@ -267,13 +284,14 @@ def main() -> int:
     print("PRECISIONE / VOLUME — LE DUE DIREZIONI")
     print("=" * 74)
     print(f"\nDire SEMPRE Over: precisione {base_over:.1%}.  Dire SEMPRE Under: {1-base_over:.1%}.")
-    print("Su un mercato bilanciato nessuna delle due e' una scorciatoia: contano entrambe.")
-    for nome, (y, p) in risultati.items():
+    print("La colonna che decide e' p/q: precisione del modello diviso probabilita' del")
+    print("mercato sulle stesse partite. Sotto 1 si perde; sopra ~1,05 si batte il margine.")
+    for nome, (y, p, mercato) in risultati.items():
         if nome == "solo quota media":
             continue
         print(f"\n{nome}:")
-        curva(y, p, "puntando OVER (soglia = probabilita' minima di Over)")
-        curva_negativa(y, p, "puntando UNDER (soglia = probabilita' massima di Over)")
+        curva(y, p, "puntando OVER (soglia = probabilita' minima di Over)", mercato)
+        curva_negativa(y, p, "puntando UNDER (soglia = probabilita' massima di Over)", mercato)
 
     return 0
 
