@@ -196,9 +196,15 @@ def main() -> int:
     print(f"     reale Over   {cm[1,0]:14,} {cm[1,1]:15,}")
     print("\n" + classification_report(y, pred, target_names=["Under", "Over"], digits=4))
 
+    # La probabilita' che il MERCATO assegna, ripulita dal margine. E' il vero
+    # riferimento: superare il base rate non serve a niente se il bookmaker
+    # aveva gia' prezzato quelle partite meglio del modello.
+    mercato_over = df[f"prob_norm_over_{linea}"].to_numpy()[indici]
+
     for direzione, positivo in (("OVER", True), ("UNDER", False)):
         prezzo_medio = q_over if positivo else q_under
         prezzo_max = q_max_over if positivo else q_max_under
+        prezzo_mercato = mercato_over if positivo else (1 - mercato_over)
         base = y.mean() if positivo else 1 - y.mean()
         # Le soglie alte servono sui mercati sbilanciati: su Under/Over 1.5 il
         # base rate e' 76%, quindi sotto 0,80 non si sta scegliendo niente.
@@ -208,18 +214,20 @@ def main() -> int:
         print("=" * 78)
         print(f"PUNTANDO {direzione}   (dire sempre {direzione.title()}: precisione {base:.1%})")
         print("=" * 78)
-        print(f"  {'soglia':>7} {'precis.':>9} {'partite':>9} {'%tot':>6} {'q.media':>8} "
-              f"{'ROI med':>9} {'ROI max':>9} {'IC 95% sul ROI max':>24}")
-        print("  " + "-" * 92)
+        print(f"  {'soglia':>7} {'precis.':>9} {'mercato':>9} {'p/q':>6} {'partite':>9} {'%tot':>6} "
+              f"{'q.media':>8} {'ROI med':>9} {'ROI max':>9} {'IC 95% sul ROI max':>24}")
+        print("  " + "-" * 108)
         for s in soglie:
             scelte = (p >= s) if positivo else (p <= s)
             n = int(scelte.sum())
             if n < 30:
-                print(f"  {s:7.2f} {'-':>9} {n:9} {'poche':>6}")
+                print(f"  {s:7.2f} {'-':>9} {'':>9} {'':>6} {n:9} {'poche':>6}")
                 continue
             prec = esito[scelte].mean()
+            q = prezzo_mercato[scelte].mean()
             lo, hi = intervallo_roi(esito, scelte, prezzo_max)
-            print(f"  {s:7.2f} {prec:8.1%} {n:9,} {n/len(y):5.1%} {prezzo_medio[scelte].mean():8.3f} "
+            print(f"  {s:7.2f} {prec:8.1%} {q:8.1%} {prec/q:6.3f} {n:9,} {n/len(y):5.1%} "
+                  f"{prezzo_medio[scelte].mean():8.3f} "
                   f"{roi(esito,scelte,prezzo_medio):8.1f}% {roi(esito,scelte,prezzo_max):8.1f}% "
                   f"{f'[{lo:+.2f}%, {hi:+.2f}%]':>24}")
         print()
