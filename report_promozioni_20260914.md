@@ -111,9 +111,31 @@ under_over_2_5 -> /app/best_models/under_over_2_5_champion_20260914.pkl   featur
 under_over_3_5 -> /app/best_models/under_over_3_5_champion_20260914.pkl   feature: 33   caricato OK (CalibratedClassifierCV)
 ```
 
-## Riavvio container
+## Riavvio container (primo giro)
 
 `docker restart soccer_api soccer_scheduler` eseguito. Entrambi ripartiti (`soccer_api` healthy, `soccer_scheduler` up). Nessun errore relativo a modelli/under_over nei log successivi al riavvio. Presente un errore preesistente e non correlato nei log di `soccer_api` (`alembic: Can't locate revision identified by 'head'`, oltre a un warning di riga CRLF in `start.sh`): non toccato in questo intervento, non impedisce l'avvio del servizio (health check 200 OK).
+
+## Archiviazione manuale dei vecchi modelli (post-report)
+
+Verifica successiva: rilanciando lo script, `archivia()` non sarebbe mai stata raggiunta, perché con i 3 mercati già a 33 feature la funzione `main()` esce subito su "Niente da fare" prima del passo di archiviazione — quindi i vecchi `.pkl` a 69 feature non si sarebbero mai spostati automaticamente. Su richiesta dell'operatore, replicata a mano la stessa logica di `archivia()` (stesso criterio: sposta il file, riscrive `model_path` come `/app/best_models/archivio/<nome>`) sul registry reale:
+
+- spostati in `best_models/archivio/` i 6 file (3 champion + 3 calibratori a 69 feature) di `under_over_1_5`, `2_5`, `3_5`.
+- **Trovata un'anomalia preesistente** durante l'operazione: nel registry esistevano altre 4 righe storiche (run del 2026-09-08 e 2026-09-13, precedenti all'introduzione dei nomi file con suffisso data) che puntavano agli **stessi nomi file condivisi** (es. più run diversi tutti con `model_path: under_over_2_5_champion.pkl`, perché prima d'ora ogni riaddestramento sovrascriveva il file invece di crearne uno nuovo). Spostando il file, queste 4 righe si sarebbero ritrovate rotte. Corrette anch'esse, reindirizzandole allo stesso percorso in `archivio/`.
+- Nessun file cancellato, solo spostato.
+
+Verifica finale ripetuta sul registry reale dopo l'archiviazione: **23 righe totali, 0 che puntano a file inesistente.**
+
+## Allineamento del sito con i nuovi modelli
+
+Controllo della dashboard (`/dashboard/bundle?target_date=2026-09-14`) dopo il primo riavvio: tutte le fixture non ancora giocate mostravano ancora i **vecchi `run_id`** (`..._20260908T...`) per i 3 mercati promossi. Causa: l'immagine Docker di `soccer_api`/`soccer_scheduler`/`soccer_web` era stata compilata il 2026-09-13 09:25, **prima** del commit `bb8a48d` (10:09 dello stesso giorno) che introduce il meccanismo di ricalcolo delle predizioni per la vista giornaliera. Il codice non è montato in bind nei container: un semplice restart non basta a far girare il codice nuovo.
+
+Azioni eseguite, su autorizzazione esplicita dell'operatore:
+1. `docker compose build api scheduler web` — rebuild delle 3 immagini dal codice attuale di `main` (build riuscita per tutte e 3).
+2. `docker compose up -d --no-deps api scheduler web` — ricreati i container dalle nuove immagini. Tutti e 3 ripartiti sani (`soccer_api` healthy, `soccer_scheduler` up, `soccer_web` up).
+3. `POST /jobs/prediction-snapshot-refresh` (endpoint "Ricalcola previsioni del giorno", ora presente) con `async_run: false` — ricalcolo sincrono sulla finestra di default. Esito: `fixtures_considered: 438`, `fixtures_upcoming: 318`, `fixtures_recently_finished: 120`, `predictions_resolved: 2500`, `errors: []`, `duration_seconds: 7053.99` (~1h 57m).
+4. Verifica: interrogata di nuovo la dashboard di oggi — le 9 fixture non concluse mostrano ora, per tutti e 3 i mercati, il `run_id` nuovo (`..._20260914T192131033741Z`, `..._20260914T192135064272Z`, `..._20260914T192150036858Z`): 27/27 predizioni allineate, 0 con run_id vecchio.
+
+Nota: le partite già concluse (`status` finale) mantengono la predizione storica "congelata" per scelta di progetto esplicita e documentata nel codice (`PredictionSnapshotService`) — non vengono e non devono essere ricalcolate nemmeno dopo una promozione, perché rappresentano "cosa prediceva il modello in quel momento".
 
 ## Riepilogo
 
@@ -124,4 +146,4 @@ under_over_3_5 -> /app/best_models/under_over_3_5_champion_20260914.pkl   featur
 | under_over_3_5 | 69 feature (legacy) | 33 feature | **rifiutato dal gate, forzato su decisione dell'operatore** |
 | under_over_4_5, corners, cards, goal_no_goal, h2h | invariati | invariati | non toccati |
 
-Nessun file cancellato. I vecchi champion (69 feature) dei 3 mercati restano in `best_models/` non ancora archiviati, verranno spostati in `best_models/archivio/` alla prossima esecuzione dello script.
+Nessun file cancellato in tutto il processo, solo spostato in `best_models/archivio/`. Registry reale verificato a 0 righe rotte. Immagini Docker di `api`, `scheduler`, `web` ricostruite dal codice attuale di `main` e ricreate. Dashboard verificata allineata ai nuovi modelli per tutte le fixture non concluse di oggi.
