@@ -67,8 +67,17 @@ PREFISSI_DA_RIFARE = ("over_2.5_", "under_2.5_")
 BATCH_COMMIT = 500  # una transazione sola con ~13k UPDATE fa cadere la connessione al Postgres remoto (Railway)
 
 
-def carica_quote_corrette(percorso: str) -> tuple[dict[str, dict[str, float]], Counter]:
+def carica_quote_corrette(
+    percorso: str, scarta_live: bool = False
+) -> tuple[dict[str, dict[str, float]], Counter]:
     """Rilegge il payload grezzo e tiene solo gli esiti a point 2.5.
+
+    Con `scarta_live` esclude anche le quote il cui `last_update` e' successivo
+    al calcio d'inizio: sono prezzi rilevati a partita in corso, che al momento
+    della previsione non esistevano. Sono pochissime (45 su 52.436, 28 fixture)
+    ma spiegano tutti i valori sopra 6.00 rimasti dopo la correzione della
+    linea - per esempio un Over 2.5 a 18.00 aggiornato 114 minuti DOPO il
+    fischio d'inizio, cioe' a partita praticamente finita sullo 0-0.
 
     Ritorna {id_evento_odds_api: {chiave: quota}} piu' un contatore diagnostico.
     """
@@ -87,11 +96,24 @@ def carica_quote_corrette(percorso: str) -> tuple[dict[str, dict[str, float]], C
                 diag["righe_illeggibili"] += 1
                 continue
 
+            try:
+                inizio = datetime.fromisoformat(riga["commence_time"].replace("Z", "+00:00"))
+            except (KeyError, ValueError):
+                inizio = None
+
             quote: dict[str, float] = {}
             for book in bookmakers:
                 titolo = book.get("title")
                 if not titolo:
                     continue
+                if scarta_live and inizio is not None and book.get("last_update"):
+                    try:
+                        rilevata = datetime.fromisoformat(book["last_update"].replace("Z", "+00:00"))
+                    except ValueError:
+                        rilevata = None
+                    if rilevata is not None and rilevata > inizio:
+                        diag["quote_live_scartate"] += 1
+                        continue
                 for mercato in book.get("markets", []):
                     if mercato.get("key") != "totals":
                         continue
@@ -138,6 +160,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--apply", action="store_true", help="scrive davvero a DB (default: simulazione)")
     parser.add_argument("--limite", type=int, default=None, help="ferma dopo N partite, per provare")
+    parser.add_argument(
+        "--scarta-live",
+        action="store_true",
+        help="esclude le quote rilevate dopo il calcio d'inizio (prezzi live, informazione dal futuro)",
+    )
     args = parser.parse_args()
 
     if not os.path.exists(CSV_GREZZO):
@@ -145,13 +172,15 @@ def main() -> int:
         return 1
 
     print("Rilettura del payload grezzo di odds-api...")
-    corrette, diag = carica_quote_corrette(CSV_GREZZO)
+    corrette, diag = carica_quote_corrette(CSV_GREZZO, scarta_live=args.scarta_live)
     lette = diag["quote_lette_prima"]
     sbagliate = diag["quote_di_linea_sbagliata"]
     print(f"  eventi nel CSV          : {diag['eventi_nel_csv']:,}")
     print(f"  quote Over lette prima  : {lette:,}")
     print(f"  di linea SBAGLIATA      : {sbagliate:,}  ({sbagliate/lette:.2%})" if lette else "")
     print(f"  eventi senza 2.5 vero   : {diag['eventi_senza_nessuna_quota_2_5']:,}")
+    if args.scarta_live:
+        print(f"  quote live scartate     : {diag['quote_live_scartate']:,}")
 
     from sqlalchemy.orm import selectinload  # noqa: E402
     from sqlalchemy.orm.attributes import flag_modified  # noqa: E402
