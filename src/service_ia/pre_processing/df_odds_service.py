@@ -255,8 +255,22 @@ def remap_json_bookmakers():
                 r[f'draw_{title}'] = search_price_name(out_h2h, 'Draw')
 
                 # Aggiunta quote Totals
-                r[f'over_2.5_{title}'] = search_price_name(out_totals, 'Over')
-                r[f'under_2.5_{title}'] = search_price_name(out_totals, 'Under')
+                # BUGFIX 2026-09-14: qui si usava search_price_name, che prende il
+                # PRIMO esito di nome 'Over' qualunque sia la sua linea, e lo salva
+                # sotto una chiave 'over_2.5_' scritta a mano. Ma il mercato
+                # `totals` di odds-api restituisce la linea PRINCIPALE di quel
+                # bookmaker, che non e' sempre 2.5 (Pinnacle usa linee asiatiche
+                # come 2.75 o 3.25, altri aprono a 3.5 sulle partite offensive).
+                # Risultato: il 32% delle quote salvate come "Over 2.5" era di
+                # un'altra linea - per lo piu' vicina (3.5, 2.75, 3.0), quindi
+                # invisibile a qualunque controllo sui valori anomali, e con
+                # l'overround perfettamente coerente perche' over e under
+                # venivano dalla stessa linea sbagliata.
+                # Col filtro sul point il bookmaker che non quota il 2.5 nel
+                # mercato `totals` viene semplicemente saltato (None): meglio una
+                # quota in meno che una quota di un'altra scommessa.
+                r[f'over_2.5_{title}'] = search_price_name_point(out_totals, 'Over', 2.5)
+                r[f'under_2.5_{title}'] = search_price_name_point(out_totals, 'Under', 2.5)
 
         if len(r) > 1:
             flat_rows.append(r)
