@@ -87,6 +87,35 @@ basta non lanciare lo script: nessuna delle modifiche al codice li tocca.
 Senza `--apply` non scrive niente: stampa il piano, il numero di campi di
 registry che toccherebbe, ed esce. Non cancella mai niente, solo sposta.
 
+## Collisioni di nome (riscontrata sul registry vero, 2026-09-15)
+
+Alla prima esecuzione sui file veri lo script si e' fermato: in `archivio/`
+esisteva gia' un `under_over_2_5_champion.pkl` (archiviato il 14/09) e un file
+con lo **stesso nome** era ricomparso nella radice, insieme al suo calibratore.
+E' l'eredita' del vecchio schema di naming, dove ogni riaddestramento
+sovrascriveva `<mercato>_champion.pkl`: due modelli diversi si contendono un
+nome.
+
+Fermarsi era giusto — sovrascrivere avrebbe fatto sparire uno dei due senza
+che nessuna riga di registry se ne accorgesse — ma fermarsi e basta non
+risolve. Ora lo script, quando trova una collisione:
+
+1. **dice cosa sono i due file**: dimensione, data di modifica, e se sono
+   byte per byte identici (lo stesso modello copiato due volte) o diversi
+   (due modelli distinti). Le due cose si risolvono in modo opposto, quindi
+   non indovina;
+2. con `--risolvi-collisioni` archivia quello della radice con un nome
+   distinto, `nome__<data di modifica>.pkl`. Nessuno dei due file va perso, e
+   le righe di registry restano separate: quella che puntava alla radice segue
+   il file rinominato, quella che puntava ad archivio non si muove.
+
+```
+python scripts/maintenance/riorganizza_best_models.py --apply --risolvi-collisioni
+```
+
+Se invece il file nella radice e' un residuo da buttare, lo si cancella a mano
+e si rilancia senza il flag: lo script non cancella mai niente per conto suo.
+
 ## Modifiche al codice
 
 ### Nuovo: `src/service_ia/training/model_paths.py`
@@ -146,7 +175,7 @@ per predire": rende il serving indifferente a dove sta fisicamente il file.
 ## Verifica fatta qui
 
 `python3 -m pytest tests/service/model_paths_test.py tests/service/riorganizza_best_models_test.py`
-→ 26 test, tutti verdi. Coprono: le tre forme di percorso (container, Windows,
+→ 31 test, tutti verdi. Coprono: le tre forme di percorso (container, Windows,
 relativo), la sottocartella preservata nella conversione, il piano di
 spostamento, le righe multiple che condividono lo stesso file, le righe gia' in
 archivio lasciate stare, la simulazione che non tocca il disco, la collisione
