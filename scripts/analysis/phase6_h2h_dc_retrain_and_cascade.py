@@ -72,13 +72,16 @@ ADOPTION_DELTA_THRESHOLD = 0.01
 # per-classe, recall della minoranza vicino a zero come i champion da 400 righe).
 MIN_MACRO_F1 = 0.50
 MIN_MINORITY_RECALL = 0.25
+# +1.2 pp su dc e' il "sembra buono ed e' il nulla" gia' misurato sui
+# champion degeneri: per proporre una promozione serve uno scarto piu' largo.
+MIN_ACCURACY_PP_FOR_PROMOTION = 3.0
 
 _META_COLUMNS = {"y", "market", "id_fixture", "season", "league", "prediction_at"}
 _RF_KWARGS = dict(
     n_estimators=300,
     min_samples_leaf=20,
     random_state=SEED,
-    n_jobs=-1,
+    n_jobs=1,
     class_weight="balanced",
 )
 
@@ -494,21 +497,24 @@ def _promotion_proposal(h2h_metrics: dict[str, Any], dc_metrics: dict[str, Any],
     baseline classe maggioritaria in modo non banale. Non registra niente."""
 
     def consider(name: str, metrics: dict[str, Any]) -> dict[str, Any]:
-        beats_majority = (metrics.get("accuracy_minus_majority_pp") or 0) > 1.0
+        beats_majority = (metrics.get("accuracy_minus_majority_pp") or 0) >= MIN_ACCURACY_PP_FOR_PROMOTION
         ok = (not metrics.get("degenerate", True)) and beats_majority
         book = metrics.get("bookmaker_implied_baseline") or {}
         beats_book = (
             metrics.get("auc") is not None
             and book.get("auc") is not None
-            and float(metrics["auc"]) >= float(book["auc"]) - 0.005
+            and float(metrics["auc"]) > float(book["auc"])
         )
         return {
             "market": name,
             "propose_promotion": bool(ok),
+            "beats_majority": bool(beats_majority),
+            "beats_bookmaker_auc": bool(beats_book),
             "reason": (
                 f"accuracy {metrics.get('accuracy_minus_majority_pp', 0):+.2f} pp sul majority, "
                 f"macro-F1={metrics.get('macro_f1')}, minority_recall={metrics.get('minority_recall')}, "
-                f"degenere={metrics.get('degenerate')}, auc vs bookmaker={beats_book}"
+                f"degenere={metrics.get('degenerate')}, "
+                f"auc_modello={metrics.get('auc')} auc_bookmaker={book.get('auc')}"
             ),
         }
 
