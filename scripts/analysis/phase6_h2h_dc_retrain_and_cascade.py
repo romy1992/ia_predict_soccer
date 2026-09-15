@@ -32,9 +32,12 @@ from __future__ import annotations
 import json
 import logging
 import os
+import sys
 import time
 from collections import Counter
 from typing import Any, Optional
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
 logging.basicConfig(level=logging.WARNING)
 
