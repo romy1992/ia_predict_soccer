@@ -39,6 +39,39 @@ SUFFISSO = "20260914"
 EXPORT = os.path.join("scripts", "analysis", "_export")
 
 
+CONTAINER = "/app/best_models"
+
+
+def riscrivi_percorsi_container() -> None:
+    """Porta in forma container i percorsi delle righe appena registrate.
+
+    Tocca solo le righe che hanno un percorso non ancora in forma container:
+    quelle gia' corrette restano come sono.
+    """
+    index = os.path.join("best_models", "registry", "index.jsonl")
+    if not os.path.exists(index):
+        return
+    righe = [json.loads(l) for l in open(index, encoding="utf-8")]
+    corrette = 0
+    for r in righe:
+        for campo in ("model_path", "metadata_path"):
+            valore = r.get(campo) or ""
+            if valore and not valore.startswith(CONTAINER):
+                coda = "registry/" + os.path.basename(valore) if campo == "metadata_path" else os.path.basename(valore)
+                r[campo] = f"{CONTAINER}/{coda}"
+                corrette += 1
+        cal = (r.get("extra") or {}).get("calibration") or {}
+        valore = cal.get("calibrator_path") or ""
+        if valore and not valore.startswith(CONTAINER):
+            cal["calibrator_path"] = f"{CONTAINER}/{os.path.basename(valore)}"
+            corrette += 1
+    if corrette:
+        with open(index, "w", encoding="utf-8") as f:
+            for r in righe:
+                f.write(json.dumps(r, ensure_ascii=False) + "\n")
+        print(f"percorsi riscritti in forma container: {corrette}")
+
+
 def main() -> int:
     if len(sys.argv) < 3:
         print("Uso: python scripts/analysis/promuovi_mercato.py <mercato> <linea> [candidato]")
@@ -119,6 +152,13 @@ def main() -> int:
             },
         },
     )
+
+    # `SaveLoad` registra il percorso ASSOLUTO della macchina su cui gira. Ma
+    # l'app dell'operatore gira in Docker con `./best_models:/app/best_models`,
+    # quindi al primo utilizzo darebbe "File modello non trovato". Va riscritto
+    # in forma container. Il bridge se n'e' accorto il 2026-09-14 e ha dovuto
+    # correggere a mano le tre righe appena promosse.
+    riscrivi_percorsi_container()
 
     registry = ModelRegistry()
     ultimo = registry.get_latest(market=MERCATO)
