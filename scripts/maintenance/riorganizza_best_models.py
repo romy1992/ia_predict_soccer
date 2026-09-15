@@ -37,8 +37,11 @@ prenderanno anche loro una cartella dedicata.
 SICUREZZA
 - parte in SIMULAZIONE: senza --apply stampa il piano e non scrive niente;
 - prima di toccare il registry ne fa una copia in `registry/_backup_<data>_riorganizzazione/`;
-- non sovrascrive mai un file gia' presente a destinazione: se ne trova uno,
-  si ferma prima di spostare qualunque cosa;
+- non sovrascrive mai un file gia' presente a destinazione: si ferma prima di
+  spostare qualunque cosa, dopo aver detto se i due file sono lo stesso modello
+  copiato due volte o due modelli diversi con lo stesso nome; con
+  --risolvi-collisioni archivia quello della radice con un nome distinto
+  (nome__<data di modifica>.pkl) invece di fermarsi;
 - non cancella mai niente, solo sposta;
 - sposta il file e riscrive la riga di registry insieme, mai una sola delle
   due (un file spostato con la riga vecchia da' "File modello non trovato");
@@ -50,12 +53,15 @@ SICUREZZA
 Uso:
     python scripts/maintenance/riorganizza_best_models.py            # simulazione
     python scripts/maintenance/riorganizza_best_models.py --apply    # esegue
+    python scripts/maintenance/riorganizza_best_models.py --apply --risolvi-collisioni
 """
 
 from __future__ import annotations
 
 import argparse
 import copy
+import datetime as dt
+import hashlib
 import json
 import os
 import shutil
@@ -283,17 +289,94 @@ def backup_registry(registry_dir: str, applica: bool) -> str:
     return dest
 
 
-def collisioni(radice: str, piano: Iterable[Spostamento]) -> list[str]:
-    """Destinazioni gia' occupate.
+def collisioni(radice: str, piano: Iterable[Spostamento]) -> list[Spostamento]:
+    """Spostamenti la cui destinazione e' gia' occupata.
 
     Sovrascrivere sarebbe la fine del rollback: il file vecchio sparirebbe
     senza che nessuna riga di registry se ne accorga.
     """
     return [
-        s.destinazione
+        s
         for s in piano
         if os.path.exists(os.path.join(radice, *s.destinazione.split("/")))
     ]
+
+
+def _impronta(percorso: str) -> str:
+    digest = hashlib.sha256()
+    with open(percorso, "rb") as f:
+        for blocco in iter(lambda: f.read(1024 * 1024), b""):
+            digest.update(blocco)
+    return digest.hexdigest()
+
+
+def descrivi_collisione(radice: str, s: Spostamento) -> str:
+    """Le due righe che servono per decidere: sono lo stesso file o no.
+
+    Due file con lo stesso nome possono essere lo stesso modello copiato due
+    volte (e allora la copia nella radice e' un residuo) oppure due modelli
+    diversi che si contendono un nome, com'era prima dei nomi con suffisso
+    data. Le due cose si risolvono in modo opposto, quindi lo script non
+    indovina: mostra il confronto e lascia decidere.
+    """
+    sorgente = os.path.join(radice, *s.sorgente.split("/"))
+    destinazione = os.path.join(radice, *s.destinazione.split("/"))
+
+    def scheda(percorso: str) -> str:
+        info = os.stat(percorso)
+        quando = dt.datetime.fromtimestamp(info.st_mtime).strftime("%Y-%m-%d %H:%M")
+        return f"{info.st_size:>12,} byte   modificato {quando}"
+
+    uguali = (
+        os.path.getsize(sorgente) == os.path.getsize(destinazione)
+        and _impronta(sorgente) == _impronta(destinazione)
+    )
+    verdetto = (
+        "IDENTICI: quello nella radice e' una copia di quello gia' in archivio"
+        if uguali
+        else "DIVERSI: sono due modelli distinti che condividono il nome"
+    )
+    return (
+        f"   {s.sorgente}\n"
+        f"      nella radice : {scheda(sorgente)}\n"
+        f"      in archivio  : {scheda(destinazione)}\n"
+        f"      -> {verdetto}"
+    )
+
+
+def disambigua(radice: str, piano: Iterable[Spostamento]) -> list[Spostamento]:
+    """Piano in cui le destinazioni occupate prendono un nome distinto.
+
+    Al nome si aggiunge la data di modifica del file, che e' l'unica cosa che
+    davvero lo distingue dall'omonimo gia' archiviato. Cosi' nessuno dei due
+    file sparisce e le righe di registry restano separabili: quella che
+    puntava alla radice segue il file rinominato, quella che puntava ad
+    archivio non si muove.
+    """
+    risolto: list[Spostamento] = []
+    for s in piano:
+        destinazione = s.destinazione
+        if not os.path.exists(os.path.join(radice, *destinazione.split("/"))):
+            risolto.append(s)
+            continue
+
+        sorgente = os.path.join(radice, *s.sorgente.split("/"))
+        quando = dt.datetime.fromtimestamp(os.stat(sorgente).st_mtime).strftime("%Y%m%dT%H%M%S")
+        cartella, nome = destinazione.rsplit("/", 1) if "/" in destinazione else ("", destinazione)
+        radice_nome, estensione = os.path.splitext(nome)
+        candidato = f"{radice_nome}__{quando}{estensione}"
+        contatore = 2
+        while os.path.exists(os.path.join(radice, *(f"{cartella}/{candidato}").split("/"))):
+            candidato = f"{radice_nome}__{quando}_{contatore}{estensione}"
+            contatore += 1
+        risolto.append(
+            Spostamento(
+                sorgente=s.sorgente,
+                destinazione=f"{cartella}/{candidato}" if cartella else candidato,
+                motivo=f"{s.motivo} (nome gia' occupato, rinominato)",
+            )
+        )
+    return risolto
 
 
 def sposta(radice: str, piano: Iterable[Spostamento], applica: bool) -> int:
@@ -356,6 +439,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--apply", action="store_true", help="esegue davvero (default: simulazione)")
     parser.add_argument("--radice", default=BEST, help=f"cartella dei modelli (default: {BEST})")
+    parser.add_argument(
+        "--risolvi-collisioni",
+        action="store_true",
+        help="quando in archivio esiste gia' un file con lo stesso nome, archivia quello "
+             "della radice con un nome distinto invece di fermarsi (non cancella mai niente)",
+    )
     args = parser.parse_args()
 
     radice = os.path.abspath(args.radice)
@@ -387,10 +476,20 @@ def main() -> int:
 
     occupate = collisioni(radice, piano)
     if occupate:
-        print(f"\nMi fermo: {len(occupate)} destinazioni sono gia' occupate e non sovrascrivo mai.")
-        for destinazione in occupate[:10]:
-            print(f"   {destinazione}")
-        return 1
+        print(f"\n{len(occupate)} destinazioni sono gia' occupate. Non sovrascrivo mai: ecco cosa sono.")
+        for s in occupate:
+            print(descrivi_collisione(radice, s))
+        if not args.risolvi_collisioni:
+            print("\nMi fermo. Rilancia con --risolvi-collisioni per archiviarli con un nome")
+            print("distinto (nome__<data di modifica>.pkl): nessuno dei due file va perso e le")
+            print("righe di registry restano separate. Se invece il file nella radice e' un")
+            print("residuo da buttare, cancellalo tu e rilancia senza il flag.")
+            return 1
+        piano = disambigua(radice, piano)
+        print("\npiano aggiornato per le collisioni:")
+        for s in piano:
+            if "rinominato" in s.motivo:
+                print(f"  {s.sorgente[:52]:52} -> {s.destinazione}")
 
     righe = leggi_righe(index)
     # Copia PROFONDA: `extra.calibration` e' annidato, e una copia

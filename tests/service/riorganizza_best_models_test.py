@@ -6,6 +6,8 @@ import unittest
 from scripts.maintenance.riorganizza_best_models import (
     Spostamento,
     collisioni,
+    descrivi_collisione,
+    disambigua,
     normalizza_in_forma_container,
     pianifica,
     riscrivi_righe,
@@ -174,7 +176,71 @@ class TestSpostamentoSuDisco(unittest.TestCase):
 
             occupate = collisioni(tmp, pianifica(RADICE, NUOVI))
 
-            self.assertEqual(occupate, ["archivio/goal_no_goal_champion.pkl"])
+            self.assertEqual([s.destinazione for s in occupate], ["archivio/goal_no_goal_champion.pkl"])
+
+
+class TestCollisioni(unittest.TestCase):
+    """Il caso trovato sul registry vero il 2026-09-15: in archivio c'era gia'
+    un `under_over_2_5_champion.pkl` e un altro file con lo stesso nome era
+    ricomparso nella radice."""
+
+    def _due_omonimi(self, tmp, contenuto_radice, contenuto_archivio):
+        os.makedirs(os.path.join(tmp, "archivio"), exist_ok=True)
+        with open(os.path.join(tmp, "goal_no_goal_champion.pkl"), "w") as f:
+            f.write(contenuto_radice)
+        with open(os.path.join(tmp, "archivio", "goal_no_goal_champion.pkl"), "w") as f:
+            f.write(contenuto_archivio)
+        return pianifica(["goal_no_goal_champion.pkl"], {})
+
+    def test_riconosce_due_copie_dello_stesso_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            piano = self._due_omonimi(tmp, "stesso modello", "stesso modello")
+            self.assertIn("IDENTICI", descrivi_collisione(tmp, piano[0]))
+
+    def test_riconosce_due_modelli_diversi(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            piano = self._due_omonimi(tmp, "modello A", "modello B diverso")
+            self.assertIn("DIVERSI", descrivi_collisione(tmp, piano[0]))
+
+    def test_disambigua_da_un_nome_distinto_senza_perdere_niente(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            piano = self._due_omonimi(tmp, "modello A", "modello B diverso")
+
+            risolto = disambigua(tmp, piano)
+            sposta(tmp, risolto, applica=True)
+
+            destinazione = risolto[0].destinazione
+            self.assertRegex(destinazione, r"^archivio/goal_no_goal_champion__\d{8}T\d{6}\.pkl$")
+            self.assertIn("rinominato", risolto[0].motivo)
+            # Nessuno dei due file e' andato perso, e ciascuno ha il proprio
+            # contenuto: e' il punto per cui lo script si ferma invece di
+            # sovrascrivere.
+            with open(os.path.join(tmp, "archivio", "goal_no_goal_champion.pkl")) as f:
+                self.assertEqual(f.read(), "modello B diverso")
+            with open(os.path.join(tmp, *destinazione.split("/"))) as f:
+                self.assertEqual(f.read(), "modello A")
+
+    def test_disambigua_non_tocca_gli_spostamenti_liberi(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            for nome in RADICE:
+                open(os.path.join(tmp, nome), "w").close()
+            piano = pianifica(RADICE, NUOVI)
+
+            self.assertEqual(disambigua(tmp, piano), piano)
+
+    def test_la_riga_di_registry_segue_il_file_rinominato(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            piano = disambigua(tmp, self._due_omonimi(tmp, "modello A", "modello B diverso"))
+            righe = [
+                {"run_id": "dalla_radice", "model_path": "/app/best_models/goal_no_goal_champion.pkl"},
+                {"run_id": "gia_archiviato", "model_path": "/app/best_models/archivio/goal_no_goal_champion.pkl"},
+            ]
+
+            riscrivi_righe(righe, piano)
+
+            self.assertEqual(righe[0]["model_path"], f"/app/best_models/{piano[0].destinazione}")
+            # La riga che puntava gia' ad archivio non si muove: e' l'altro file.
+            self.assertEqual(righe[1]["model_path"], "/app/best_models/archivio/goal_no_goal_champion.pkl")
 
 
 class TestRegistryScrittoDavvero(unittest.TestCase):
