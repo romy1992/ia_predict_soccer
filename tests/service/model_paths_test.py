@@ -57,6 +57,10 @@ class TestDestinationSubdir(unittest.TestCase):
         self.assertEqual(destination_subdir("under_over_4_5"), "")
         self.assertEqual(destination_subdir("goal_no_goal"), "")
 
+    def test_h2h_e_dc_stanno_nella_cartella_del_mercato(self):
+        self.assertEqual(destination_subdir("h2h"), "h2h")
+        self.assertEqual(destination_subdir("dc"), "dc")
+
 
 class TestResolveModelPath(unittest.TestCase):
     def test_il_percorso_registrato_vince_quando_esiste(self):
@@ -88,6 +92,22 @@ class TestResolveModelPath(unittest.TestCase):
             open(spostato, "w").close()
 
             risolto = resolve_model_path("/app/best_models/goal_no_goal_champion.pkl", root=tmp)
+            self.assertEqual(risolto, spostato)
+
+    def test_trova_h2h_nella_cartella_del_mercato(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            locale = os.path.join(tmp, "h2h", "h2h_champion_20260915.pkl")
+            os.makedirs(os.path.dirname(locale), exist_ok=True)
+            open(locale, "w").close()
+            risolto = resolve_model_path("/app/best_models/h2h/h2h_champion_20260915.pkl", root=tmp)
+            self.assertEqual(risolto, locale)
+
+    def test_trova_dc_spostato_in_archivio_per_mercato(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            spostato = os.path.join(tmp, "archivio", "dc", "dc_champion.pkl")
+            os.makedirs(os.path.dirname(spostato), exist_ok=True)
+            open(spostato, "w").close()
+            risolto = resolve_model_path("/app/best_models/dc_champion.pkl", root=tmp)
             self.assertEqual(risolto, spostato)
 
     def test_nessun_file_da_nessuna_parte(self):

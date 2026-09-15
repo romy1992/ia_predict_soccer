@@ -64,6 +64,22 @@ class TestPianifica(unittest.TestCase):
         piano = pianifica(RADICE, {}, MERCATI)
         self.assertTrue(all(s.destinazione.startswith("archivio/") for s in piano))
 
+    def test_h2h_e_dc_nuovi_vanno_in_best_models_mercato(self):
+        piano = {
+            s.sorgente: s.destinazione
+            for s in pianifica(
+                ["h2h_champion_20260915.pkl", "dc_champion_20260915.pkl", "h2h_champion.pkl"],
+                {
+                    "h2h": ["h2h_champion_20260915.pkl"],
+                    "dc": ["dc_champion_20260915.pkl"],
+                },
+                ("h2h", "dc"),
+            )
+        }
+        self.assertEqual(piano["h2h_champion_20260915.pkl"], "h2h/h2h_champion_20260915.pkl")
+        self.assertEqual(piano["dc_champion_20260915.pkl"], "dc/dc_champion_20260915.pkl")
+        self.assertEqual(piano["h2h_champion.pkl"], "archivio/h2h/h2h_champion.pkl")
+
 
 class TestRiscriviRighe(unittest.TestCase):
     def _righe(self):
