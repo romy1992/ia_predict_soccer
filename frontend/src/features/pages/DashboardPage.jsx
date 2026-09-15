@@ -99,7 +99,7 @@ export default function DashboardPage({
           {isFilterLoading && <span className="pill pill-loading">Aggiornamento...</span>}
         </div>
 
-        <PhaseTabs phases={["all", "to_play", "live", "finished"]} value={phaseFilter} onChange={onChangePhaseFilter} />
+        <PhaseTabs phases={["all", "to_play", "live", "finished", "unknown"]} value={phaseFilter} onChange={onChangePhaseFilter} />
         <MarketTabs markets={markets} value={selectedMarket} onChange={onChangeSelectedMarket} />
         <div className="match-center-controls">
           <label>

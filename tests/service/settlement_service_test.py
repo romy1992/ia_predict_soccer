@@ -14,8 +14,18 @@ class FakeMatchRepo:
     def __init__(self, matches):
         self.matches = matches
         self.saved: list[Match] = []
+        self.finestre: list[dict[str, Any]] = []
 
     def search_filter(self, filters: dict[str, Any]):
+        return self.matches
+
+    def search_by_date_window(self, **kwargs):
+        """Dal 2026-09-15 `run_settlement` filtra la finestra di date in SQL
+        invece di caricare tutti i match finali di tutte le stagioni (44.983
+        righe) e scartarne il 99% in Python. Qui si registrano gli argomenti
+        ricevuti, cosi' un test puo' verificare che la finestra sia davvero
+        arrivata al DB."""
+        self.finestre.append(kwargs)
         return self.matches
 
     def save(self, match: Match):

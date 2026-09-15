@@ -451,6 +451,14 @@ button:disabled {
   color: #166a39;
 }
 
+/* fase `unknown`: partita iniziata da oltre 4 ore ma senza stato finale a DB
+   (sync non arrivato). Grigio/ambra volutamente neutro: non deve sembrare ne'
+   una partita in corso (rosso) ne' un risultato acquisito (verde). */
+.badge-stale {
+  background: #f1eddf;
+  color: #7a5c17;
+}
+
 .tabs {
   display: flex;
   flex-wrap: wrap;

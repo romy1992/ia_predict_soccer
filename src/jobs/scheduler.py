@@ -15,6 +15,7 @@ from sqlalchemy.orm import selectinload
 from src.data.live.live_sync_job import run_manual_live_sync
 from src.data.quality_report_service import DataQualityService
 from src.jobs.job_history import JobHistory
+from src.jobs.job_lock import LOCK_IMPORT_MATCH, job_lock
 from src.jobs.job_settings import JOB_DEFINITIONS, is_job_enabled, resolve_job_schedule
 from src.ml.serving.prediction_snapshot_service import PredictionSnapshotService
 from src.oracle.betslip.betslip_service import BetslipService
@@ -35,6 +36,30 @@ logging.basicConfig(level=logging.INFO)
 
 def _today_iso() -> str:
     return datetime.now(timezone.utc).date().isoformat()
+
+
+def _esito_job_saltato(history: JobHistory, job_id: str, start: float, nome_lock: str = LOCK_IMPORT_MATCH) -> dict:
+    """Chiude nello storico un job che NON e' partito perche' un altro
+    processo stava gia' facendo lo stesso lavoro (vedi `src/jobs/job_lock.py`).
+
+    Viene registrato come `success` e non come `failed`: non e' andato storto
+    niente, semplicemente non c'era nulla da fare. Marcarlo `failed`
+    sporcherebbe lo storico di errori finti e - peggio - `_is_job_due` legge
+    proprio da qui per decidere quando rieseguire, quindi un finto fallimento
+    resterebbe indistinguibile da un problema vero. Il flag `skipped_locked`
+    nel summary lascia comunque la traccia esplicita del motivo."""
+    summary = {
+        "skipped_locked": True,
+        "motivo": (
+            "Un altro processo (container api/scheduler) stava gia' eseguendo un import "
+            "sulle stesse tabelle: esecuzione saltata per non duplicare chiamate API-Sports "
+            "e scritture a DB."
+        ),
+        "duration_seconds": time.perf_counter() - start,
+    }
+    history.mark_success(job_id=job_id, summary=summary)
+    logging.warning("Job %s saltato: lock '%s' già preso.", job_id, nome_lock)
+    return {"job_id": job_id, **summary}
 
 
 def run_manual_import(
@@ -70,36 +95,39 @@ def run_manual_import(
         job_id = started["job_id"]
 
     start = time.perf_counter()
-    try:
-        report = download_import_matches(
-            seasons=seasons,
-            leagues=leagues,
-            is_next=is_next,
-            from_date=from_date,
-            to_date=to_date,
-            fixture_date=fixture_date,
-            statuses=statuses,
-            days_ahead=days_ahead,
-        )
-        for season in seasons:
-            calculate_mean(with_season=season)
-        summary = {
-            "report": report,
-            "duration_seconds": time.perf_counter() - start,
-        }
-        history.mark_success(job_id=job_id, summary=summary)
-        report["job_id"] = job_id
-        return report
-    except Exception as exc:
-        history.mark_failed(
-            job_id=job_id,
-            error={
-                "message": str(exc),
+    with job_lock(LOCK_IMPORT_MATCH, obbligatorio=False) as lock_preso:
+        if not lock_preso:
+            return _esito_job_saltato(history=history, job_id=job_id, start=start)
+        try:
+            report = download_import_matches(
+                seasons=seasons,
+                leagues=leagues,
+                is_next=is_next,
+                from_date=from_date,
+                to_date=to_date,
+                fixture_date=fixture_date,
+                statuses=statuses,
+                days_ahead=days_ahead,
+            )
+            for season in seasons:
+                calculate_mean(with_season=season)
+            summary = {
+                "report": report,
                 "duration_seconds": time.perf_counter() - start,
-                "params": params,
-            },
-        )
-        raise
+            }
+            history.mark_success(job_id=job_id, summary=summary)
+            report["job_id"] = job_id
+            return report
+        except Exception as exc:
+            history.mark_failed(
+                job_id=job_id,
+                error={
+                    "message": str(exc),
+                    "duration_seconds": time.perf_counter() - start,
+                    "params": params,
+                },
+            )
+            raise
 
 
 def run_manual_retrain(
@@ -255,38 +283,47 @@ def run_daily_refresh(
         job_id = started["job_id"]
 
     start = time.perf_counter()
-    try:
-        played_report = run_manual_import(
-            seasons=seasons,
-            leagues=leagues,
-            fixture_date=yesterday,
-            statuses="FT-AET-PEN-ABD",
-            is_next=False,
-            job_type="daily_refresh_played",
-        )
-        upcoming_report = run_manual_future_sync(
-            days_ahead=days_ahead,
-            seasons=seasons,
-            leagues=leagues,
-        )
-        summary = {
-            "played_date": yesterday,
-            "played_matches": played_report,
-            "upcoming_matches": upcoming_report,
-            "duration_seconds": time.perf_counter() - start,
-        }
-        history.mark_success(job_id=job_id, summary=summary)
-        return {"job_id": job_id, **summary}
-    except Exception as exc:
-        history.mark_failed(
-            job_id=job_id,
-            error={
-                "message": str(exc),
+    # Il lock e' preso anche QUI, oltre che dentro le due sotto-fasi (che
+    # passano entrambe da `run_manual_import`): `job_lock` e' rientrante
+    # nello stesso thread, quindi le sotto-fasi lo ri-acquisiscono senza
+    # bloccarsi, ma nessun altro processo puo' piu' infilarsi NEL MEZZO tra
+    # la fase "ieri" e la fase "prossimi giorni" - che e' esattamente la
+    # finestra in cui il 2026-09-15 due giri si sono sovrapposti.
+    with job_lock(LOCK_IMPORT_MATCH, obbligatorio=False) as lock_preso:
+        if not lock_preso:
+            return _esito_job_saltato(history=history, job_id=job_id, start=start)
+        try:
+            played_report = run_manual_import(
+                seasons=seasons,
+                leagues=leagues,
+                fixture_date=yesterday,
+                statuses="FT-AET-PEN-ABD",
+                is_next=False,
+                job_type="daily_refresh_played",
+            )
+            upcoming_report = run_manual_future_sync(
+                days_ahead=days_ahead,
+                seasons=seasons,
+                leagues=leagues,
+            )
+            summary = {
+                "played_date": yesterday,
+                "played_matches": played_report,
+                "upcoming_matches": upcoming_report,
                 "duration_seconds": time.perf_counter() - start,
-                "params": params,
-            },
-        )
-        raise
+            }
+            history.mark_success(job_id=job_id, summary=summary)
+            return {"job_id": job_id, **summary}
+        except Exception as exc:
+            history.mark_failed(
+                job_id=job_id,
+                error={
+                    "message": str(exc),
+                    "duration_seconds": time.perf_counter() - start,
+                    "params": params,
+                },
+            )
+            raise
 
 
 def run_manual_settlement(
@@ -313,49 +350,55 @@ def run_manual_settlement(
     start = time.perf_counter()
     service = SettlementService()
 
-    try:
-        report = service.run_settlement(
-            from_date=from_date,
-            to_date=to_date,
-            seasons=seasons,
-            leagues=leagues,
-        )
-        data_phase_duration = time.perf_counter() - start
-        ledger_start = time.perf_counter()
-        ledger_report = PredictionLedgerService().settle_pending()
-        ledger_duration = time.perf_counter() - ledger_start
-        betslip_start = time.perf_counter()
-        betslip_report = OfficialBetslipService().settle_pending()
-        betslip_duration = time.perf_counter() - betslip_start
-        shadow_start = time.perf_counter()
-        shadow_report = BetslipProposalSnapshotService().settle_pending()
-        shadow_duration = time.perf_counter() - shadow_start
-        report["matches_updated"] = report.get("updated", 0)
-        report["matches_complete"] = report.get("complete", 0)
-        report["matches_incomplete"] = report.get("incomplete", 0)
-        report.update(ledger_report)
-        report.update(betslip_report)
-        report["shadow_betslips"] = shadow_report
-        report["phase_durations"] = {
-            "match_settlement_seconds": data_phase_duration,
-            "ledger_settlement_seconds": ledger_duration,
-            "betslip_settlement_seconds": betslip_duration,
-            "shadow_betslip_settlement_seconds": shadow_duration,
-        }
-        report["duration_seconds"] = time.perf_counter() - start
-        history.mark_success(job_id=job_id, summary=report)
-        report["job_id"] = job_id
-        return report
-    except Exception as exc:
-        history.mark_failed(
-            job_id=job_id,
-            error={
-                "message": str(exc),
-                "duration_seconds": time.perf_counter() - start,
-                "params": params,
-            },
-        )
-        raise
+    # `run_settlement` inizia richiamando `download_import_matches` (vedi
+    # `SettlementService.import_runner`), quindi scrive sulle stesse tabelle
+    # degli altri import e va sotto lo stesso lock.
+    with job_lock(LOCK_IMPORT_MATCH, obbligatorio=False) as lock_preso:
+        if not lock_preso:
+            return _esito_job_saltato(history=history, job_id=job_id, start=start)
+        try:
+            report = service.run_settlement(
+                from_date=from_date,
+                to_date=to_date,
+                seasons=seasons,
+                leagues=leagues,
+            )
+            data_phase_duration = time.perf_counter() - start
+            ledger_start = time.perf_counter()
+            ledger_report = PredictionLedgerService().settle_pending()
+            ledger_duration = time.perf_counter() - ledger_start
+            betslip_start = time.perf_counter()
+            betslip_report = OfficialBetslipService().settle_pending()
+            betslip_duration = time.perf_counter() - betslip_start
+            shadow_start = time.perf_counter()
+            shadow_report = BetslipProposalSnapshotService().settle_pending()
+            shadow_duration = time.perf_counter() - shadow_start
+            report["matches_updated"] = report.get("updated", 0)
+            report["matches_complete"] = report.get("complete", 0)
+            report["matches_incomplete"] = report.get("incomplete", 0)
+            report.update(ledger_report)
+            report.update(betslip_report)
+            report["shadow_betslips"] = shadow_report
+            report["phase_durations"] = {
+                "match_settlement_seconds": data_phase_duration,
+                "ledger_settlement_seconds": ledger_duration,
+                "betslip_settlement_seconds": betslip_duration,
+                "shadow_betslip_settlement_seconds": shadow_duration,
+            }
+            report["duration_seconds"] = time.perf_counter() - start
+            history.mark_success(job_id=job_id, summary=report)
+            report["job_id"] = job_id
+            return report
+        except Exception as exc:
+            history.mark_failed(
+                job_id=job_id,
+                error={
+                    "message": str(exc),
+                    "duration_seconds": time.perf_counter() - start,
+                    "params": params,
+                },
+            )
+            raise
 
 
 def run_official_prediction_capture(job_id: Optional[str] = None) -> dict:

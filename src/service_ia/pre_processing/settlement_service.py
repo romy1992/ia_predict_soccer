@@ -153,16 +153,20 @@ class SettlementService:
             is_next=False,
         )
 
-        filters: dict[str, Any] = {
-            "id_fixture": "not None",
-            "status": sorted(FINAL_STATUSES),
-        }
-        if seasons:
-            filters["season"] = seasons
-        if leagues:
-            filters["current_league"] = leagues
-
-        matches = self.match_repo.search_filter(filters=filters)
+        # Fix prestazioni 2026-09-15: PRIMA era un `search_filter` senza
+        # alcun vincolo di data, che caricava TUTTI i match con stato finale
+        # di TUTTE le stagioni (44.983 righe con relazioni) per poi
+        # scartarne in Python oltre il 99% con `_match_in_window` - la
+        # finestra utile e' di 4 giorni. Erano 1.331 s per esecuzione su un
+        # job che gira ogni ora. Ora la finestra e' nel WHERE.
+        matches = self.match_repo.search_by_date_window(
+            from_day=from_day.isoformat(),
+            to_day=to_day.isoformat(),
+            statuses=sorted(FINAL_STATUSES),
+            seasons=seasons,
+            leagues=leagues,
+            solo_con_id_fixture=True,
+        )
         now_iso = datetime.now(timezone.utc).isoformat()
 
         report: dict[str, Any] = {

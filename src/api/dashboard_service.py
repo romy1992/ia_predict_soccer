@@ -40,6 +40,14 @@ from src.service_ia.utility.request_api import base_api_statistics
 FINAL_STATUSES = {"FT", "AET", "PEN", "ABD", "CANC", "PST", "WO"}
 LIVE_STATUSES = {"1H", "HT", "2H", "ET", "BT", "P", "LIVE", "INT"}
 
+# Quanto a lungo, dopo il calcio d'inizio, una partita con stato ancora non
+# finale puo' ancora essere considerata "in corso" per DEDUZIONE dall'orario
+# (vedi `_classify_phase`). 90' + intervallo + recuperi + eventuali
+# supplementari e rigori stanno dentro ~3h; 4h lasciano margine per un
+# ritardo del fischio d'inizio o una lunga interruzione. Oltre, una riga non
+# aggiornata e' un dato vecchio, non una partita che sta giocando.
+_MAX_LIVE_WINDOW = timedelta(hours=4)
+
 # MATCH-01: priorita' per scegliere la decision card "migliore" da mostrare
 # come badge sintetico in tabella (Match Center) tra quelle gia' calcolate
 # da `_build_decision_cards` — nessuna nuova logica di decisione, solo una
@@ -136,18 +144,46 @@ class DashboardService:
 
     @staticmethod
     def _classify_phase(status: Optional[str], dt_value: Optional[datetime]) -> str:
+        """Fase mostrata in Dashboard: `finished` / `live` / `to_play` /
+        `unknown`.
+
+        Bug fix 2026-09-15: prima, uno stato NON finale e NON live con calcio
+        d'inizio nel passato ricadeva su `return "live"` a qualunque distanza
+        di tempo - una riga rimasta a `NS` risultava quindi "In diretta" per
+        sempre. E' esattamente quello che si vedeva sulle righe duplicate
+        lasciate indietro da `download_import_matches` (fixture 1550118
+        Como-Parma del 2026-09-14, mostrata "In diretta" il giorno dopo):
+        la fase veniva DEDOTTA dall'orario invece di ammettere che il dato
+        non era aggiornato.
+
+        Ora "live" per deduzione vale solo entro `_MAX_LIVE_WINDOW` dal
+        calcio d'inizio, perche' quel caso e' reale e frequente: il job di
+        sync gira ogni 30 minuti, quindi una partita appena iniziata puo'
+        legittimamente essere ancora `NS` a DB. Oltre quella finestra la
+        partita non puo' essere in corso: la riga e' semplicemente vecchia,
+        e la fase diventa `unknown` (etichetta "Da aggiornare" lato
+        frontend) invece di mentire in un senso o nell'altro - non e' "in
+        diretta", ma non e' nemmeno "finita" perche' il risultato non ce
+        l'abbiamo.
+        """
         status = (status or "").upper()
         if status in FINAL_STATUSES:
             return "finished"
         if status in LIVE_STATUSES:
             return "live"
 
+        if not dt_value or not dt_value.tzinfo:
+            # Senza un orario confrontabile non c'e' nulla da dedurre.
+            # `date_match` e' sempre una ISO con offset "+00:00", quindi qui
+            # si arriva solo con dati anomali.
+            return "to_play" if status == "NS" else "unknown"
+
         now_utc = datetime.now(timezone.utc)
-        if dt_value and dt_value.tzinfo:
-            return "to_play" if dt_value > now_utc else "live"
-        if status == "NS":
+        if dt_value > now_utc:
             return "to_play"
-        return "live"
+        if dt_value > now_utc - _MAX_LIVE_WINDOW:
+            return "live"
+        return "unknown"
 
     @staticmethod
     def _normalize_market_request(markets: Optional[list[str]]) -> Optional[list[str]]:
@@ -317,20 +353,33 @@ class DashboardService:
         if not self._is_within_dashboard_api_window():
             return []
 
-        leagues = self.cfg.leagues or []
+        # Fix consumo quota 2026-09-15 (stesso difetto corretto in
+        # `LiveDataService.fetch_live_fixtures`): qui si facevano
+        # `len(cfg.leagues)` chiamate - 18 - a OGNI refresh della preview
+        # live, per ottenere esattamente lo stesso risultato di UNA chiamata
+        # `fixtures?live=all`, che ritorna tutte le partite in corso e si
+        # filtra per lega in memoria. Il parallelismo con ThreadPoolExecutor
+        # rendeva il giro veloce, ma la quota consumata e' per CHIAMATA, non
+        # per secondo: con il polling del frontend erano centinaia di
+        # chiamate/ora buttate, e a quota esaurita tutti gli altri import
+        # tornano vuoti in silenzio.
+        leagues = {int(item) for item in (self.cfg.leagues or [])}
 
-        def _fetch_one_league(league: int) -> list[dict[str, Any]]:
-            try:
-                return base_api_statistics(path="fixtures", params={"live": "all", "league": league}) or []
-            except Exception:
-                return []
+        try:
+            payload = base_api_statistics(path="fixtures", params={"live": "all"}) or []
+        except Exception:
+            payload = []
 
         fixtures: list[dict[str, Any]] = []
-        if leagues:
-            with ThreadPoolExecutor(max_workers=min(self._LEAGUE_FETCH_MAX_WORKERS, len(leagues))) as executor:
-                for payload in executor.map(_fetch_one_league, leagues):
-                    if payload:
-                        fixtures.extend(payload)
+        for fixture in payload:
+            league_id = (fixture.get("league") or {}).get("id")
+            try:
+                league_id = int(league_id)
+            except (TypeError, ValueError):
+                continue
+            if leagues and league_id not in leagues:
+                continue
+            fixtures.append(fixture)
 
         deduped = self._dedupe_api_fixtures(fixtures)
         self._cache_set(cache_key, deduped)
@@ -1654,16 +1703,23 @@ class DashboardService:
         live_count = 0
         to_play_count = 0
         finished_count = 0
+        unknown_count = 0
         with_prediction_count = 0
 
         model_markets = day.model_markets
         for row in day.rows:
+            # `unknown` ha un ramo esplicito (2026-09-15, vedi
+            # `_classify_phase`): con il vecchio `else` catch-all una riga
+            # non aggiornata veniva conteggiata tra le "finite", cioe' il
+            # contatore affermava che avevamo un risultato che non abbiamo.
             if row["phase"] == "live":
                 live_count += 1
             elif row["phase"] == "to_play":
                 to_play_count += 1
-            else:
+            elif row["phase"] == "finished":
                 finished_count += 1
+            else:
+                unknown_count += 1
 
             if row.get("predictions"):
                 with_prediction_count += 1
@@ -1679,6 +1735,7 @@ class DashboardService:
                 "live": live_count,
                 "to_play": to_play_count,
                 "finished": finished_count,
+                "unknown": unknown_count,
                 "with_prediction": with_prediction_count,
             },
             "model_markets": model_markets,

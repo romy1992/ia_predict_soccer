@@ -153,23 +153,55 @@ class TestLiveDataServiceFetch(unittest.TestCase):
     """Acceptance criteria "Provider errors isolati" + "Cache/polling
     controllato" - provider mockato, nessuna rete/DB reale."""
 
-    def test_fetch_live_fixtures_isolates_error_per_league(self):
+    def test_fetch_live_fixtures_una_sola_chiamata_per_tutte_le_leghe(self):
+        """Fix consumo quota 2026-09-15: PRIMA una chiamata
+        `fixtures?live=all&league=X` per OGNI lega censita (18 per poll, ~720
+        chiamate/ora anche a stadi vuoti, oltre il doppio della quota
+        giornaliera). Ora UNA chiamata `live=all` senza `league`, filtrata in
+        memoria."""
         provider = mock.Mock()
-
-        def fake_get_fixtures(**params):
-            if params.get("league") == 39:
-                raise ConnectionError("boom")
-            return [_raw_fixture(fixture_id=2)]
-
-        provider.get_fixtures.side_effect = fake_get_fixtures
+        provider.get_fixtures.return_value = [
+            _raw_fixture(fixture_id=1, league_id=39),
+            _raw_fixture(fixture_id=2, league_id=140),
+        ]
         service = LiveDataService(provider=provider, repository=mock.Mock(), cfg=_cfg(leagues=[39, 140]))
 
         fixtures, errors = service.fetch_live_fixtures()
 
-        self.assertEqual(len(fixtures), 1)
+        self.assertEqual(provider.get_fixtures.call_count, 1)
+        self.assertEqual(provider.get_fixtures.call_args.kwargs, {"live": "all"})
+        self.assertNotIn("league", provider.get_fixtures.call_args.kwargs)
+        self.assertEqual(len(fixtures), 2)
+        self.assertEqual(errors, [])
+
+    def test_fetch_live_fixtures_scarta_le_leghe_non_censite(self):
+        """`live=all` ritorna le partite in corso di TUTTO il mondo: i
+        campionati fuori da `cfg.leagues` non devono finire nelle tabelle
+        `live_*`."""
+        provider = mock.Mock()
+        provider.get_fixtures.return_value = [
+            _raw_fixture(fixture_id=1, league_id=39),
+            _raw_fixture(fixture_id=2, league_id=9999),
+        ]
+        service = LiveDataService(provider=provider, repository=mock.Mock(), cfg=_cfg(leagues=[39]))
+
+        fixtures, _errors = service.fetch_live_fixtures()
+
+        self.assertEqual([f["fixture"]["id"] for f in fixtures], [1])
+
+    def test_fetch_live_fixtures_isola_errore_del_provider(self):
+        """Con una chiamata sola non c'e' piu' un "resto del batch" da
+        salvare, ma l'errore deve restare confinato nel report invece di
+        propagarsi e far fallire tutto il job live."""
+        provider = mock.Mock()
+        provider.get_fixtures.side_effect = ConnectionError("boom")
+        service = LiveDataService(provider=provider, repository=mock.Mock(), cfg=_cfg(leagues=[39, 140]))
+
+        fixtures, errors = service.fetch_live_fixtures()
+
+        self.assertEqual(fixtures, [])
         self.assertEqual(len(errors), 1)
-        self.assertEqual(errors[0]["league"], 39)
-        self.assertEqual(errors[0]["scope"], "league_fixtures")
+        self.assertEqual(errors[0]["scope"], "live_fixtures")
 
     def test_fetch_live_fixtures_uses_cache_within_ttl(self):
         provider = mock.Mock()
