@@ -177,6 +177,17 @@ def archivia(registry, applica: bool) -> None:
             cal["calibrator_path"] = f"{CONTAINER}/archivio/{ncal}"
         aggiornate += 1
 
+    # Fino all'introduzione dei nomi con suffisso data, ogni riaddestramento
+    # sovrascriveva `<mercato>_champion.pkl`: piu' run diversi condividono
+    # quindi lo stesso nome file. Spostandolo, le altre righe resterebbero
+    # rotte. Il bridge ne ha trovate 4 cosi' il 2026-09-14.
+    for r in righe:
+        percorso = r.get("model_path") or ""
+        nome = os.path.basename(percorso)
+        if nome in spostati and "/archivio/" not in percorso:
+            r["model_path"] = f"{CONTAINER}/archivio/{nome}"
+            aggiornate += 1
+
     print(f"   file spostati: {len(spostati)}   righe di registry aggiornate: {aggiornate}")
     for n in spostati:
         print(f"      {n}")
@@ -272,13 +283,22 @@ def main() -> int:
     gia_ok = [m for m in DA_FARE if m not in da_rifare]
     if gia_ok:
         print(f"\ngia' a posto (production gia' a 33 feature), non li tocco: {', '.join(gia_ok)}")
-    if not da_rifare:
-        print("\nNiente da fare.")
-        return 0
-    print(f"da rifare: {', '.join(da_rifare)}")
+    if da_rifare:
+        print(f"da rifare: {', '.join(da_rifare)}")
 
+    # L'archiviazione va fatta ANCHE quando non c'e' niente da promuovere: e'
+    # proprio allora che i vecchi modelli sono superati e vanno spostati. Il
+    # return anticipato stava prima di questo blocco, quindi rilanciando lo
+    # script a promozioni gia' fatte usciva su "Niente da fare" e i .pkl a 69
+    # feature non si sarebbero mai mossi. Il bridge se n'e' accorto il
+    # 2026-09-14 e ha dovuto archiviarli a mano.
     backup_registry(args.apply)
     archivia(registry, args.apply)
+    if not da_rifare:
+        print("\nNiente da promuovere: fatta la sola archiviazione.")
+        if args.apply:
+            verifica(ModelRegistry())
+        return 0
 
     for mercato, (linea, candidato, forzare) in da_rifare.items():
         promuovi(mercato, linea, candidato, args.apply)
