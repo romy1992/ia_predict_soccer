@@ -28,6 +28,11 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+from src.service_ia.training.model_paths import relative_to_best_models  # noqa: E402
 
 INDEX_PATH = os.path.join("best_models", "registry", "index.jsonl")
 LOCAL_CHECK_DIR = os.path.abspath("best_models")
@@ -70,13 +75,19 @@ def main() -> None:
         old_path = row.get("model_path")
         if not old_path:
             continue
-        filename = os.path.basename(old_path.replace("\\", "/"))
-        new_path = f"{models_dir}/{filename}"
+        # Si riscrive la RADICE, mai la posizione dentro best_models: dopo la
+        # riorganizzazione del 2026-09-15 un modello sta in
+        # `under_over/<mercato>/` o in `archivio/`, e ricostruire il percorso
+        # dal solo nome file riporterebbe ogni riga nella radice - cioe'
+        # disferebbe la riorganizzazione e romperebbe tutte e 23 le righe in
+        # un colpo solo.
+        relativo = relative_to_best_models(old_path) or os.path.basename(old_path.replace("\\", "/"))
+        new_path = f"{models_dir}/{relativo}"
         if new_path != old_path:
             row["model_path"] = new_path
             fixed += 1
-        if not os.path.exists(os.path.join(LOCAL_CHECK_DIR, filename)):
-            missing_files.append(filename)
+        if not os.path.exists(os.path.join(LOCAL_CHECK_DIR, *relativo.split("/"))):
+            missing_files.append(relativo)
 
     with open(INDEX_PATH, "w", encoding="utf-8") as f:
         for row in rows:
