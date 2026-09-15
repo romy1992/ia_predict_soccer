@@ -1,0 +1,2049 @@
+{
+  "elapsed_seconds": 636.81,
+  "pipeline": {
+    "dataset": "FilterMarketService.build_dataset(fill_missing=False) poi drop righe senza quote canoniche",
+    "eda": "NaN, Spearman vs y, coppie |corr|>0.95, drop colonne >20% NaN e ridondanti",
+    "search": "RandomizedSearchCV n_iter=12 su logistic / RF / RF+SMOTE",
+    "ensemble": "VotingClassifier soft + StackingClassifier sui 2 migliori, champion per selection_score",
+    "cv": "expanding window temporale (_build_temporal_cv), OOF mai in-sample",
+    "save_model": false,
+    "coherence": "se h2h predice casa, dc=1X; P(1X)=max(P(1X), P(casa))"
+  },
+  "eda": {
+    "h2h_raw": {
+      "n_rows": 15665,
+      "n_columns": 97,
+      "period": {
+        "min": "2020-06-11 20:00:00+00:00",
+        "max": "2026-09-14 19:45:00+00:00"
+      },
+      "y_counts": {
+        "0": 8928,
+        "1": 6737
+      },
+      "n_missing_cells": 10746,
+      "missing_columns": {},
+      "top_corr_vs_y": [
+        {
+          "column": "prob_norm_home",
+          "spearman": 0.3858007753268068
+        },
+        {
+          "column": "odds_mean_home",
+          "spearman": -0.3856756878123331
+        },
+        {
+          "column": "implied_prob_home",
+          "spearman": 0.38567404068734207
+        },
+        {
+          "column": "odds_min_home",
+          "spearman": -0.3852503429379899
+        },
+        {
+          "column": "odds_max_home",
+          "spearman": -0.38464628559238195
+        },
+        {
+          "column": "odds_max_away",
+          "spearman": 0.3830104621201094
+        },
+        {
+          "column": "prob_norm_away",
+          "spearman": -0.38300597190457103
+        },
+        {
+          "column": "implied_prob_away",
+          "spearman": -0.38300209386786604
+        },
+        {
+          "column": "odds_mean_away",
+          "spearman": 0.38300197705335975
+        },
+        {
+          "column": "odds_min_away",
+          "spearman": 0.3818274239525092
+        },
+        {
+          "column": "mean_shots_insidebox_diff_stat",
+          "spearman": 0.2855784378882893
+        },
+        {
+          "column": "odds_std_away",
+          "spearman": 0.2834163841327371
+        },
+        {
+          "column": "mean_shots_on_goal_diff_stat",
+          "spearman": 0.276173476988035
+        },
+        {
+          "column": "mean_passes_accurate_diff_stat",
+          "spearman": 0.27576959022506176
+        },
+        {
+          "column": "mean_total_passes_diff_stat",
+          "spearman": 0.27325211372873204
+        },
+        {
+          "column": "mean_ball_possession_diff_stat",
+          "spearman": 0.27051545409964256
+        },
+        {
+          "column": "mean_total_shots_diff_stat",
+          "spearman": 0.26955030868840263
+        },
+        {
+          "column": "odds_std_home",
+          "spearman": -0.24918528362048967
+        },
+        {
+          "column": "mean_passes_diff_stat",
+          "spearman": 0.22472804362154555
+        },
+        {
+          "column": "mean_corner_kicks_diff_stat",
+          "spearman": 0.21676780187729858
+        }
+      ],
+      "redundant_pairs_over_0_95": [
+        {
+          "a": "odds_min",
+          "b": "odds_slot_1",
+          "corr": 1.0
+        },
+        {
+          "a": "odds_mean_away",
+          "b": "implied_prob_away",
+          "corr": 0.9999999927920121
+        },
+        {
+          "a": "odds_mean_home",
+          "b": "implied_prob_home",
+          "corr": 0.9999999827424997
+        },
+        {
+          "a": "odds_mean_draw",
+          "b": "implied_prob_draw",
+          "corr": 0.9999998456477424
+        },
+        {
+          "a": "odds_count",
+          "b": "odds_count_draw",
+          "corr": 0.9999983610396393
+        },
+        {
+          "a": "odds_count",
+          "b": "odds_count_home",
+          "corr": 0.999997781361862
+        },
+        {
+          "a": "odds_count_home",
+          "b": "odds_count_away",
+          "corr": 0.9999975701934957
+        },
+        {
+          "a": "odds_count",
+          "b": "odds_count_away",
+          "corr": 0.9999972037035337
+        },
+        {
+          "a": "odds_count_draw",
+          "b": "odds_count_away",
+          "corr": 0.9999951424099325
+        },
+        {
+          "a": "odds_count_home",
+          "b": "odds_count_draw",
+          "corr": 0.9999927085688259
+        },
+        {
+          "a": "odds_mean_away",
+          "b": "prob_norm_away",
+          "corr": 0.999712272782319
+        },
+        {
+          "a": "implied_prob_away",
+          "b": "prob_norm_away",
+          "corr": 0.9997122656659089
+        },
+        {
+          "a": "odds_mean_home",
+          "b": "prob_norm_home",
+          "corr": 0.9994256910798485
+        },
+        {
+          "a": "implied_prob_home",
+          "b": "prob_norm_home",
+          "corr": 0.9994256650935559
+        },
+        {
+          "a": "odds_mean_home",
+          "b": "odds_max_home",
+          "corr": 0.9990779194053785
+        },
+        {
+          "a": "odds_max_home",
+          "b": "implied_prob_home",
+          "corr": 0.9990778928617544
+        },
+        {
+          "a": "odds_max_away",
+          "b": "prob_norm_away",
+          "corr": 0.9990062538709367
+        },
+        {
+          "a": "odds_slot_7",
+          "b": "odds_slot_8",
+          "corr": 0.9988992148440511
+        },
+        {
+          "a": "odds_mean_away",
+          "b": "odds_max_away",
+          "corr": 0.9988405177332936
+        },
+        {
+          "a": "odds_max_away",
+          "b": "implied_prob_away",
+          "corr": 0.9988404961976101
+        },
+        {
+          "a": "odds_max_home",
+          "b": "prob_norm_home",
+          "corr": 0.9987942640654448
+        },
+        {
+          "a": "odds_mean_home",
+          "b": "odds_min_home",
+          "corr": 0.9980823140835197
+        },
+        {
+          "a": "odds_min_home",
+          "b": "implied_prob_home",
+          "corr": 0.9980822731681912
+        },
+        {
+          "a": "odds_min_away",
+          "b": "implied_prob_away",
+          "corr": 0.9979511158792183
+        },
+        {
+          "a": "odds_mean_away",
+          "b": "odds_min_away",
+          "corr": 0.9979510177104425
+        },
+        {
+          "a": "odds_min_home",
+          "b": "prob_norm_home",
+          "corr": 0.9973191331125875
+        },
+        {
+          "a": "odds_min_away",
+          "b": "prob_norm_away",
+          "corr": 0.9970950141372105
+        },
+        {
+          "a": "implied_prob_draw",
+          "b": "prob_norm_draw",
+          "corr": 0.9964423189009662
+        },
+        {
+          "a": "odds_mean_draw",
+          "b": "prob_norm_draw",
+          "corr": 0.9964418778380145
+        },
+        {
+          "a": "odds_slot_5",
+          "b": "odds_slot_6",
+          "corr": 0.995562722856542
+        },
+        {
+          "a": "odds_min_home",
+          "b": "odds_max_home",
+          "corr": 0.9955468953808938
+        },
+        {
+          "a": "mean_total_passes_diff_stat",
+          "b": "mean_passes_accurate_diff_stat",
+          "corr": 0.9945786722016712
+        },
+        {
+          "a": "odds_min_away",
+          "b": "odds_max_away",
+          "corr": 0.9945532049751552
+        },
+        {
+          "a": "odds_max_draw",
+          "b": "implied_prob_draw",
+          "corr": 0.9899683039502919
+        },
+        {
+          "a": "odds_mean_draw",
+          "b": "odds_max_draw",
+          "corr": 0.9899668148631392
+        },
+        {
+          "a": "mean_total_passes_home_stat",
+          "b": "mean_passes_accurate_home_stat",
+          "corr": 0.989741060612143
+        },
+        {
+          "a": "mean_total_passes_away_stat",
+          "b": "mean_passes_accurate_away_stat",
+          "corr": 0.9894757856661667
+        },
+        {
+          "a": "implied_prob_away",
+          "b": "prob_norm_home",
+          "corr": 0.9886181826328536
+        },
+        {
+          "a": "odds_mean_away",
+          "b": "prob_norm_home",
+          "corr": 0.9886178781134355
+        },
+        {
+          "a": "odds_max_draw",
+          "b": "prob_norm_draw",
+          "corr": 0.9885195032971553
+        }
+      ],
+      "odds_mean_slugs": [
+        "away",
+        "draw",
+        "home"
+      ],
+      "missing_columns_n": 54
+    },
+    "dc_raw": {
+      "n_rows": 8873,
+      "n_columns": 97,
+      "period": {
+        "min": "2023-05-03 16:00:00+00:00",
+        "max": "2026-09-14 19:45:00+00:00"
+      },
+      "y_counts": {
+        "0": 2705,
+        "1": 6168
+      },
+      "n_missing_cells": 102680,
+      "missing_columns": {
+        "odds_std_12": {
+          "n": 4365,
+          "pct": 0.49194184604981406
+        },
+        "odds_min_12": {
+          "n": 4365,
+          "pct": 0.49194184604981406
+        },
+        "odds_count_12": {
+          "n": 4365,
+          "pct": 0.49194184604981406
+        },
+        "odds_mean_12": {
+          "n": 4365,
+          "pct": 0.49194184604981406
+        },
+        "odds_max_12": {
+          "n": 4365,
+          "pct": 0.49194184604981406
+        },
+        "implied_prob_12": {
+          "n": 4365,
+          "pct": 0.49194184604981406
+        },
+        "prob_norm_12": {
+          "n": 4365,
+          "pct": 0.49194184604981406
+        },
+        "implied_prob_x2": {
+          "n": 4353,
+          "pct": 0.490589428603629
+        },
+        "odds_mean_x2": {
+          "n": 4353,
+          "pct": 0.490589428603629
+        },
+        "odds_std_x2": {
+          "n": 4353,
+          "pct": 0.490589428603629
+        },
+        "odds_count_x2": {
+          "n": 4353,
+          "pct": 0.490589428603629
+        },
+        "odds_max_x2": {
+          "n": 4353,
+          "pct": 0.490589428603629
+        },
+        "prob_norm_x2": {
+          "n": 4353,
+          "pct": 0.490589428603629
+        },
+        "odds_min_x2": {
+          "n": 4353,
+          "pct": 0.490589428603629
+        },
+        "implied_prob_1x": {
+          "n": 4351,
+          "pct": 0.49036402569593146
+        },
+        "odds_max_1x": {
+          "n": 4351,
+          "pct": 0.49036402569593146
+        },
+        "odds_count_1x": {
+          "n": 4351,
+          "pct": 0.49036402569593146
+        },
+        "odds_mean_1x": {
+          "n": 4351,
+          "pct": 0.49036402569593146
+        },
+        "odds_std_1x": {
+          "n": 4351,
+          "pct": 0.49036402569593146
+        },
+        "odds_min_1x": {
+          "n": 4351,
+          "pct": 0.49036402569593146
+        },
+        "prob_norm_1x": {
+          "n": 4351,
+          "pct": 0.49036402569593146
+        },
+        "overround": {
+          "n": 4339,
+          "pct": 0.48901160824974643
+        }
+      },
+      "top_corr_vs_y": [
+        {
+          "column": "odds_min_1x",
+          "spearman": -0.37431111472359857
+        },
+        {
+          "column": "prob_norm_1x",
+          "spearman": 0.37412234280902956
+        },
+        {
+          "column": "odds_mean_1x",
+          "spearman": -0.3735315545756406
+        },
+        {
+          "column": "implied_prob_1x",
+          "spearman": 0.373531189111468
+        },
+        {
+          "column": "prob_norm_x2",
+          "spearman": -0.37226583056853024
+        },
+        {
+          "column": "implied_prob_x2",
+          "spearman": -0.37160056319250384
+        },
+        {
+          "column": "odds_mean_x2",
+          "spearman": 0.3715996407388942
+        },
+        {
+          "column": "odds_max_x2",
+          "spearman": 0.37140258776424523
+        },
+        {
+          "column": "odds_max_1x",
+          "spearman": -0.37089955314580275
+        },
+        {
+          "column": "odds_min_x2",
+          "spearman": 0.36916370641720114
+        },
+        {
+          "column": "odds_std_x2",
+          "spearman": 0.2956705404596678
+        },
+        {
+          "column": "odds_std_1x",
+          "spearman": -0.2730094308949759
+        },
+        {
+          "column": "mean_shots_insidebox_diff_stat",
+          "spearman": 0.2709322707724538
+        },
+        {
+          "column": "mean_shots_on_goal_diff_stat",
+          "spearman": 0.26176150446307445
+        },
+        {
+          "column": "mean_ball_possession_diff_stat",
+          "spearman": 0.25817390425988057
+        },
+        {
+          "column": "mean_passes_accurate_diff_stat",
+          "spearman": 0.25579732365608354
+        },
+        {
+          "column": "mean_total_passes_diff_stat",
+          "spearman": 0.2519489254132398
+        },
+        {
+          "column": "mean_total_shots_diff_stat",
+          "spearman": 0.25159589234454255
+        },
+        {
+          "column": "mean_expected_goals_diff_stat",
+          "spearman": 0.25120674382007724
+        },
+        {
+          "column": "mean_shots_insidebox_away_stat",
+          "spearman": -0.20798623152010737
+        }
+      ],
+      "redundant_pairs_over_0_95": [
+        {
+          "a": "odds_min",
+          "b": "odds_slot_1",
+          "corr": 1.0
+        },
+        {
+          "a": "odds_mean_12",
+          "b": "implied_prob_12",
+          "corr": 1.0
+        },
+        {
+          "a": "odds_mean_1x",
+          "b": "implied_prob_1x",
+          "corr": 0.9999999954903303
+        },
+        {
+          "a": "odds_mean_x2",
+          "b": "implied_prob_x2",
+          "corr": 0.9999999885646678
+        },
+        {
+          "a": "odds_count_12",
+          "b": "odds_count_x2",
+          "corr": 0.999915699409978
+        },
+        {
+          "a": "odds_count_1x",
+          "b": "odds_count_12",
+          "corr": 0.9981405568641499
+        },
+        {
+          "a": "odds_mean_x2",
+          "b": "odds_max_x2",
+          "corr": 0.998080828591759
+        },
+        {
+          "a": "odds_max_x2",
+          "b": "implied_prob_x2",
+          "corr": 0.9980808106363053
+        },
+        {
+          "a": "odds_count_1x",
+          "b": "odds_count_x2",
+          "corr": 0.9980577302527798
+        },
+        {
+          "a": "odds_slot_9",
+          "b": "odds_slot_10",
+          "corr": 0.9978021812311243
+        },
+        {
+          "a": "odds_mean_1x",
+          "b": "odds_max_1x",
+          "corr": 0.9977668692535169
+        },
+        {
+          "a": "odds_max_1x",
+          "b": "implied_prob_1x",
+          "corr": 0.9977668022089351
+        },
+        {
+          "a": "odds_count",
+          "b": "odds_count_1x",
+          "corr": 0.997669937900093
+        },
+        {
+          "a": "odds_count",
+          "b": "odds_count_x2",
+          "corr": 0.997654207248037
+        },
+        {
+          "a": "odds_count",
+          "b": "odds_count_12",
+          "corr": 0.9975981006259352
+        },
+        {
+          "a": "odds_mean_x2",
+          "b": "odds_min_x2",
+          "corr": 0.9957963013954972
+        },
+        {
+          "a": "odds_min_x2",
+          "b": "implied_prob_x2",
+          "corr": 0.995796076484801
+        },
+        {
+          "a": "mean_total_passes_diff_stat",
+          "b": "mean_passes_accurate_diff_stat",
+          "corr": 0.9949243999776608
+        },
+        {
+          "a": "odds_slot_6",
+          "b": "odds_slot_7",
+          "corr": 0.994718264496004
+        },
+        {
+          "a": "implied_prob_1x",
+          "b": "prob_norm_1x",
+          "corr": 0.9945637031172703
+        },
+        {
+          "a": "odds_mean_1x",
+          "b": "prob_norm_1x",
+          "corr": 0.9945636863035274
+        },
+        {
+          "a": "implied_prob_x2",
+          "b": "prob_norm_x2",
+          "corr": 0.9941695889678576
+        },
+        {
+          "a": "odds_mean_x2",
+          "b": "prob_norm_x2",
+          "corr": 0.9941693950887279
+        },
+        {
+          "a": "mean_total_passes_home_stat",
+          "b": "mean_passes_accurate_home_stat",
+          "corr": 0.9939190670063461
+        },
+        {
+          "a": "mean_total_passes_away_stat",
+          "b": "mean_passes_accurate_away_stat",
+          "corr": 0.9937200587261574
+        },
+        {
+          "a": "odds_max_1x",
+          "b": "prob_norm_1x",
+          "corr": 0.993119209799213
+        },
+        {
+          "a": "odds_min_1x",
+          "b": "implied_prob_1x",
+          "corr": 0.9930867029589738
+        },
+        {
+          "a": "odds_mean_1x",
+          "b": "odds_min_1x",
+          "corr": 0.9930865782275278
+        },
+        {
+          "a": "odds_max_x2",
+          "b": "prob_norm_x2",
+          "corr": 0.9927987532736321
+        },
+        {
+          "a": "prob_norm_1x",
+          "b": "prob_norm_x2",
+          "corr": 0.9916702927154692
+        },
+        {
+          "a": "odds_slot_8",
+          "b": "odds_slot_9",
+          "corr": 0.9912452169760312
+        },
+        {
+          "a": "odds_min_x2",
+          "b": "odds_max_x2",
+          "corr": 0.9901462193676723
+        },
+        {
+          "a": "odds_slot_3",
+          "b": "odds_slot_4",
+          "corr": 0.9900461191116243
+        },
+        {
+          "a": "implied_prob_x2",
+          "b": "prob_norm_1x",
+          "corr": 0.989957128662221
+        },
+        {
+          "a": "odds_mean_x2",
+          "b": "prob_norm_1x",
+          "corr": 0.9899567565772062
+        },
+        {
+          "a": "odds_mean_1x",
+          "b": "prob_norm_x2",
+          "corr": 0.9899487953667384
+        },
+        {
+          "a": "implied_prob_1x",
+          "b": "prob_norm_x2",
+          "corr": 0.9899487350340129
+        },
+        {
+          "a": "odds_min_x2",
+          "b": "prob_norm_x2",
+          "corr": 0.9891926864249633
+        },
+        {
+          "a": "odds_slot_8",
+          "b": "odds_slot_10",
+          "corr": 0.9888304383180206
+        },
+        {
+          "a": "odds_mean",
+          "b": "odds_std",
+          "corr": 0.988076395710001
+        }
+      ],
+      "odds_mean_slugs": [
+        "12",
+        "1x",
+        "x2"
+      ],
+      "missing_columns_n": 76
+    },
+    "h2h_dopo_filtro_quote": {
+      "n_rows": 15665,
+      "n_columns": 97,
+      "period": {
+        "min": "2020-06-11 20:00:00+00:00",
+        "max": "2026-09-14 19:45:00+00:00"
+      },
+      "y_counts": {
+        "0": 8928,
+        "1": 6737
+      },
+      "n_missing_cells": 10746,
+      "missing_columns": {},
+      "top_corr_vs_y": [
+        {
+          "column": "prob_norm_home",
+          "spearman": 0.3858007753268068
+        },
+        {
+          "column": "odds_mean_home",
+          "spearman": -0.3856756878123331
+        },
+        {
+          "column": "implied_prob_home",
+          "spearman": 0.38567404068734207
+        },
+        {
+          "column": "odds_min_home",
+          "spearman": -0.3852503429379899
+        },
+        {
+          "column": "odds_max_home",
+          "spearman": -0.38464628559238195
+        },
+        {
+          "column": "odds_max_away",
+          "spearman": 0.3830104621201094
+        },
+        {
+          "column": "prob_norm_away",
+          "spearman": -0.38300597190457103
+        },
+        {
+          "column": "implied_prob_away",
+          "spearman": -0.38300209386786604
+        },
+        {
+          "column": "odds_mean_away",
+          "spearman": 0.38300197705335975
+        },
+        {
+          "column": "odds_min_away",
+          "spearman": 0.3818274239525092
+        },
+        {
+          "column": "mean_shots_insidebox_diff_stat",
+          "spearman": 0.2855784378882893
+        },
+        {
+          "column": "odds_std_away",
+          "spearman": 0.2834163841327371
+        },
+        {
+          "column": "mean_shots_on_goal_diff_stat",
+          "spearman": 0.276173476988035
+        },
+        {
+          "column": "mean_passes_accurate_diff_stat",
+          "spearman": 0.27576959022506176
+        },
+        {
+          "column": "mean_total_passes_diff_stat",
+          "spearman": 0.27325211372873204
+        },
+        {
+          "column": "mean_ball_possession_diff_stat",
+          "spearman": 0.27051545409964256
+        },
+        {
+          "column": "mean_total_shots_diff_stat",
+          "spearman": 0.26955030868840263
+        },
+        {
+          "column": "odds_std_home",
+          "spearman": -0.24918528362048967
+        },
+        {
+          "column": "mean_passes_diff_stat",
+          "spearman": 0.22472804362154555
+        },
+        {
+          "column": "mean_corner_kicks_diff_stat",
+          "spearman": 0.21676780187729858
+        }
+      ],
+      "redundant_pairs_over_0_95": [
+        {
+          "a": "odds_min",
+          "b": "odds_slot_1",
+          "corr": 1.0
+        },
+        {
+          "a": "odds_mean_away",
+          "b": "implied_prob_away",
+          "corr": 0.9999999927920121
+        },
+        {
+          "a": "odds_mean_home",
+          "b": "implied_prob_home",
+          "corr": 0.9999999827424997
+        },
+        {
+          "a": "odds_mean_draw",
+          "b": "implied_prob_draw",
+          "corr": 0.9999998456477424
+        },
+        {
+          "a": "odds_count",
+          "b": "odds_count_draw",
+          "corr": 0.9999983610396393
+        },
+        {
+          "a": "odds_count",
+          "b": "odds_count_home",
+          "corr": 0.999997781361862
+        },
+        {
+          "a": "odds_count_home",
+          "b": "odds_count_away",
+          "corr": 0.9999975701934957
+        },
+        {
+          "a": "odds_count",
+          "b": "odds_count_away",
+          "corr": 0.9999972037035337
+        },
+        {
+          "a": "odds_count_draw",
+          "b": "odds_count_away",
+          "corr": 0.9999951424099325
+        },
+        {
+          "a": "odds_count_home",
+          "b": "odds_count_draw",
+          "corr": 0.9999927085688259
+        },
+        {
+          "a": "odds_mean_away",
+          "b": "prob_norm_away",
+          "corr": 0.999712272782319
+        },
+        {
+          "a": "implied_prob_away",
+          "b": "prob_norm_away",
+          "corr": 0.9997122656659089
+        },
+        {
+          "a": "odds_mean_home",
+          "b": "prob_norm_home",
+          "corr": 0.9994256910798485
+        },
+        {
+          "a": "implied_prob_home",
+          "b": "prob_norm_home",
+          "corr": 0.9994256650935559
+        },
+        {
+          "a": "odds_mean_home",
+          "b": "odds_max_home",
+          "corr": 0.9990779194053785
+        },
+        {
+          "a": "odds_max_home",
+          "b": "implied_prob_home",
+          "corr": 0.9990778928617544
+        },
+        {
+          "a": "odds_max_away",
+          "b": "prob_norm_away",
+          "corr": 0.9990062538709367
+        },
+        {
+          "a": "odds_slot_7",
+          "b": "odds_slot_8",
+          "corr": 0.9988992148440511
+        },
+        {
+          "a": "odds_mean_away",
+          "b": "odds_max_away",
+          "corr": 0.9988405177332936
+        },
+        {
+          "a": "odds_max_away",
+          "b": "implied_prob_away",
+          "corr": 0.9988404961976101
+        },
+        {
+          "a": "odds_max_home",
+          "b": "prob_norm_home",
+          "corr": 0.9987942640654448
+        },
+        {
+          "a": "odds_mean_home",
+          "b": "odds_min_home",
+          "corr": 0.9980823140835197
+        },
+        {
+          "a": "odds_min_home",
+          "b": "implied_prob_home",
+          "corr": 0.9980822731681912
+        },
+        {
+          "a": "odds_min_away",
+          "b": "implied_prob_away",
+          "corr": 0.9979511158792183
+        },
+        {
+          "a": "odds_mean_away",
+          "b": "odds_min_away",
+          "corr": 0.9979510177104425
+        },
+        {
+          "a": "odds_min_home",
+          "b": "prob_norm_home",
+          "corr": 0.9973191331125875
+        },
+        {
+          "a": "odds_min_away",
+          "b": "prob_norm_away",
+          "corr": 0.9970950141372105
+        },
+        {
+          "a": "implied_prob_draw",
+          "b": "prob_norm_draw",
+          "corr": 0.9964423189009662
+        },
+        {
+          "a": "odds_mean_draw",
+          "b": "prob_norm_draw",
+          "corr": 0.9964418778380145
+        },
+        {
+          "a": "odds_slot_5",
+          "b": "odds_slot_6",
+          "corr": 0.995562722856542
+        },
+        {
+          "a": "odds_min_home",
+          "b": "odds_max_home",
+          "corr": 0.9955468953808938
+        },
+        {
+          "a": "mean_total_passes_diff_stat",
+          "b": "mean_passes_accurate_diff_stat",
+          "corr": 0.9945786722016712
+        },
+        {
+          "a": "odds_min_away",
+          "b": "odds_max_away",
+          "corr": 0.9945532049751552
+        },
+        {
+          "a": "odds_max_draw",
+          "b": "implied_prob_draw",
+          "corr": 0.9899683039502919
+        },
+        {
+          "a": "odds_mean_draw",
+          "b": "odds_max_draw",
+          "corr": 0.9899668148631392
+        },
+        {
+          "a": "mean_total_passes_home_stat",
+          "b": "mean_passes_accurate_home_stat",
+          "corr": 0.989741060612143
+        },
+        {
+          "a": "mean_total_passes_away_stat",
+          "b": "mean_passes_accurate_away_stat",
+          "corr": 0.9894757856661667
+        },
+        {
+          "a": "implied_prob_away",
+          "b": "prob_norm_home",
+          "corr": 0.9886181826328536
+        },
+        {
+          "a": "odds_mean_away",
+          "b": "prob_norm_home",
+          "corr": 0.9886178781134355
+        },
+        {
+          "a": "odds_max_draw",
+          "b": "prob_norm_draw",
+          "corr": 0.9885195032971553
+        }
+      ],
+      "odds_mean_slugs": [
+        "away",
+        "draw",
+        "home"
+      ],
+      "missing_columns_n": 54
+    },
+    "dc_dopo_filtro_quote": {
+      "n_rows": 4508,
+      "n_columns": 97,
+      "period": {
+        "min": "2023-08-19 16:30:00+00:00",
+        "max": "2026-09-14 19:45:00+00:00"
+      },
+      "y_counts": {
+        "0": 1386,
+        "1": 3122
+      },
+      "n_missing_cells": 5130,
+      "missing_columns": {},
+      "top_corr_vs_y": [
+        {
+          "column": "prob_norm_1x",
+          "spearman": 0.3761733553639595
+        },
+        {
+          "column": "odds_min_1x",
+          "spearman": -0.37545170536363004
+        },
+        {
+          "column": "odds_mean_1x",
+          "spearman": -0.3747486740229212
+        },
+        {
+          "column": "implied_prob_1x",
+          "spearman": 0.37474830631856304
+        },
+        {
+          "column": "implied_prob_x2",
+          "spearman": -0.37346693597932207
+        },
+        {
+          "column": "odds_mean_x2",
+          "spearman": 0.373466008149232
+        },
+        {
+          "column": "odds_max_x2",
+          "spearman": 0.3732263709526765
+        },
+        {
+          "column": "prob_norm_x2",
+          "spearman": -0.3724992034196466
+        },
+        {
+          "column": "odds_max_1x",
+          "spearman": -0.3721920246157077
+        },
+        {
+          "column": "odds_min_x2",
+          "spearman": 0.371035421294032
+        },
+        {
+          "column": "odds_std_x2",
+          "spearman": 0.2955106441831238
+        },
+        {
+          "column": "odds_std_1x",
+          "spearman": -0.2744448938908967
+        },
+        {
+          "column": "mean_ball_possession_diff_stat",
+          "spearman": 0.26874799836425073
+        },
+        {
+          "column": "mean_passes_accurate_diff_stat",
+          "spearman": 0.2656576372203179
+        },
+        {
+          "column": "mean_total_passes_diff_stat",
+          "spearman": 0.2606907530514127
+        },
+        {
+          "column": "mean_shots_insidebox_diff_stat",
+          "spearman": 0.26009332104440713
+        },
+        {
+          "column": "mean_expected_goals_diff_stat",
+          "spearman": 0.2536044797451571
+        },
+        {
+          "column": "mean_shots_on_goal_diff_stat",
+          "spearman": 0.24611389722459556
+        },
+        {
+          "column": "mean_total_shots_diff_stat",
+          "spearman": 0.24437382505633995
+        },
+        {
+          "column": "mean_passes_diff_stat",
+          "spearman": 0.22110418653274808
+        }
+      ],
+      "redundant_pairs_over_0_95": [
+        {
+          "a": "odds_min",
+          "b": "odds_slot_1",
+          "corr": 1.0
+        },
+        {
+          "a": "odds_mean_12",
+          "b": "implied_prob_12",
+          "corr": 1.0
+        },
+        {
+          "a": "odds_mean_1x",
+          "b": "implied_prob_1x",
+          "corr": 0.9999999954481843
+        },
+        {
+          "a": "odds_mean_x2",
+          "b": "implied_prob_x2",
+          "corr": 0.9999999884731045
+        },
+        {
+          "a": "odds_count_12",
+          "b": "odds_count_x2",
+          "corr": 0.999915699409978
+        },
+        {
+          "a": "implied_prob_x2",
+          "b": "prob_norm_x2",
+          "corr": 0.999080217470817
+        },
+        {
+          "a": "odds_mean_x2",
+          "b": "prob_norm_x2",
+          "corr": 0.9990800219826814
+        },
+        {
+          "a": "implied_prob_1x",
+          "b": "prob_norm_1x",
+          "corr": 0.9987228414404602
+        },
+        {
+          "a": "odds_mean_1x",
+          "b": "prob_norm_1x",
+          "corr": 0.9987228244506499
+        },
+        {
+          "a": "odds_count_1x",
+          "b": "odds_count_12",
+          "corr": 0.9981405568641499
+        },
+        {
+          "a": "odds_mean_x2",
+          "b": "odds_max_x2",
+          "corr": 0.9980770866828393
+        },
+        {
+          "a": "odds_max_x2",
+          "b": "implied_prob_x2",
+          "corr": 0.9980770690747937
+        },
+        {
+          "a": "odds_count_1x",
+          "b": "odds_count_x2",
+          "corr": 0.9980577302527798
+        },
+        {
+          "a": "odds_mean_1x",
+          "b": "odds_max_1x",
+          "corr": 0.9977789413116654
+        },
+        {
+          "a": "odds_max_1x",
+          "b": "implied_prob_1x",
+          "corr": 0.9977788736406268
+        },
+        {
+          "a": "odds_count",
+          "b": "odds_count_1x",
+          "corr": 0.9976519319735156
+        },
+        {
+          "a": "odds_count",
+          "b": "odds_count_x2",
+          "corr": 0.9976385919308558
+        },
+        {
+          "a": "odds_count",
+          "b": "odds_count_12",
+          "corr": 0.9975981006259352
+        },
+        {
+          "a": "odds_max_x2",
+          "b": "prob_norm_x2",
+          "corr": 0.9974777952560427
+        },
+        {
+          "a": "odds_max_1x",
+          "b": "prob_norm_1x",
+          "corr": 0.996999906246646
+        },
+        {
+          "a": "odds_mean_x2",
+          "b": "odds_min_x2",
+          "corr": 0.9957895576604181
+        },
+        {
+          "a": "odds_min_x2",
+          "b": "implied_prob_x2",
+          "corr": 0.9957893316365768
+        },
+        {
+          "a": "mean_total_passes_diff_stat",
+          "b": "mean_passes_accurate_diff_stat",
+          "corr": 0.995121313405912
+        },
+        {
+          "a": "mean_total_passes_home_stat",
+          "b": "mean_passes_accurate_home_stat",
+          "corr": 0.9946477556141817
+        },
+        {
+          "a": "mean_total_passes_away_stat",
+          "b": "mean_passes_accurate_away_stat",
+          "corr": 0.9945654649024609
+        },
+        {
+          "a": "odds_min_x2",
+          "b": "prob_norm_x2",
+          "corr": 0.9943680815580179
+        },
+        {
+          "a": "odds_min_1x",
+          "b": "implied_prob_1x",
+          "corr": 0.993118087561803
+        },
+        {
+          "a": "odds_mean_1x",
+          "b": "odds_min_1x",
+          "corr": 0.9931179616646602
+        },
+        {
+          "a": "prob_norm_1x",
+          "b": "prob_norm_x2",
+          "corr": 0.9916702927154692
+        },
+        {
+          "a": "odds_min_1x",
+          "b": "prob_norm_1x",
+          "corr": 0.991585940177787
+        },
+        {
+          "a": "odds_std",
+          "b": "odds_max",
+          "corr": 0.9907097035528586
+        },
+        {
+          "a": "odds_min_x2",
+          "b": "odds_max_x2",
+          "corr": 0.9901344704973576
+        },
+        {
+          "a": "implied_prob_x2",
+          "b": "prob_norm_1x",
+          "corr": 0.989957128662221
+        },
+        {
+          "a": "odds_mean_x2",
+          "b": "prob_norm_1x",
+          "corr": 0.9899567565772062
+        },
+        {
+          "a": "odds_mean_1x",
+          "b": "prob_norm_x2",
+          "corr": 0.9899487953667384
+        },
+        {
+          "a": "implied_prob_1x",
+          "b": "prob_norm_x2",
+          "corr": 0.9899487350340129
+        },
+        {
+          "a": "odds_slot_9",
+          "b": "odds_slot_10",
+          "corr": 0.9884056998863257
+        },
+        {
+          "a": "odds_max_x2",
+          "b": "prob_norm_1x",
+          "corr": 0.9879414374060406
+        },
+        {
+          "a": "odds_min_1x",
+          "b": "prob_norm_x2",
+          "corr": 0.9870407620455806
+        },
+        {
+          "a": "odds_mean_1x",
+          "b": "implied_prob_x2",
+          "corr": 0.9865716419529911
+        }
+      ],
+      "odds_mean_slugs": [
+        "12",
+        "1x",
+        "x2"
+      ],
+      "missing_columns_n": 54
+    }
+  },
+  "h2h": {
+    "champion": "voting",
+    "candidates": {
+      "logistic": {
+        "selection_score": 0.7209797673455458,
+        "best_cv_f1": 0.6691362769348294,
+        "auc": 0.7309492934919938,
+        "brier": 0.20930518471188783,
+        "ece": 0.05329405578234772,
+        "log_loss": 0.6076322206276028,
+        "best_params": {
+          "selector__k": 30,
+          "model__solver": "liblinear",
+          "model__C": 1.0
+        }
+      },
+      "random_forest": {
+        "selection_score": 0.7200799826161888,
+        "best_cv_f1": 0.6686340141900489,
+        "auc": 0.7271898151687146,
+        "brier": 0.21085685439594193,
+        "ece": 0.05498759169934799,
+        "log_loss": 0.6091931128183874,
+        "best_params": {
+          "selector__k": 20,
+          "model__min_samples_split": 2,
+          "model__min_samples_leaf": 1,
+          "model__max_depth": 8
+        }
+      },
+      "random_forest_smote": {
+        "selection_score": 0.7204071455650801,
+        "best_cv_f1": 0.6678105485752258,
+        "auc": 0.726848943237292,
+        "brier": 0.21082388833447907,
+        "ece": 0.051161130236281646,
+        "log_loss": 0.6090786668026147,
+        "best_params": {
+          "selector__k": 30,
+          "model__min_samples_split": 10,
+          "model__min_samples_leaf": 1,
+          "model__max_depth": 8
+        }
+      },
+      "voting": {
+        "selection_score": 0.7219693075429745,
+        "best_cv_f1": 0.6712727060711945,
+        "auc": 0.7304201025920334,
+        "brier": 0.20949827810369917,
+        "ece": 0.0526933785387165,
+        "log_loss": 0.6060352073758216,
+        "best_params": {
+          "base_models": [
+            "logistic",
+            "random_forest_smote"
+          ]
+        }
+      },
+      "stacking": {
+        "selection_score": 0.7135587540120449,
+        "best_cv_f1": 0.6622617787980308,
+        "auc": 0.7278414333050921,
+        "brier": 0.21342321430681643,
+        "ece": 0.07627965507922989,
+        "log_loss": 0.6148722746646662,
+        "best_params": {
+          "base_models": [
+            "logistic",
+            "random_forest_smote"
+          ],
+          "passthrough": true
+        }
+      }
+    },
+    "selected_features": [
+      "prob_norm_home",
+      "prob_norm_draw",
+      "prob_norm_away",
+      "odds_mean_home",
+      "odds_mean_draw",
+      "odds_mean_away",
+      "odds_count_home",
+      "odds_std_home",
+      "overround",
+      "mean_goals_prevented_home_stat",
+      "mean_goals_prevented_away_stat",
+      "mean_goals_prevented_diff_stat",
+      "mean_passes_home_stat",
+      "mean_passes_away_stat",
+      "mean_passes_diff_stat",
+      "mean_yellow_cards_home_stat",
+      "mean_yellow_cards_away_stat",
+      "mean_yellow_cards_diff_stat",
+      "mean_goalkeeper_saves_home_stat",
+      "mean_goalkeeper_saves_away_stat",
+      "mean_goalkeeper_saves_diff_stat",
+      "mean_offsides_home_stat",
+      "mean_offsides_away_stat",
+      "mean_offsides_diff_stat",
+      "mean_shots_on_goal_home_stat",
+      "mean_shots_on_goal_away_stat",
+      "mean_shots_on_goal_diff_stat",
+      "mean_expected_goals_home_stat",
+      "mean_expected_goals_away_stat",
+      "mean_expected_goals_diff_stat",
+      "mean_corner_kicks_home_stat",
+      "mean_corner_kicks_away_stat",
+      "mean_corner_kicks_diff_stat",
+      "mean_blocked_shots_home_stat",
+      "mean_blocked_shots_away_stat",
+      "mean_blocked_shots_diff_stat",
+      "mean_total_passes_home_stat",
+      "mean_total_passes_away_stat",
+      "mean_ball_possession_home_stat",
+      "mean_ball_possession_away_stat",
+      "mean_ball_possession_diff_stat",
+      "mean_shots_off_goal_home_stat",
+      "mean_shots_off_goal_away_stat",
+      "mean_shots_off_goal_diff_stat",
+      "mean_red_cards_home_stat",
+      "mean_red_cards_away_stat",
+      "mean_red_cards_diff_stat",
+      "mean_shots_outsidebox_home_stat",
+      "mean_shots_outsidebox_away_stat",
+      "mean_shots_outsidebox_diff_stat",
+      "mean_passes_accurate_diff_stat",
+      "mean_shots_insidebox_home_stat",
+      "mean_shots_insidebox_away_stat",
+      "mean_shots_insidebox_diff_stat",
+      "mean_fouls_home_stat",
+      "mean_fouls_away_stat",
+      "mean_fouls_diff_stat",
+      "mean_total_shots_home_stat",
+      "mean_total_shots_away_stat",
+      "mean_total_shots_diff_stat"
+    ],
+    "details_summary": {
+      "cv_folds": 5,
+      "search_strategy": "random",
+      "random_search_iter": 12,
+      "champion_selection_score": 0.7219693075429745,
+      "calibration": {
+        "enabled": true,
+        "method": "isotonic",
+        "pre_metrics": {
+          "log_loss": 0.6060352073758216,
+          "brier": 0.20949827810369917,
+          "ece": 0.05269337853871648,
+          "sample_size": 7830,
+          "auc": 0.7304201025920334
+        },
+        "post_metrics": {
+          "log_loss": 0.6000841504991102,
+          "brier": 0.20692265381542357,
+          "ece": 0.01056886763520306,
+          "sample_size": 7830,
+          "auc": 0.7298442964435187
+        },
+        "sample_size": 15665,
+        "calibrator_path": null,
+        "positives": 6737,
+        "negatives": 8928
+      }
+    },
+    "oof_metrics": {
+      "n": 7830,
+      "accuracy": 0.6729246487867178,
+      "majority_baseline_accuracy": 0.5647509578544061,
+      "accuracy_minus_majority_pp": 10.817369093231166,
+      "majority_class": 0,
+      "class_counts": {
+        "0": 4422,
+        "1": 3408
+      },
+      "positive_rate": 0.43524904214559385,
+      "pred_positive_rate": 0.35031928480204344,
+      "macro_f1": 0.6571605686380608,
+      "weighted_f1": 0.6666809839273629,
+      "minority_class": 1,
+      "minority_recall": 0.5267018779342723,
+      "auc": 0.7298442964435187,
+      "brier": 0.20692265381542357,
+      "ece": 0.010568867635203181,
+      "log_loss": 0.6000841504991102,
+      "selection_score": 0.7278586225982204,
+      "confusion_matrix": {
+        "tn": 3474,
+        "fp": 948,
+        "fn": 1613,
+        "tp": 1795,
+        "labels": "[true 0/1] x [pred 0/1]"
+      },
+      "classification_report": {
+        "0": {
+          "precision": 0.6829172400235896,
+          "recall": 0.7856173677069199,
+          "f1-score": 0.7306762014933221,
+          "support": 4422.0
+        },
+        "1": {
+          "precision": 0.6543930003645644,
+          "recall": 0.5267018779342723,
+          "f1-score": 0.5836449357827995,
+          "support": 3408.0
+        },
+        "accuracy": 0.6729246487867178,
+        "macro avg": {
+          "precision": 0.6686551201940769,
+          "recall": 0.6561596228205961,
+          "f1-score": 0.6571605686380608,
+          "support": 7830.0
+        },
+        "weighted avg": {
+          "precision": 0.6705020920340675,
+          "recall": 0.6729246487867178,
+          "f1-score": 0.6666809839273629,
+          "support": 7830.0
+        }
+      },
+      "degenerate": false,
+      "bookmaker_implied_baseline": {
+        "accuracy": 0.6734355044699872,
+        "macro_f1": 0.6571803559389147,
+        "auc": 0.7337445163215081,
+        "brier": 0.2059561680430667,
+        "ece": 0.024643079254869905,
+        "log_loss": 0.5978690308755947,
+        "confusion_matrix": {
+          "tn": 3489,
+          "fp": 933,
+          "fn": 1624,
+          "tp": 1784
+        },
+        "classification_report": {
+          "0": {
+            "precision": 0.6823782515157442,
+            "recall": 0.7890094979647219,
+            "f1-score": 0.7318300996329313,
+            "support": 4422.0
+          },
+          "1": {
+            "precision": 0.6566065513433934,
+            "recall": 0.5234741784037559,
+            "f1-score": 0.582530612244898,
+            "support": 3408.0
+          },
+          "accuracy": 0.6734355044699872,
+          "macro avg": {
+            "precision": 0.6694924014295688,
+            "recall": 0.6562418381842389,
+            "f1-score": 0.6571803559389147,
+            "support": 7830.0
+          },
+          "weighted avg": {
+            "precision": 0.6711611437012651,
+            "recall": 0.6734355044699872,
+            "f1-score": 0.6668476407544616,
+            "support": 7830.0
+          }
+        },
+        "pred_positive_rate": 0.3469987228607918
+      },
+      "n_rows": 15665,
+      "n_features": 60
+    },
+    "elapsed_seconds": 445.42
+  },
+  "dc": {
+    "champion": "random_forest",
+    "candidates": {
+      "logistic": {
+        "selection_score": 0.7180659148131963,
+        "best_cv_f1": 0.6999033882323321,
+        "auc": 0.7390939806244345,
+        "brier": 0.206312809974587,
+        "ece": 0.15424060159487837,
+        "log_loss": 0.6000212014710328,
+        "best_params": {
+          "selector__k": 10,
+          "model__solver": "liblinear",
+          "model__C": 0.1
+        }
+      },
+      "random_forest": {
+        "selection_score": 0.7228222607890801,
+        "best_cv_f1": 0.703824512930122,
+        "auc": 0.7266381281539716,
+        "brier": 0.2050394634426096,
+        "ece": 0.13499335943334184,
+        "log_loss": 0.5978004272368158,
+        "best_params": {
+          "selector__k": 10,
+          "model__min_samples_split": 10,
+          "model__min_samples_leaf": 4,
+          "model__max_depth": 8
+        }
+      },
+      "random_forest_smote": {
+        "selection_score": 0.7162143681749025,
+        "best_cv_f1": 0.6923908363496165,
+        "auc": 0.7198650738966692,
+        "brier": 0.20975538969465693,
+        "ece": 0.13846659818692625,
+        "log_loss": 0.6077474131696681,
+        "best_params": {
+          "selector__k": 10,
+          "model__min_samples_split": 2,
+          "model__min_samples_leaf": 1,
+          "model__max_depth": 8
+        }
+      },
+      "voting": {
+        "selection_score": 0.7227171632723591,
+        "best_cv_f1": 0.7066894857201722,
+        "auc": 0.7349838444715625,
+        "brier": 0.2045315600143534,
+        "ece": 0.1446169805141101,
+        "log_loss": 0.5958950470581581,
+        "best_params": {
+          "base_models": [
+            "random_forest",
+            "logistic"
+          ]
+        }
+      },
+      "stacking": {
+        "selection_score": 0.7092713877313785,
+        "best_cv_f1": 0.6852704869427403,
+        "auc": 0.7319602748330718,
+        "brier": 0.2114552916887628,
+        "ece": 0.16132923516121536,
+        "log_loss": 0.6135687104981736,
+        "best_params": {
+          "base_models": [
+            "random_forest",
+            "logistic"
+          ],
+          "passthrough": true
+        }
+      }
+    },
+    "selected_features": [
+      "implied_prob_1x",
+      "implied_prob_x2",
+      "odds_mean_1x",
+      "odds_mean_x2",
+      "mean_shots_on_goal_diff_stat",
+      "mean_expected_goals_diff_stat",
+      "mean_ball_possession_diff_stat",
+      "mean_passes_accurate_diff_stat",
+      "mean_shots_insidebox_diff_stat",
+      "mean_total_shots_diff_stat"
+    ],
+    "details_summary": {
+      "cv_folds": 5,
+      "search_strategy": "random",
+      "random_search_iter": 12,
+      "champion_selection_score": 0.7228222607890801,
+      "calibration": {
+        "enabled": true,
+        "method": "isotonic",
+        "pre_metrics": {
+          "log_loss": 0.5978004272368158,
+          "brier": 0.2050394634426096,
+          "ece": 0.1349933594333419,
+          "sample_size": 2250,
+          "auc": 0.7266381281539716
+        },
+        "post_metrics": {
+          "log_loss": 0.5489435843023713,
+          "brier": 0.18494437111512563,
+          "ece": 0.02287765404161211,
+          "sample_size": 2250,
+          "auc": 0.7295837564762777
+        },
+        "sample_size": 4508,
+        "calibrator_path": null,
+        "positives": 3122,
+        "negatives": 1386
+      }
+    },
+    "oof_metrics": {
+      "n": 2250,
+      "accuracy": 0.7155555555555555,
+      "majority_baseline_accuracy": 0.6893333333333334,
+      "accuracy_minus_majority_pp": 2.6222222222222147,
+      "majority_class": 1,
+      "class_counts": {
+        "0": 699,
+        "1": 1551
+      },
+      "positive_rate": 0.6893333333333334,
+      "pred_positive_rate": 0.8617777777777778,
+      "macro_f1": 0.5914777724190757,
+      "weighted_f1": 0.6767312169612377,
+      "minority_class": 0,
+      "minority_recall": 0.2646638054363376,
+      "auc": 0.7295837564762777,
+      "brier": 0.1849443711151256,
+      "ece": 0.02287765404161213,
+      "log_loss": 0.5489435843023713,
+      "selection_score": 0.7401157952239578,
+      "confusion_matrix": {
+        "tn": 185,
+        "fp": 514,
+        "fn": 126,
+        "tp": 1425,
+        "labels": "[true 0/1] x [pred 0/1]"
+      },
+      "classification_report": {
+        "0": {
+          "precision": 0.594855305466238,
+          "recall": 0.2646638054363376,
+          "f1-score": 0.36633663366336633,
+          "support": 699.0
+        },
+        "1": {
+          "precision": 0.7349149045899949,
+          "recall": 0.9187620889748549,
+          "f1-score": 0.8166189111747851,
+          "support": 1551.0
+        },
+        "accuracy": 0.7155555555555555,
+        "macro avg": {
+          "precision": 0.6648851050281164,
+          "recall": 0.5917129472055962,
+          "f1-score": 0.5914777724190757,
+          "support": 2250.0
+        },
+        "weighted avg": {
+          "precision": 0.6914030557955477,
+          "recall": 0.7155555555555555,
+          "f1-score": 0.6767312169612377,
+          "support": 2250.0
+        }
+      },
+      "degenerate": false,
+      "bookmaker_implied_baseline": {
+        "accuracy": 0.7235555555555555,
+        "macro_f1": 0.590666913134225,
+        "auc": 0.7375070216363249,
+        "brier": 0.18316368794872687,
+        "ece": 0.03540861846735668,
+        "log_loss": 0.5439388947086229,
+        "confusion_matrix": {
+          "tn": 173,
+          "fp": 526,
+          "fn": 96,
+          "tp": 1455
+        },
+        "classification_report": {
+          "0": {
+            "precision": 0.6431226765799256,
+            "recall": 0.2474964234620887,
+            "f1-score": 0.3574380165289256,
+            "support": 699.0
+          },
+          "1": {
+            "precision": 0.7344775365976779,
+            "recall": 0.9381044487427466,
+            "f1-score": 0.8238958097395244,
+            "support": 1551.0
+          },
+          "accuracy": 0.7235555555555555,
+          "macro avg": {
+            "precision": 0.6888001065888018,
+            "recall": 0.5928004361024176,
+            "f1-score": 0.590666913134225,
+            "support": 2250.0
+          },
+          "weighted avg": {
+            "precision": 0.7060966267521629,
+            "recall": 0.7235555555555555,
+            "f1-score": 0.6789829219820983,
+            "support": 2250.0
+          }
+        },
+        "pred_positive_rate": 0.8804444444444445
+      },
+      "n_rows": 4508,
+      "n_features": 60
+    },
+    "elapsed_seconds": 136.53
+  },
+  "coherence_home_implies_1x": {
+    "status": "ok",
+    "n": 1694,
+    "violations_home_but_not_1x": 0,
+    "dc_unconstrained": {
+      "n": 1694,
+      "accuracy": 0.7207792207792207,
+      "majority_baseline_accuracy": 0.6912632821723731,
+      "accuracy_minus_majority_pp": 2.9515938606847647,
+      "majority_class": 1,
+      "class_counts": {
+        "0": 523,
+        "1": 1171
+      },
+      "positive_rate": 0.6912632821723731,
+      "pred_positive_rate": 0.8547815820543093,
+      "macro_f1": 0.6021560954731628,
+      "weighted_f1": 0.685256403795677,
+      "minority_class": 0,
+      "minority_recall": 0.2829827915869981,
+      "auc": 0.7313297944428206,
+      "brier": 0.18373279689773692,
+      "ece": 0.018922476381866924,
+      "log_loss": 0.546040442061711,
+      "selection_score": 0.7442988935817094,
+      "confusion_matrix": {
+        "tn": 148,
+        "fp": 375,
+        "fn": 98,
+        "tp": 1073,
+        "labels": "[true 0/1] x [pred 0/1]"
+      },
+      "classification_report": {
+        "0": {
+          "precision": 0.6016260162601627,
+          "recall": 0.2829827915869981,
+          "f1-score": 0.38491547464239273,
+          "support": 523.0
+        },
+        "1": {
+          "precision": 0.7410220994475138,
+          "recall": 0.9163108454312553,
+          "f1-score": 0.8193967163039328,
+          "support": 1171.0
+        },
+        "accuracy": 0.7207792207792207,
+        "macro avg": {
+          "precision": 0.6713240578538382,
+          "recall": 0.5996468185091267,
+          "f1-score": 0.6021560954731628,
+          "support": 1694.0
+        },
+        "weighted avg": {
+          "precision": 0.6979854102462242,
+          "recall": 0.7207792207792207,
+          "f1-score": 0.685256403795677,
+          "support": 1694.0
+        }
+      },
+      "degenerate": false,
+      "bookmaker_implied_baseline": null
+    },
+    "dc_label_forced_home_implies_1x": {
+      "accuracy": 0.7207792207792207,
+      "majority_baseline_accuracy": 0.6912632821723731,
+      "accuracy_minus_majority_pp": 2.9515938606847647,
+      "macro_f1": 0.6021560954731628,
+      "confusion_matrix": {
+        "tn": 148,
+        "fp": 375,
+        "fn": 98,
+        "tp": 1073
+      },
+      "classification_report": {
+        "0": {
+          "precision": 0.6016260162601627,
+          "recall": 0.2829827915869981,
+          "f1-score": 0.38491547464239273,
+          "support": 523.0
+        },
+        "1": {
+          "precision": 0.7410220994475138,
+          "recall": 0.9163108454312553,
+          "f1-score": 0.8193967163039328,
+          "support": 1171.0
+        },
+        "accuracy": 0.7207792207792207,
+        "macro avg": {
+          "precision": 0.6713240578538382,
+          "recall": 0.5996468185091267,
+          "f1-score": 0.6021560954731628,
+          "support": 1694.0
+        },
+        "weighted avg": {
+          "precision": 0.6979854102462242,
+          "recall": 0.7207792207792207,
+          "f1-score": 0.685256403795677,
+          "support": 1694.0
+        }
+      }
+    },
+    "dc_prob_floor_p1x_ge_phome": {
+      "n": 1694,
+      "accuracy": 0.7207792207792207,
+      "majority_baseline_accuracy": 0.6912632821723731,
+      "accuracy_minus_majority_pp": 2.9515938606847647,
+      "majority_class": 1,
+      "class_counts": {
+        "0": 523,
+        "1": 1171
+      },
+      "positive_rate": 0.6912632821723731,
+      "pred_positive_rate": 0.8547815820543093,
+      "macro_f1": 0.6021560954731628,
+      "weighted_f1": 0.685256403795677,
+      "minority_class": 0,
+      "minority_recall": 0.2829827915869981,
+      "auc": 0.7313649003237905,
+      "brier": 0.18368982680858337,
+      "ece": 0.01892162880871887,
+      "log_loss": 0.5457495604424657,
+      "selection_score": 0.7443441302607556,
+      "confusion_matrix": {
+        "tn": 148,
+        "fp": 375,
+        "fn": 98,
+        "tp": 1073,
+        "labels": "[true 0/1] x [pred 0/1]"
+      },
+      "classification_report": {
+        "0": {
+          "precision": 0.6016260162601627,
+          "recall": 0.2829827915869981,
+          "f1-score": 0.38491547464239273,
+          "support": 523.0
+        },
+        "1": {
+          "precision": 0.7410220994475138,
+          "recall": 0.9163108454312553,
+          "f1-score": 0.8193967163039328,
+          "support": 1171.0
+        },
+        "accuracy": 0.7207792207792207,
+        "macro avg": {
+          "precision": 0.6713240578538382,
+          "recall": 0.5996468185091267,
+          "f1-score": 0.6021560954731628,
+          "support": 1694.0
+        },
+        "weighted avg": {
+          "precision": 0.6979854102462242,
+          "recall": 0.7207792207792207,
+          "f1-score": 0.685256403795677,
+          "support": 1694.0
+        }
+      },
+      "degenerate": false,
+      "bookmaker_implied_baseline": null
+    }
+  },
+  "confronto_prod_vs_nuovo": {
+    "h2h": {
+      "prod": {
+        "source": "champion servito, 400 righe, voting, 69 feat odds_slot+mean_stats",
+        "n_train": 400,
+        "n_eval": 15665,
+        "accuracy": 0.6099,
+        "majority_baseline_accuracy": 0.5699,
+        "accuracy_minus_majority_pp": 4.0,
+        "auc": 0.6495,
+        "brier": 0.2167,
+        "ece": 0.111,
+        "macro_f1": 0.477,
+        "minority_recall": 0.123,
+        "pred_positive_rate": 0.07,
+        "note": "predice non-casa nel 93%; recall classe 1 = 0.123"
+      },
+      "new_full_pipeline": {
+        "accuracy": 0.6729246487867178,
+        "majority_baseline_accuracy": 0.5647509578544061,
+        "accuracy_minus_majority_pp": 10.817369093231166,
+        "auc": 0.7298442964435187,
+        "brier": 0.20692265381542357,
+        "ece": 0.010568867635203181,
+        "macro_f1": 0.6571605686380608,
+        "minority_recall": 0.5267018779342723,
+        "pred_positive_rate": 0.35031928480204344,
+        "n": 7830,
+        "n_rows": 15665,
+        "n_features": 60
+      },
+      "delta_new_minus_prod": {
+        "accuracy": 0.06302464878671776,
+        "majority_baseline_accuracy": -0.005149042145593863,
+        "accuracy_minus_majority_pp": 6.817369093231166,
+        "auc": 0.0803442964435187,
+        "brier": -0.00977734618457643,
+        "ece": -0.10043113236479682,
+        "macro_f1": 0.18016056863806085,
+        "minority_recall": 0.40370187793427226,
+        "pred_positive_rate": 0.28031928480204343
+      }
+    },
+    "dc": {
+      "prod": {
+        "source": "champion servito, 400 righe, voting, 69 feat identiche a h2h",
+        "n_train": 400,
+        "n_eval": 8873,
+        "accuracy": 0.7074,
+        "majority_baseline_accuracy": 0.6951,
+        "accuracy_minus_majority_pp": 1.2,
+        "auc": 0.5771,
+        "brier": 0.2417,
+        "ece": 0.166,
+        "macro_f1": 0.47,
+        "minority_recall": 0.063,
+        "pred_positive_rate": 0.97,
+        "note": "predice 1X nel 97%; recall classe 0 = 0.063"
+      },
+      "new_full_pipeline": {
+        "accuracy": 0.7155555555555555,
+        "majority_baseline_accuracy": 0.6893333333333334,
+        "accuracy_minus_majority_pp": 2.6222222222222147,
+        "auc": 0.7295837564762777,
+        "brier": 0.1849443711151256,
+        "ece": 0.02287765404161213,
+        "macro_f1": 0.5914777724190757,
+        "minority_recall": 0.2646638054363376,
+        "pred_positive_rate": 0.8617777777777778,
+        "n": 2250,
+        "n_rows": 4508,
+        "n_features": 60
+      },
+      "delta_new_minus_prod": {
+        "accuracy": 0.008155555555555472,
+        "majority_baseline_accuracy": -0.005766666666666698,
+        "accuracy_minus_majority_pp": 1.4222222222222147,
+        "auc": 0.15248375647627777,
+        "brier": -0.0567556288848744,
+        "ece": -0.14312234595838788,
+        "macro_f1": 0.12147777241907576,
+        "minority_recall": 0.2016638054363376,
+        "pred_positive_rate": -0.10822222222222222
+      }
+    }
+  }
+}
