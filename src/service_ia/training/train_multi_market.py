@@ -30,6 +30,7 @@ from src.ml.calibration.calibration_service import CalibrationService
 from src.ml.validation.temporal_split import expanding_window_splits
 from src.service_ia.pre_processing.feature_selection import FeatureSelectionService
 from src.service_ia.training.market_service.filter_market_service import FilterMarketService
+from src.service_ia.training.model_paths import destination_subdir
 from src.service_ia.training.utility_training.save_load import SaveLoad
 
 logging.basicConfig(level=logging.INFO)
@@ -622,15 +623,20 @@ def train_market(
 
     if save_model:
         champion_prob_metrics = champion_payload.get("probability_metrics") or {}
+        sotto = destination_subdir(market)
+        relativo_modello = os.path.join(sotto, f"{market}_champion") if sotto else f"{market}_champion"
+        relativo_calibratore = (
+            os.path.join(sotto, f"{market}_champion_calibrator") if sotto else f"{market}_champion_calibrator"
+        )
         if calibration_payload.get("enabled"):
-            calibrator_path = os.path.abspath(os.path.join("best_models", f"{market}_champion_calibrator.pkl"))
+            calibrator_path = os.path.abspath(os.path.join("best_models", f"{relativo_calibratore}.pkl"))
             os.makedirs(os.path.dirname(calibrator_path), exist_ok=True)
             joblib.dump(champion_estimator, calibrator_path)
             calibration_payload["calibrator_path"] = calibrator_path
 
         saver = SaveLoad(
             save_pkl=True,
-            filename=f"{market}_champion",
+            filename=relativo_modello,
             market_name=market,
             feature_names=feature_names,
             metrics={
