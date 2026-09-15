@@ -1,0 +1,2499 @@
+{
+  "market": "under_over_2_5",
+  "rows": 14816,
+  "feature_columns": [
+    "prob_norm_over_2_5",
+    "odds_mean_over_2_5",
+    "odds_mean_under_2_5",
+    "odds_count",
+    "odds_std_over_2_5",
+    "overround",
+    "mean_shots_on_goal_home_stat",
+    "mean_shots_on_goal_away_stat",
+    "mean_shots_on_goal_diff_stat",
+    "mean_total_shots_home_stat",
+    "mean_total_shots_away_stat",
+    "mean_total_shots_diff_stat",
+    "mean_shots_insidebox_home_stat",
+    "mean_shots_insidebox_away_stat",
+    "mean_shots_insidebox_diff_stat",
+    "mean_shots_off_goal_home_stat",
+    "mean_shots_off_goal_away_stat",
+    "mean_shots_off_goal_diff_stat",
+    "mean_shots_outsidebox_home_stat",
+    "mean_shots_outsidebox_away_stat",
+    "mean_shots_outsidebox_diff_stat",
+    "mean_blocked_shots_home_stat",
+    "mean_blocked_shots_away_stat",
+    "mean_blocked_shots_diff_stat",
+    "mean_yellow_cards_home_stat",
+    "mean_yellow_cards_away_stat",
+    "mean_yellow_cards_diff_stat",
+    "mean_red_cards_home_stat",
+    "mean_red_cards_away_stat",
+    "mean_red_cards_diff_stat",
+    "mean_fouls_home_stat",
+    "mean_fouls_away_stat",
+    "mean_fouls_diff_stat"
+  ],
+  "status": "trained",
+  "champion": "voting",
+  "selected_features": [
+    "prob_norm_over_2_5",
+    "odds_mean_over_2_5",
+    "odds_mean_under_2_5",
+    "odds_count",
+    "odds_std_over_2_5",
+    "overround",
+    "mean_shots_on_goal_home_stat",
+    "mean_shots_on_goal_away_stat",
+    "mean_shots_on_goal_diff_stat",
+    "mean_total_shots_home_stat",
+    "mean_total_shots_away_stat",
+    "mean_total_shots_diff_stat",
+    "mean_shots_insidebox_home_stat",
+    "mean_shots_insidebox_away_stat",
+    "mean_shots_insidebox_diff_stat",
+    "mean_shots_off_goal_home_stat",
+    "mean_shots_off_goal_away_stat",
+    "mean_shots_off_goal_diff_stat",
+    "mean_shots_outsidebox_home_stat",
+    "mean_shots_outsidebox_away_stat",
+    "mean_shots_outsidebox_diff_stat",
+    "mean_blocked_shots_home_stat",
+    "mean_blocked_shots_away_stat",
+    "mean_blocked_shots_diff_stat",
+    "mean_yellow_cards_home_stat",
+    "mean_yellow_cards_away_stat",
+    "mean_yellow_cards_diff_stat",
+    "mean_red_cards_home_stat",
+    "mean_red_cards_away_stat",
+    "mean_red_cards_diff_stat",
+    "mean_fouls_home_stat",
+    "mean_fouls_away_stat",
+    "mean_fouls_diff_stat"
+  ],
+  "details": {
+    "cv_strategy": "expanding_window",
+    "cv_folds": 5,
+    "selection_method": "kbest",
+    "selection_in_pipeline": true,
+    "selection_metric": "composite_probability_score",
+    "champion_selection_score": 0.6802017352935958,
+    "input_features": 33,
+    "selected_features": 33,
+    "calibration": {
+      "enabled": true,
+      "method": "isotonic",
+      "pre_metrics": {
+        "log_loss": 0.6726508139971892,
+        "brier": 0.23995963646479215,
+        "ece": 0.023765169837332633,
+        "sample_size": 7405,
+        "auc": 0.6098381255569327,
+        "reliability": [
+          {
+            "bin": 0,
+            "lower": 0.0,
+            "upper": 0.1,
+            "count": 0,
+            "mean_probability": null,
+            "event_rate": null,
+            "abs_gap": null
+          },
+          {
+            "bin": 1,
+            "lower": 0.1,
+            "upper": 0.2,
+            "count": 0,
+            "mean_probability": null,
+            "event_rate": null,
+            "abs_gap": null
+          },
+          {
+            "bin": 2,
+            "lower": 0.2,
+            "upper": 0.30000000000000004,
+            "count": 52,
+            "mean_probability": 0.28442439256617125,
+            "event_rate": 0.3269230769230769,
+            "abs_gap": 0.04249868435690568
+          },
+          {
+            "bin": 3,
+            "lower": 0.30000000000000004,
+            "upper": 0.4,
+            "count": 1057,
+            "mean_probability": 0.3676025972896347,
+            "event_rate": 0.4181646168401135,
+            "abs_gap": 0.05056201955047884
+          },
+          {
+            "bin": 4,
+            "lower": 0.4,
+            "upper": 0.5,
+            "count": 2311,
+            "mean_probability": 0.4469734431069329,
+            "event_rate": 0.47165729121592387,
+            "abs_gap": 0.02468384810899099
+          },
+          {
+            "bin": 5,
+            "lower": 0.5,
+            "upper": 0.6000000000000001,
+            "count": 2434,
+            "mean_probability": 0.541178049243251,
+            "event_rate": 0.5493015612161052,
+            "abs_gap": 0.008123511972854214
+          },
+          {
+            "bin": 6,
+            "lower": 0.6000000000000001,
+            "upper": 0.7000000000000001,
+            "count": 1106,
+            "mean_probability": 0.6518739040727157,
+            "event_rate": 0.6817359855334539,
+            "abs_gap": 0.02986208146073821
+          },
+          {
+            "bin": 7,
+            "lower": 0.7000000000000001,
+            "upper": 0.8,
+            "count": 404,
+            "mean_probability": 0.7368910948816815,
+            "event_rate": 0.7153465346534653,
+            "abs_gap": 0.02154456022821616
+          },
+          {
+            "bin": 8,
+            "lower": 0.8,
+            "upper": 0.9,
+            "count": 41,
+            "mean_probability": 0.8238690449866287,
+            "event_rate": 0.7804878048780488,
+            "abs_gap": 0.04338124010857991
+          },
+          {
+            "bin": 9,
+            "lower": 0.9,
+            "upper": 1.0,
+            "count": 0,
+            "mean_probability": null,
+            "event_rate": null,
+            "abs_gap": null
+          }
+        ]
+      },
+      "post_metrics": {
+        "log_loss": 0.6730426774755913,
+        "brier": 0.24000707636378057,
+        "ece": 0.013466086893431659,
+        "sample_size": 7405,
+        "auc": 0.6094144242015869,
+        "reliability": [
+          {
+            "bin": 0,
+            "lower": 0.0,
+            "upper": 0.1,
+            "count": 1,
+            "mean_probability": 0.05555555555555555,
+            "event_rate": 0.0,
+            "abs_gap": 0.05555555555555555
+          },
+          {
+            "bin": 1,
+            "lower": 0.1,
+            "upper": 0.2,
+            "count": 7,
+            "mean_probability": 0.16700674168328145,
+            "event_rate": 0.7142857142857143,
+            "abs_gap": 0.5472789726024329
+          },
+          {
+            "bin": 2,
+            "lower": 0.2,
+            "upper": 0.30000000000000004,
+            "count": 28,
+            "mean_probability": 0.26655635313089227,
+            "event_rate": 0.35714285714285715,
+            "abs_gap": 0.09058650401196489
+          },
+          {
+            "bin": 3,
+            "lower": 0.30000000000000004,
+            "upper": 0.4,
+            "count": 660,
+            "mean_probability": 0.37613485631858073,
+            "event_rate": 0.42727272727272725,
+            "abs_gap": 0.051137870954146514
+          },
+          {
+            "bin": 4,
+            "lower": 0.4,
+            "upper": 0.5,
+            "count": 2367,
+            "mean_probability": 0.4433779594025062,
+            "event_rate": 0.4512040557667934,
+            "abs_gap": 0.007826096364287216
+          },
+          {
+            "bin": 5,
+            "lower": 0.5,
+            "upper": 0.6000000000000001,
+            "count": 2674,
+            "mean_probability": 0.5497960376268853,
+            "event_rate": 0.5448765893792071,
+            "abs_gap": 0.004919448247678204
+          },
+          {
+            "bin": 6,
+            "lower": 0.6000000000000001,
+            "upper": 0.7000000000000001,
+            "count": 1004,
+            "mean_probability": 0.6587636388589344,
+            "event_rate": 0.6593625498007968,
+            "abs_gap": 0.0005989109418623739
+          },
+          {
+            "bin": 7,
+            "lower": 0.7000000000000001,
+            "upper": 0.8,
+            "count": 525,
+            "mean_probability": 0.7396612759449294,
+            "event_rate": 0.7104761904761905,
+            "abs_gap": 0.02918508546873888
+          },
+          {
+            "bin": 8,
+            "lower": 0.8,
+            "upper": 0.9,
+            "count": 136,
+            "mean_probability": 0.8285533778388792,
+            "event_rate": 0.7426470588235294,
+            "abs_gap": 0.08590631901534973
+          },
+          {
+            "bin": 9,
+            "lower": 0.9,
+            "upper": 1.0,
+            "count": 3,
+            "mean_probability": 0.9144208037825058,
+            "event_rate": 1.0,
+            "abs_gap": 0.08557919621749421
+          }
+        ]
+      },
+      "sample_size": 14816,
+      "calibrator_path": "/home/user/ia_predict_soccer/best_models/under_over_2_5_champion_calibrator.pkl",
+      "positives": 7815,
+      "negatives": 7001
+    },
+    "models": {
+      "logistic": {
+        "best_cv_f1": 0.5767931597504982,
+        "selection_score": 0.6801463659531095,
+        "best_params": {
+          "model__C": 0.1,
+          "model__solver": "lbfgs",
+          "selector__k": 10
+        },
+        "probability_metrics": {
+          "log_loss": 0.672328734898352,
+          "brier": 0.2398518615115261,
+          "ece": 0.022653485380177536,
+          "sample_size": 7405,
+          "auc": 0.6105046854919085,
+          "reliability": [
+            {
+              "bin": 0,
+              "lower": 0.0,
+              "upper": 0.1,
+              "count": 0,
+              "mean_probability": null,
+              "event_rate": null,
+              "abs_gap": null
+            },
+            {
+              "bin": 1,
+              "lower": 0.1,
+              "upper": 0.2,
+              "count": 2,
+              "mean_probability": 0.1753267161652728,
+              "event_rate": 0.0,
+              "abs_gap": 0.1753267161652728
+            },
+            {
+              "bin": 2,
+              "lower": 0.2,
+              "upper": 0.30000000000000004,
+              "count": 62,
+              "mean_probability": 0.278045153972893,
+              "event_rate": 0.3064516129032258,
+              "abs_gap": 0.028406458930332834
+            },
+            {
+              "bin": 3,
+              "lower": 0.30000000000000004,
+              "upper": 0.4,
+              "count": 1085,
+              "mean_probability": 0.3646231985154928,
+              "event_rate": 0.42304147465437786,
+              "abs_gap": 0.05841827613888506
+            },
+            {
+              "bin": 4,
+              "lower": 0.4,
+              "upper": 0.5,
+              "count": 2394,
+              "mean_probability": 0.4523156583386272,
+              "event_rate": 0.474937343358396,
+              "abs_gap": 0.0226216850197688
+            },
+            {
+              "bin": 5,
+              "lower": 0.5,
+              "upper": 0.6000000000000001,
+              "count": 2333,
+              "mean_probability": 0.5467384039445884,
+              "event_rate": 0.5482211744534934,
+              "abs_gap": 0.0014827705089049958
+            },
+            {
+              "bin": 6,
+              "lower": 0.6000000000000001,
+              "upper": 0.7000000000000001,
+              "count": 1095,
+              "mean_probability": 0.6417670715811471,
+              "event_rate": 0.6776255707762557,
+              "abs_gap": 0.03585849919510864
+            },
+            {
+              "bin": 7,
+              "lower": 0.7000000000000001,
+              "upper": 0.8,
+              "count": 382,
+              "mean_probability": 0.7383538322709009,
+              "event_rate": 0.7303664921465969,
+              "abs_gap": 0.007987340124304021
+            },
+            {
+              "bin": 8,
+              "lower": 0.8,
+              "upper": 0.9,
+              "count": 51,
+              "mean_probability": 0.8382907712399149,
+              "event_rate": 0.8823529411764706,
+              "abs_gap": 0.04406216993655565
+            },
+            {
+              "bin": 9,
+              "lower": 0.9,
+              "upper": 1.0,
+              "count": 1,
+              "mean_probability": 0.9256330039811246,
+              "event_rate": 1.0,
+              "abs_gap": 0.07436699601887542
+            }
+          ]
+        },
+        "grouped_metrics": [
+          {
+            "market": "under_over_2_5",
+            "season": 2023,
+            "league": 135,
+            "sample_size": 333,
+            "log_loss": 0.681624732628851,
+            "brier": 0.24414435654107272,
+            "ece": 0.05107354799462025,
+            "auc": 0.5941112716763006
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2023,
+            "league": 136,
+            "sample_size": 219,
+            "log_loss": 0.6932948826452432,
+            "brier": 0.24997124928331102,
+            "ece": 0.060779838527693766,
+            "auc": 0.5831244778613199
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2023,
+            "league": 140,
+            "sample_size": 319,
+            "log_loss": 0.6572804608944549,
+            "brier": 0.23231296128708978,
+            "ece": 0.04147612296876557,
+            "auc": 0.6575505350772889
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2023,
+            "league": 144,
+            "sample_size": 4,
+            "log_loss": 0.802166719464408,
+            "brier": 0.2987892839146036,
+            "ece": 0.5337463533592144,
+            "auc": 0.0
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2023,
+            "league": 203,
+            "sample_size": 231,
+            "log_loss": 0.6667919391462733,
+            "brier": 0.23780706369994437,
+            "ece": 0.0502083163851853,
+            "auc": 0.6183835657519868
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2023,
+            "league": 39,
+            "sample_size": 310,
+            "log_loss": 0.6521503224833048,
+            "brier": 0.2297719317072393,
+            "ece": 0.04478894291953839,
+            "auc": 0.5609545454545455
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2023,
+            "league": 61,
+            "sample_size": 262,
+            "log_loss": 0.6845680256874497,
+            "brier": 0.2459271313337453,
+            "ece": 0.052382735795717575,
+            "auc": 0.5577226277372263
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2023,
+            "league": 78,
+            "sample_size": 261,
+            "log_loss": 0.6498404348048361,
+            "brier": 0.22845614424138386,
+            "ece": 0.07645708123778487,
+            "auc": 0.6485696895922094
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2023,
+            "league": 88,
+            "sample_size": 200,
+            "log_loss": 0.6518842428565121,
+            "brier": 0.22970564089787524,
+            "ece": 0.06668992041119186,
+            "auc": 0.6185196916904234
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2023,
+            "league": 94,
+            "sample_size": 2,
+            "log_loss": 0.695993172145547,
+            "brier": 0.2514195468392937,
+            "ece": 0.02957425894974197,
+            "auc": 0.0
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2024,
+            "league": 135,
+            "sample_size": 352,
+            "log_loss": 0.6832583067437139,
+            "brier": 0.24507650653759747,
+            "ece": 0.034922424505734864,
+            "auc": 0.5899224806201551
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2024,
+            "league": 136,
+            "sample_size": 260,
+            "log_loss": 0.7177666104547308,
+            "brier": 0.2616372914974537,
+            "ece": 0.08776629934767159,
+            "auc": 0.47316986496090974
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2024,
+            "league": 140,
+            "sample_size": 346,
+            "log_loss": 0.6664101752036696,
+            "brier": 0.23687771872386526,
+            "ece": 0.0588724548110771,
+            "auc": 0.6422625614281416
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2024,
+            "league": 203,
+            "sample_size": 198,
+            "log_loss": 0.6629396374379508,
+            "brier": 0.23561362294355787,
+            "ece": 0.04589661186363296,
+            "auc": 0.6036668412781561
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2024,
+            "league": 39,
+            "sample_size": 371,
+            "log_loss": 0.6722877065919504,
+            "brier": 0.2398080300809825,
+            "ece": 0.018260645044920278,
+            "auc": 0.5782900201732526
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2024,
+            "league": 61,
+            "sample_size": 288,
+            "log_loss": 0.6745308402452834,
+            "brier": 0.2407026168086807,
+            "ece": 0.03293388642403353,
+            "auc": 0.60498046875
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2024,
+            "league": 78,
+            "sample_size": 295,
+            "log_loss": 0.6412723575411341,
+            "brier": 0.22480234247616976,
+            "ece": 0.0461119078730136,
+            "auc": 0.6713809523809524
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2024,
+            "league": 88,
+            "sample_size": 252,
+            "log_loss": 0.6766644001149374,
+            "brier": 0.24220684505525406,
+            "ece": 0.031605182585947855,
+            "auc": 0.5764047800661073
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2024,
+            "league": 94,
+            "sample_size": 1,
+            "log_loss": 0.6781065602711465,
+            "brier": 0.24248026337986214,
+            "ece": 0.4924228501804746,
+            "auc": null
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2025,
+            "league": 135,
+            "sample_size": 286,
+            "log_loss": 0.7124510867478684,
+            "brier": 0.2590074943928208,
+            "ece": 0.0881622597342304,
+            "auc": 0.4764982373678026
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2025,
+            "league": 136,
+            "sample_size": 311,
+            "log_loss": 0.6970656741662249,
+            "brier": 0.25170243712058327,
+            "ece": 0.08944634041545838,
+            "auc": 0.5797005542228473
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2025,
+            "league": 137,
+            "sample_size": 17,
+            "log_loss": 0.6857539920605619,
+            "brier": 0.2465671053567292,
+            "ece": 0.2943308933680645,
+            "auc": 0.7307692307692308
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2025,
+            "league": 140,
+            "sample_size": 270,
+            "log_loss": 0.6682507180043193,
+            "brier": 0.2379783764258215,
+            "ece": 0.053362214415508896,
+            "auc": 0.6217551177213105
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2025,
+            "league": 144,
+            "sample_size": 179,
+            "log_loss": 0.6898777348803935,
+            "brier": 0.24843146028919108,
+            "ece": 0.048931808913489014,
+            "auc": 0.5543859649122808
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2025,
+            "league": 2,
+            "sample_size": 169,
+            "log_loss": 0.6138011177239185,
+            "brier": 0.2120515292354926,
+            "ece": 0.09434634972726016,
+            "auc": 0.6465709728867625
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2025,
+            "league": 203,
+            "sample_size": 227,
+            "log_loss": 0.6673960865935625,
+            "brier": 0.2373882296087923,
+            "ece": 0.03368849625366948,
+            "auc": 0.6291724887439839
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2025,
+            "league": 3,
+            "sample_size": 159,
+            "log_loss": 0.666581774598224,
+            "brier": 0.23704475458336566,
+            "ece": 0.05035914125750052,
+            "auc": 0.6380183602405823
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2025,
+            "league": 39,
+            "sample_size": 295,
+            "log_loss": 0.6866650592699145,
+            "brier": 0.2466748849127709,
+            "ece": 0.04426322204274639,
+            "auc": 0.5687886907511781
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2025,
+            "league": 61,
+            "sample_size": 207,
+            "log_loss": 0.6646100381256997,
+            "brier": 0.23605026711140328,
+            "ece": 0.04696228108795454,
+            "auc": 0.6410567587752054
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2025,
+            "league": 78,
+            "sample_size": 231,
+            "log_loss": 0.6523750956286256,
+            "brier": 0.23115781048320985,
+            "ece": 0.05785202286291151,
+            "auc": 0.5890464933018125
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2025,
+            "league": 848,
+            "sample_size": 120,
+            "log_loss": 0.7191077192624211,
+            "brier": 0.26265740494973816,
+            "ece": 0.12134168451231465,
+            "auc": 0.46226677805625177
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2025,
+            "league": 88,
+            "sample_size": 208,
+            "log_loss": 0.6338058651003247,
+            "brier": 0.22173225210376268,
+            "ece": 0.05278150055644869,
+            "auc": 0.6651947797075852
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2025,
+            "league": 94,
+            "sample_size": 222,
+            "log_loss": 0.6785799189590003,
+            "brier": 0.24300283809589684,
+            "ece": 0.11948782577434254,
+            "auc": 0.6721527320605661
+          }
+        ]
+      },
+      "random_forest": {
+        "best_cv_f1": 0.5790252252242314,
+        "selection_score": 0.6801906775374099,
+        "best_params": {
+          "model__max_depth": 8,
+          "model__min_samples_leaf": 1,
+          "model__min_samples_split": 2,
+          "selector__k": 10
+        },
+        "probability_metrics": {
+          "log_loss": 0.6746364611338296,
+          "brier": 0.24081669999991553,
+          "ece": 0.024824936981791057,
+          "sample_size": 7405,
+          "auc": 0.6061023697660788,
+          "reliability": [
+            {
+              "bin": 0,
+              "lower": 0.0,
+              "upper": 0.1,
+              "count": 0,
+              "mean_probability": null,
+              "event_rate": null,
+              "abs_gap": null
+            },
+            {
+              "bin": 1,
+              "lower": 0.1,
+              "upper": 0.2,
+              "count": 0,
+              "mean_probability": null,
+              "event_rate": null,
+              "abs_gap": null
+            },
+            {
+              "bin": 2,
+              "lower": 0.2,
+              "upper": 0.30000000000000004,
+              "count": 76,
+              "mean_probability": 0.28146641986491455,
+              "event_rate": 0.2894736842105263,
+              "abs_gap": 0.008007264345611775
+            },
+            {
+              "bin": 3,
+              "lower": 0.30000000000000004,
+              "upper": 0.4,
+              "count": 999,
+              "mean_probability": 0.36789768751873725,
+              "event_rate": 0.42742742742742745,
+              "abs_gap": 0.059529739908690205
+            },
+            {
+              "bin": 4,
+              "lower": 0.4,
+              "upper": 0.5,
+              "count": 2387,
+              "mean_probability": 0.4461109978206397,
+              "event_rate": 0.4675324675324675,
+              "abs_gap": 0.021421469711827845
+            },
+            {
+              "bin": 5,
+              "lower": 0.5,
+              "upper": 0.6000000000000001,
+              "count": 2389,
+              "mean_probability": 0.5398125849211206,
+              "event_rate": 0.5496023440770197,
+              "abs_gap": 0.00978975915589908
+            },
+            {
+              "bin": 6,
+              "lower": 0.6000000000000001,
+              "upper": 0.7000000000000001,
+              "count": 968,
+              "mean_probability": 0.6551054874769515,
+              "event_rate": 0.6880165289256198,
+              "abs_gap": 0.0329110414486683
+            },
+            {
+              "bin": 7,
+              "lower": 0.7000000000000001,
+              "upper": 0.8,
+              "count": 540,
+              "mean_probability": 0.7336323238359161,
+              "event_rate": 0.7129629629629629,
+              "abs_gap": 0.020669360872953235
+            },
+            {
+              "bin": 8,
+              "lower": 0.8,
+              "upper": 0.9,
+              "count": 46,
+              "mean_probability": 0.8306471798224592,
+              "event_rate": 0.6956521739130435,
+              "abs_gap": 0.1349950059094157
+            },
+            {
+              "bin": 9,
+              "lower": 0.9,
+              "upper": 1.0,
+              "count": 0,
+              "mean_probability": null,
+              "event_rate": null,
+              "abs_gap": null
+            }
+          ]
+        },
+        "grouped_metrics": [
+          {
+            "market": "under_over_2_5",
+            "season": 2023,
+            "league": 135,
+            "sample_size": 333,
+            "log_loss": 0.6837572423691175,
+            "brier": 0.24520620451096545,
+            "ece": 0.0614733284437697,
+            "auc": 0.5759031791907514
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2023,
+            "league": 136,
+            "sample_size": 219,
+            "log_loss": 0.6937042111164207,
+            "brier": 0.2501617889568705,
+            "ece": 0.053922496591267965,
+            "auc": 0.5844611528822055
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2023,
+            "league": 140,
+            "sample_size": 319,
+            "log_loss": 0.6657833791026991,
+            "brier": 0.23625576069668114,
+            "ece": 0.054090969041358274,
+            "auc": 0.6326595323028142
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2023,
+            "league": 144,
+            "sample_size": 4,
+            "log_loss": 0.8774781172356694,
+            "brier": 0.3306006155545599,
+            "ece": 0.5591788395177978,
+            "auc": 0.0
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2023,
+            "league": 203,
+            "sample_size": 231,
+            "log_loss": 0.664040267147162,
+            "brier": 0.23605017099585804,
+            "ece": 0.049255452571365405,
+            "auc": 0.6345029239766081
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2023,
+            "league": 39,
+            "sample_size": 310,
+            "log_loss": 0.6530268084238697,
+            "brier": 0.2299116098956736,
+            "ece": 0.06430970170114739,
+            "auc": 0.5710454545454545
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2023,
+            "league": 61,
+            "sample_size": 262,
+            "log_loss": 0.6868024845614812,
+            "brier": 0.2471331825903754,
+            "ece": 0.05446336628956675,
+            "auc": 0.5548029197080291
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2023,
+            "league": 78,
+            "sample_size": 261,
+            "log_loss": 0.6545238300160823,
+            "brier": 0.23044388801211968,
+            "ece": 0.10106530449073331,
+            "auc": 0.6304321363359707
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2023,
+            "league": 88,
+            "sample_size": 200,
+            "log_loss": 0.6612064024804831,
+            "brier": 0.23322919584021493,
+            "ece": 0.05114110812212186,
+            "auc": 0.6107063668039279
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2023,
+            "league": 94,
+            "sample_size": 2,
+            "log_loss": 0.7273624328375341,
+            "brier": 0.26702552049762573,
+            "ece": 0.033559470013394765,
+            "auc": 0.0
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2024,
+            "league": 135,
+            "sample_size": 352,
+            "log_loss": 0.6900950500057813,
+            "brier": 0.24826549732960765,
+            "ece": 0.02836392287675692,
+            "auc": 0.5666343669250646
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2024,
+            "league": 136,
+            "sample_size": 260,
+            "log_loss": 0.713715798355755,
+            "brier": 0.259707823339966,
+            "ece": 0.08151980951759037,
+            "auc": 0.49004975124378114
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2024,
+            "league": 140,
+            "sample_size": 346,
+            "log_loss": 0.674550869055892,
+            "brier": 0.24076780880000895,
+            "ece": 0.060802451771991665,
+            "auc": 0.620399157556915
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2024,
+            "league": 203,
+            "sample_size": 198,
+            "log_loss": 0.6642444000051233,
+            "brier": 0.2358430972059402,
+            "ece": 0.0423174529823031,
+            "auc": 0.609743321110529
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2024,
+            "league": 39,
+            "sample_size": 371,
+            "log_loss": 0.6777277265030771,
+            "brier": 0.24219218084782457,
+            "ece": 0.040309353365650454,
+            "auc": 0.5731577073691705
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2024,
+            "league": 61,
+            "sample_size": 288,
+            "log_loss": 0.6654889622743896,
+            "brier": 0.23652486482154617,
+            "ece": 0.022125370678008995,
+            "auc": 0.626513671875
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2024,
+            "league": 78,
+            "sample_size": 295,
+            "log_loss": 0.6483611986227302,
+            "brier": 0.2277487562567511,
+            "ece": 0.05316032969693894,
+            "auc": 0.6353809523809524
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2024,
+            "league": 88,
+            "sample_size": 252,
+            "log_loss": 0.6810259753449309,
+            "brier": 0.24402619698028277,
+            "ece": 0.04946945597269548,
+            "auc": 0.5752606153063818
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2024,
+            "league": 94,
+            "sample_size": 1,
+            "log_loss": 0.6300990165189827,
+            "brier": 0.21851972272989872,
+            "ece": 0.4674609317685262,
+            "auc": null
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2025,
+            "league": 135,
+            "sample_size": 286,
+            "log_loss": 0.7102238730576309,
+            "brier": 0.2579470101921149,
+            "ece": 0.06719367191925829,
+            "auc": 0.4879553466509988
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2025,
+            "league": 136,
+            "sample_size": 311,
+            "log_loss": 0.6940094659422809,
+            "brier": 0.25032018781494925,
+            "ece": 0.07321501192721536,
+            "auc": 0.5530234097113078
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2025,
+            "league": 137,
+            "sample_size": 17,
+            "log_loss": 0.6824819198421416,
+            "brier": 0.24504788601254807,
+            "ece": 0.28229093617417733,
+            "auc": 0.6730769230769231
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2025,
+            "league": 140,
+            "sample_size": 270,
+            "log_loss": 0.6697243017203646,
+            "brier": 0.2385291199741072,
+            "ece": 0.043718738821976945,
+            "auc": 0.6247736128642776
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2025,
+            "league": 144,
+            "sample_size": 179,
+            "log_loss": 0.6930847635463037,
+            "brier": 0.24988347948060866,
+            "ece": 0.049403334264809036,
+            "auc": 0.5474937343358397
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2025,
+            "league": 2,
+            "sample_size": 169,
+            "log_loss": 0.616230870940713,
+            "brier": 0.21256981361561797,
+            "ece": 0.12183364077750847,
+            "auc": 0.6304625199362042
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2025,
+            "league": 203,
+            "sample_size": 227,
+            "log_loss": 0.6694261274436931,
+            "brier": 0.23849180552310673,
+            "ece": 0.04423738502824836,
+            "auc": 0.6137245769290482
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2025,
+            "league": 3,
+            "sample_size": 159,
+            "log_loss": 0.6620546456658637,
+            "brier": 0.2348463165876981,
+            "ece": 0.04618811842405745,
+            "auc": 0.6528964862298194
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2025,
+            "league": 39,
+            "sample_size": 295,
+            "log_loss": 0.6880968345723455,
+            "brier": 0.24742896703812747,
+            "ece": 0.03995604465605013,
+            "auc": 0.5606578582648063
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2025,
+            "league": 61,
+            "sample_size": 207,
+            "log_loss": 0.6647152514624151,
+            "brier": 0.23626672252181488,
+            "ece": 0.056131813056445,
+            "auc": 0.6429238237490664
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2025,
+            "league": 78,
+            "sample_size": 231,
+            "log_loss": 0.653546868336728,
+            "brier": 0.23135395401647854,
+            "ece": 0.04408955276151983,
+            "auc": 0.5984239558707644
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2025,
+            "league": 848,
+            "sample_size": 120,
+            "log_loss": 0.7366158093365324,
+            "brier": 0.27028602775393495,
+            "ece": 0.12135718546904226,
+            "auc": 0.45558340295182403
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2025,
+            "league": 88,
+            "sample_size": 208,
+            "log_loss": 0.6356949505604567,
+            "brier": 0.2227165055262314,
+            "ece": 0.05313885616930242,
+            "auc": 0.6443921106858993
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2025,
+            "league": 94,
+            "sample_size": 222,
+            "log_loss": 0.6796167437374421,
+            "brier": 0.24339899670320553,
+            "ece": 0.11266911006061887,
+            "auc": 0.636356155365372
+          }
+        ]
+      },
+      "random_forest_smote": {
+        "best_cv_f1": 0.5770377872782364,
+        "selection_score": 0.6789224012157853,
+        "best_params": {
+          "model__max_depth": 8,
+          "model__min_samples_leaf": 1,
+          "model__min_samples_split": 10,
+          "selector__k": 10
+        },
+        "probability_metrics": {
+          "log_loss": 0.6750296577731777,
+          "brier": 0.2409907224387665,
+          "ece": 0.027737376857330468,
+          "sample_size": 7405,
+          "auc": 0.6055855714001293,
+          "reliability": [
+            {
+              "bin": 0,
+              "lower": 0.0,
+              "upper": 0.1,
+              "count": 0,
+              "mean_probability": null,
+              "event_rate": null,
+              "abs_gap": null
+            },
+            {
+              "bin": 1,
+              "lower": 0.1,
+              "upper": 0.2,
+              "count": 0,
+              "mean_probability": null,
+              "event_rate": null,
+              "abs_gap": null
+            },
+            {
+              "bin": 2,
+              "lower": 0.2,
+              "upper": 0.30000000000000004,
+              "count": 32,
+              "mean_probability": 0.29018413581912733,
+              "event_rate": 0.34375,
+              "abs_gap": 0.05356586418087267
+            },
+            {
+              "bin": 3,
+              "lower": 0.30000000000000004,
+              "upper": 0.4,
+              "count": 1098,
+              "mean_probability": 0.37005911943056297,
+              "event_rate": 0.42531876138433516,
+              "abs_gap": 0.0552596419537722
+            },
+            {
+              "bin": 4,
+              "lower": 0.4,
+              "upper": 0.5,
+              "count": 2373,
+              "mean_probability": 0.44633995803959825,
+              "event_rate": 0.47029077117572693,
+              "abs_gap": 0.02395081313612868
+            },
+            {
+              "bin": 5,
+              "lower": 0.5,
+              "upper": 0.6000000000000001,
+              "count": 2345,
+              "mean_probability": 0.5387394512305556,
+              "event_rate": 0.5513859275053304,
+              "abs_gap": 0.012646476274774887
+            },
+            {
+              "bin": 6,
+              "lower": 0.6000000000000001,
+              "upper": 0.7000000000000001,
+              "count": 1006,
+              "mean_probability": 0.6547201646879313,
+              "event_rate": 0.6848906560636183,
+              "abs_gap": 0.03017049137568706
+            },
+            {
+              "bin": 7,
+              "lower": 0.7000000000000001,
+              "upper": 0.8,
+              "count": 497,
+              "mean_probability": 0.7366377324998578,
+              "event_rate": 0.6961770623742455,
+              "abs_gap": 0.040460670125612275
+            },
+            {
+              "bin": 8,
+              "lower": 0.8,
+              "upper": 0.9,
+              "count": 54,
+              "mean_probability": 0.8343397647546551,
+              "event_rate": 0.7222222222222222,
+              "abs_gap": 0.11211754253243289
+            },
+            {
+              "bin": 9,
+              "lower": 0.9,
+              "upper": 1.0,
+              "count": 0,
+              "mean_probability": null,
+              "event_rate": null,
+              "abs_gap": null
+            }
+          ]
+        },
+        "grouped_metrics": [
+          {
+            "market": "under_over_2_5",
+            "season": 2023,
+            "league": 135,
+            "sample_size": 333,
+            "log_loss": 0.6840188086117712,
+            "brier": 0.24534675547376583,
+            "ece": 0.039371325926298065,
+            "auc": 0.5755419075144509
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2023,
+            "league": 136,
+            "sample_size": 219,
+            "log_loss": 0.6937749368450677,
+            "brier": 0.2502269159361727,
+            "ece": 0.06008427068097947,
+            "auc": 0.5869674185463658
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2023,
+            "league": 140,
+            "sample_size": 319,
+            "log_loss": 0.6643914085025124,
+            "brier": 0.23564118740935214,
+            "ece": 0.047089622639324716,
+            "auc": 0.6357114546175188
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2023,
+            "league": 144,
+            "sample_size": 4,
+            "log_loss": 0.8824678999721384,
+            "brier": 0.3306121287688819,
+            "ece": 0.5567777702097071,
+            "auc": 0.0
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2023,
+            "league": 203,
+            "sample_size": 231,
+            "log_loss": 0.6607613453819734,
+            "brier": 0.2345231116991429,
+            "ece": 0.04831150013628742,
+            "auc": 0.6426000899685111
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2023,
+            "league": 39,
+            "sample_size": 310,
+            "log_loss": 0.6570720954239481,
+            "brier": 0.23153990295114105,
+            "ece": 0.07929857302638918,
+            "auc": 0.5702727272727273
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2023,
+            "league": 61,
+            "sample_size": 262,
+            "log_loss": 0.686636711967596,
+            "brier": 0.24712912977731508,
+            "ece": 0.05675630146982195,
+            "auc": 0.5556788321167883
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2023,
+            "league": 78,
+            "sample_size": 261,
+            "log_loss": 0.647086497921338,
+            "brier": 0.22722723434127534,
+            "ece": 0.08313267986900724,
+            "auc": 0.6461351186853317
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2023,
+            "league": 88,
+            "sample_size": 200,
+            "log_loss": 0.6635871857278585,
+            "brier": 0.23400145755645213,
+            "ece": 0.04354788812360424,
+            "auc": 0.60437123851758
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2023,
+            "league": 94,
+            "sample_size": 2,
+            "log_loss": 0.7101650859404165,
+            "brier": 0.25849396076288905,
+            "ece": 0.02059445444282959,
+            "auc": 0.0
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2024,
+            "league": 135,
+            "sample_size": 352,
+            "log_loss": 0.692158825445275,
+            "brier": 0.24932564554861283,
+            "ece": 0.034163301680158034,
+            "auc": 0.5583656330749354
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2024,
+            "league": 136,
+            "sample_size": 260,
+            "log_loss": 0.7126474036914017,
+            "brier": 0.2592700257733419,
+            "ece": 0.07481325592565906,
+            "auc": 0.4912935323383084
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2024,
+            "league": 140,
+            "sample_size": 346,
+            "log_loss": 0.6748319164751445,
+            "brier": 0.24088420964115323,
+            "ece": 0.0482784625774782,
+            "auc": 0.6208337512118476
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2024,
+            "league": 203,
+            "sample_size": 198,
+            "log_loss": 0.6642424708723043,
+            "brier": 0.23588215871552318,
+            "ece": 0.04227678944437091,
+            "auc": 0.6146673651126243
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2024,
+            "league": 39,
+            "sample_size": 371,
+            "log_loss": 0.6761075255790027,
+            "brier": 0.24151518330088717,
+            "ece": 0.03836976283367419,
+            "auc": 0.5778450219532456
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2024,
+            "league": 61,
+            "sample_size": 288,
+            "log_loss": 0.666571840323484,
+            "brier": 0.23696499981941674,
+            "ece": 0.02323494422486876,
+            "auc": 0.624951171875
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2024,
+            "league": 78,
+            "sample_size": 295,
+            "log_loss": 0.6514292770561525,
+            "brier": 0.2290048116433808,
+            "ece": 0.053534174657286604,
+            "auc": 0.6251428571428571
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2024,
+            "league": 88,
+            "sample_size": 252,
+            "log_loss": 0.6814010065852498,
+            "brier": 0.24414145896333247,
+            "ece": 0.03627248233323491,
+            "auc": 0.5761505212306127
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2024,
+            "league": 94,
+            "sample_size": 1,
+            "log_loss": 0.6374434650276707,
+            "brier": 0.2221781848662556,
+            "ece": 0.471357809807216,
+            "auc": null
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2025,
+            "league": 135,
+            "sample_size": 286,
+            "log_loss": 0.7118565848911839,
+            "brier": 0.2588261430922,
+            "ece": 0.08531600208895312,
+            "auc": 0.46763611437524477
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2025,
+            "league": 136,
+            "sample_size": 311,
+            "log_loss": 0.6937601463963716,
+            "brier": 0.25021163226663107,
+            "ece": 0.0731388230657768,
+            "auc": 0.568326577880718
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2025,
+            "league": 137,
+            "sample_size": 17,
+            "log_loss": 0.6862787100440154,
+            "brier": 0.24695196311851073,
+            "ece": 0.27957815753061127,
+            "auc": 0.5769230769230769
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2025,
+            "league": 140,
+            "sample_size": 270,
+            "log_loss": 0.6730756331591666,
+            "brier": 0.23999140223368348,
+            "ece": 0.050410850089656525,
+            "auc": 0.6207672465836123
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2025,
+            "league": 144,
+            "sample_size": 179,
+            "log_loss": 0.6928542655924244,
+            "brier": 0.24979347004725228,
+            "ece": 0.054226227402914495,
+            "auc": 0.5456140350877193
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2025,
+            "league": 2,
+            "sample_size": 169,
+            "log_loss": 0.6182029705236318,
+            "brier": 0.21340933926956174,
+            "ece": 0.10027630224377705,
+            "auc": 0.6258373205741627
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2025,
+            "league": 203,
+            "sample_size": 227,
+            "log_loss": 0.6697748673612681,
+            "brier": 0.23863110363623324,
+            "ece": 0.022773640131400513,
+            "auc": 0.616208663251048
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2025,
+            "league": 3,
+            "sample_size": 159,
+            "log_loss": 0.6629078418457028,
+            "brier": 0.23529035463530687,
+            "ece": 0.0471668291806032,
+            "auc": 0.6536878759100981
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2025,
+            "league": 39,
+            "sample_size": 295,
+            "log_loss": 0.6865084076567479,
+            "brier": 0.2466247993807146,
+            "ece": 0.030068663027895754,
+            "auc": 0.5696664510764113
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2025,
+            "league": 61,
+            "sample_size": 207,
+            "log_loss": 0.6654042266686448,
+            "brier": 0.23640388634483303,
+            "ece": 0.030148949036766792,
+            "auc": 0.640309932785661
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2025,
+            "league": 78,
+            "sample_size": 231,
+            "log_loss": 0.6585055298459418,
+            "brier": 0.2337282132219505,
+            "ece": 0.04180345873590451,
+            "auc": 0.5864460204885737
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2025,
+            "league": 848,
+            "sample_size": 120,
+            "log_loss": 0.7399376917987589,
+            "brier": 0.2721079305909013,
+            "ece": 0.11911649537858342,
+            "auc": 0.43469785575048736
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2025,
+            "league": 88,
+            "sample_size": 208,
+            "log_loss": 0.6356591135589902,
+            "brier": 0.22274707985830774,
+            "ece": 0.04549719630096343,
+            "auc": 0.6437052301049946
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2025,
+            "league": 94,
+            "sample_size": 222,
+            "log_loss": 0.6793453704147433,
+            "brier": 0.2431788693996884,
+            "ece": 0.11281937220121493,
+            "auc": 0.6418696510862409
+          }
+        ]
+      },
+      "voting": {
+        "best_cv_f1": 0.5775702305043628,
+        "selection_score": 0.6802017352935958,
+        "best_params": {
+          "base_models": [
+            "random_forest",
+            "logistic"
+          ]
+        },
+        "probability_metrics": {
+          "log_loss": 0.6726508139971891,
+          "brier": 0.23995963646479215,
+          "ece": 0.023765169837332633,
+          "sample_size": 7405,
+          "auc": 0.6098381255569327,
+          "reliability": [
+            {
+              "bin": 0,
+              "lower": 0.0,
+              "upper": 0.1,
+              "count": 0,
+              "mean_probability": null,
+              "event_rate": null,
+              "abs_gap": null
+            },
+            {
+              "bin": 1,
+              "lower": 0.1,
+              "upper": 0.2,
+              "count": 0,
+              "mean_probability": null,
+              "event_rate": null,
+              "abs_gap": null
+            },
+            {
+              "bin": 2,
+              "lower": 0.2,
+              "upper": 0.30000000000000004,
+              "count": 52,
+              "mean_probability": 0.28442439256617125,
+              "event_rate": 0.3269230769230769,
+              "abs_gap": 0.04249868435690568
+            },
+            {
+              "bin": 3,
+              "lower": 0.30000000000000004,
+              "upper": 0.4,
+              "count": 1057,
+              "mean_probability": 0.3676025972896347,
+              "event_rate": 0.4181646168401135,
+              "abs_gap": 0.05056201955047884
+            },
+            {
+              "bin": 4,
+              "lower": 0.4,
+              "upper": 0.5,
+              "count": 2311,
+              "mean_probability": 0.4469734431069329,
+              "event_rate": 0.47165729121592387,
+              "abs_gap": 0.02468384810899099
+            },
+            {
+              "bin": 5,
+              "lower": 0.5,
+              "upper": 0.6000000000000001,
+              "count": 2434,
+              "mean_probability": 0.541178049243251,
+              "event_rate": 0.5493015612161052,
+              "abs_gap": 0.008123511972854214
+            },
+            {
+              "bin": 6,
+              "lower": 0.6000000000000001,
+              "upper": 0.7000000000000001,
+              "count": 1106,
+              "mean_probability": 0.6518739040727157,
+              "event_rate": 0.6817359855334539,
+              "abs_gap": 0.02986208146073821
+            },
+            {
+              "bin": 7,
+              "lower": 0.7000000000000001,
+              "upper": 0.8,
+              "count": 404,
+              "mean_probability": 0.7368910948816815,
+              "event_rate": 0.7153465346534653,
+              "abs_gap": 0.02154456022821616
+            },
+            {
+              "bin": 8,
+              "lower": 0.8,
+              "upper": 0.9,
+              "count": 41,
+              "mean_probability": 0.8238690449866287,
+              "event_rate": 0.7804878048780488,
+              "abs_gap": 0.04338124010857991
+            },
+            {
+              "bin": 9,
+              "lower": 0.9,
+              "upper": 1.0,
+              "count": 0,
+              "mean_probability": null,
+              "event_rate": null,
+              "abs_gap": null
+            }
+          ]
+        },
+        "grouped_metrics": [
+          {
+            "market": "under_over_2_5",
+            "season": 2023,
+            "league": 135,
+            "sample_size": 333,
+            "log_loss": 0.6820556922340976,
+            "brier": 0.2443813942974855,
+            "ece": 0.049370242943702625,
+            "auc": 0.5864884393063584
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2023,
+            "league": 136,
+            "sample_size": 219,
+            "log_loss": 0.6929249681741548,
+            "brier": 0.24979942890449522,
+            "ece": 0.06081075334528641,
+            "auc": 0.5904761904761905
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2023,
+            "league": 140,
+            "sample_size": 319,
+            "log_loss": 0.6607549148133236,
+            "brier": 0.23393112941233302,
+            "ece": 0.0713469971086239,
+            "auc": 0.6483947681331748
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2023,
+            "league": 144,
+            "sample_size": 4,
+            "log_loss": 0.8384813338914185,
+            "brier": 0.3144347189284912,
+            "ece": 0.5464625964385061,
+            "auc": 0.0
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2023,
+            "league": 203,
+            "sample_size": 231,
+            "log_loss": 0.6648494845270916,
+            "brier": 0.2366207718544383,
+            "ece": 0.05340966869357957,
+            "auc": 0.6313540260908682
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2023,
+            "league": 39,
+            "sample_size": 310,
+            "log_loss": 0.6508831885816126,
+            "brier": 0.22926328707781163,
+            "ece": 0.053910720067842685,
+            "auc": 0.5652272727272727
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2023,
+            "league": 61,
+            "sample_size": 262,
+            "log_loss": 0.685072849975006,
+            "brier": 0.24622603364897175,
+            "ece": 0.07620472167270677,
+            "auc": 0.5576058394160583
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2023,
+            "league": 78,
+            "sample_size": 261,
+            "log_loss": 0.6508006209525738,
+            "brier": 0.2289169247235812,
+            "ece": 0.10329799871991197,
+            "auc": 0.6457090687766281
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2023,
+            "league": 88,
+            "sample_size": 200,
+            "log_loss": 0.6546208871758492,
+            "brier": 0.23059640330816245,
+            "ece": 0.04406282111094019,
+            "auc": 0.6209481575335234
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2023,
+            "league": 94,
+            "sample_size": 2,
+            "log_loss": 0.7115420124940786,
+            "brier": 0.2591614880814541,
+            "ece": 0.03156686448156831,
+            "auc": 0.0
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2024,
+            "league": 135,
+            "sample_size": 352,
+            "log_loss": 0.6860090506979588,
+            "brier": 0.24636425170877685,
+            "ece": 0.02884426950908554,
+            "auc": 0.5800710594315246
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2024,
+            "league": 136,
+            "sample_size": 260,
+            "log_loss": 0.7147689069452701,
+            "brier": 0.2602471514507561,
+            "ece": 0.08970768747409599,
+            "auc": 0.4836531627576403
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2024,
+            "league": 140,
+            "sample_size": 346,
+            "log_loss": 0.6691280094867692,
+            "brier": 0.23813063822157038,
+            "ece": 0.06077360887025878,
+            "auc": 0.6317320228663124
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2024,
+            "league": 203,
+            "sample_size": 198,
+            "log_loss": 0.6630399523505107,
+            "brier": 0.23546024075655528,
+            "ece": 0.03897767231462345,
+            "auc": 0.6090099528548978
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2024,
+            "league": 39,
+            "sample_size": 371,
+            "log_loss": 0.6741038165686722,
+            "brier": 0.2406143741309142,
+            "ece": 0.030734605903314373,
+            "auc": 0.5793876824492702
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2024,
+            "league": 61,
+            "sample_size": 288,
+            "log_loss": 0.6694768152967018,
+            "brier": 0.23832922746863586,
+            "ece": 0.03685186193244269,
+            "auc": 0.61748046875
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2024,
+            "league": 78,
+            "sample_size": 295,
+            "log_loss": 0.6436369828370323,
+            "brier": 0.22580439643237638,
+            "ece": 0.03676832926257045,
+            "auc": 0.654952380952381
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2024,
+            "league": 88,
+            "sample_size": 252,
+            "log_loss": 0.6780966465818627,
+            "brier": 0.24280151716064494,
+            "ece": 0.024154186870267175,
+            "auc": 0.5734172387490466
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2024,
+            "league": 94,
+            "sample_size": 1,
+            "log_loss": 0.6538147255240598,
+            "brier": 0.2303442187121792,
+            "ece": 0.47994189097450035,
+            "auc": null
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2025,
+            "league": 135,
+            "sample_size": 286,
+            "log_loss": 0.7107545999163094,
+            "brier": 0.2582183207111603,
+            "ece": 0.0650642590890824,
+            "auc": 0.482177830003917
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2025,
+            "league": 136,
+            "sample_size": 311,
+            "log_loss": 0.6945898108452775,
+            "brier": 0.25056886602904094,
+            "ece": 0.08039719973079407,
+            "auc": 0.5699396145256017
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2025,
+            "league": 137,
+            "sample_size": 17,
+            "log_loss": 0.683785702770872,
+            "brier": 0.24566350898642508,
+            "ece": 0.28424148462593574,
+            "auc": 0.7307692307692308
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2025,
+            "league": 140,
+            "sample_size": 270,
+            "log_loss": 0.6683706314704568,
+            "brier": 0.2379716744349418,
+            "ece": 0.04921250093789539,
+            "auc": 0.6245540859447889
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2025,
+            "league": 144,
+            "sample_size": 179,
+            "log_loss": 0.691138545227385,
+            "brier": 0.24901167939465338,
+            "ece": 0.04992376368638437,
+            "auc": 0.5486215538847118
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2025,
+            "league": 2,
+            "sample_size": 169,
+            "log_loss": 0.614144981595123,
+            "brier": 0.21192082745235075,
+            "ece": 0.0897258984723765,
+            "auc": 0.6385964912280702
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2025,
+            "league": 203,
+            "sample_size": 227,
+            "log_loss": 0.6678748528873609,
+            "brier": 0.23766588652259096,
+            "ece": 0.029517791479615304,
+            "auc": 0.6224188790560472
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2025,
+            "league": 3,
+            "sample_size": 159,
+            "log_loss": 0.6637953768589693,
+            "brier": 0.2356829504786848,
+            "ece": 0.046852819949249114,
+            "auc": 0.647198480531814
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2025,
+            "league": 39,
+            "sample_size": 295,
+            "log_loss": 0.6869622074174293,
+            "brier": 0.24684649595632324,
+            "ece": 0.03728568084410967,
+            "auc": 0.5669869721888571
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2025,
+            "league": 61,
+            "sample_size": 207,
+            "log_loss": 0.6641821569900658,
+            "brier": 0.2358951435528884,
+            "ece": 0.04853166536785964,
+            "auc": 0.6451643017176997
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2025,
+            "league": 78,
+            "sample_size": 231,
+            "log_loss": 0.6521812159991779,
+            "brier": 0.23089665331193412,
+            "ece": 0.04747550324830184,
+            "auc": 0.5960598896769109
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2025,
+            "league": 848,
+            "sample_size": 120,
+            "log_loss": 0.7267187078630104,
+            "brier": 0.26596426414710933,
+            "ece": 0.10148622829866907,
+            "auc": 0.4608744082428293
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2025,
+            "league": 88,
+            "sample_size": 208,
+            "log_loss": 0.6340442064639009,
+            "brier": 0.2218696883955183,
+            "ece": 0.04256376828539161,
+            "auc": 0.6570503385340006
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2025,
+            "league": 94,
+            "sample_size": 222,
+            "log_loss": 0.6782972018454893,
+            "brier": 0.24280960724228093,
+            "ece": 0.11131273267228203,
+            "auc": 0.6552007899934168
+          }
+        ]
+      },
+      "stacking": {
+        "best_cv_f1": 0.5744591641240979,
+        "selection_score": 0.6778666378005843,
+        "best_params": {
+          "base_models": [
+            "random_forest",
+            "logistic"
+          ],
+          "passthrough": true
+        },
+        "probability_metrics": {
+          "log_loss": 0.6742012844234145,
+          "brier": 0.2407234226175778,
+          "ece": 0.030771890447476958,
+          "sample_size": 7405,
+          "auc": 0.6079466435375573,
+          "reliability": [
+            {
+              "bin": 0,
+              "lower": 0.0,
+              "upper": 0.1,
+              "count": 1,
+              "mean_probability": 0.0506549094345129,
+              "event_rate": 0.0,
+              "abs_gap": 0.0506549094345129
+            },
+            {
+              "bin": 1,
+              "lower": 0.1,
+              "upper": 0.2,
+              "count": 11,
+              "mean_probability": 0.1684299581275586,
+              "event_rate": 0.09090909090909091,
+              "abs_gap": 0.07752086721846768
+            },
+            {
+              "bin": 2,
+              "lower": 0.2,
+              "upper": 0.30000000000000004,
+              "count": 98,
+              "mean_probability": 0.26743921370588275,
+              "event_rate": 0.42857142857142855,
+              "abs_gap": 0.1611322148655458
+            },
+            {
+              "bin": 3,
+              "lower": 0.30000000000000004,
+              "upper": 0.4,
+              "count": 1089,
+              "mean_probability": 0.36081155191343794,
+              "event_rate": 0.4132231404958678,
+              "abs_gap": 0.052411588582429836
+            },
+            {
+              "bin": 4,
+              "lower": 0.4,
+              "upper": 0.5,
+              "count": 2512,
+              "mean_probability": 0.45379886547431786,
+              "event_rate": 0.48328025477707004,
+              "abs_gap": 0.02948138930275218
+            },
+            {
+              "bin": 5,
+              "lower": 0.5,
+              "upper": 0.6000000000000001,
+              "count": 2344,
+              "mean_probability": 0.547528778846386,
+              "event_rate": 0.5593003412969283,
+              "abs_gap": 0.011771562450542339
+            },
+            {
+              "bin": 6,
+              "lower": 0.6000000000000001,
+              "upper": 0.7000000000000001,
+              "count": 930,
+              "mean_probability": 0.6385236447456157,
+              "event_rate": 0.6817204301075269,
+              "abs_gap": 0.04319678536191118
+            },
+            {
+              "bin": 7,
+              "lower": 0.7000000000000001,
+              "upper": 0.8,
+              "count": 328,
+              "mean_probability": 0.7398654561795416,
+              "event_rate": 0.7073170731707317,
+              "abs_gap": 0.03254838300880991
+            },
+            {
+              "bin": 8,
+              "lower": 0.8,
+              "upper": 0.9,
+              "count": 78,
+              "mean_probability": 0.8411108427737793,
+              "event_rate": 0.8333333333333334,
+              "abs_gap": 0.007777509440445973
+            },
+            {
+              "bin": 9,
+              "lower": 0.9,
+              "upper": 1.0,
+              "count": 14,
+              "mean_probability": 0.9278549449452188,
+              "event_rate": 0.8571428571428571,
+              "abs_gap": 0.07071208780236171
+            }
+          ]
+        },
+        "grouped_metrics": [
+          {
+            "market": "under_over_2_5",
+            "season": 2023,
+            "league": 135,
+            "sample_size": 333,
+            "log_loss": 0.6837083613975818,
+            "brier": 0.2452460972378916,
+            "ece": 0.023778950502290744,
+            "auc": 0.5831647398843931
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2023,
+            "league": 136,
+            "sample_size": 219,
+            "log_loss": 0.6958970586367251,
+            "brier": 0.25114199783955343,
+            "ece": 0.06484024288113405,
+            "auc": 0.5788638262322473
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2023,
+            "league": 140,
+            "sample_size": 319,
+            "log_loss": 0.6581227015409056,
+            "brier": 0.23254046984332713,
+            "ece": 0.06199070755253512,
+            "auc": 0.6604439159730479
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2023,
+            "league": 144,
+            "sample_size": 4,
+            "log_loss": 0.8709625356413021,
+            "brier": 0.3198072315351025,
+            "ece": 0.5433528573957606,
+            "auc": 0.0
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2023,
+            "league": 203,
+            "sample_size": 231,
+            "log_loss": 0.6687652642744437,
+            "brier": 0.23900808499727527,
+            "ece": 0.040772377552082725,
+            "auc": 0.5994152046783626
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2023,
+            "league": 39,
+            "sample_size": 310,
+            "log_loss": 0.6627046977308856,
+            "brier": 0.23430803899422822,
+            "ece": 0.0648052064357725,
+            "auc": 0.5473636363636363
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2023,
+            "league": 61,
+            "sample_size": 262,
+            "log_loss": 0.6853496889114188,
+            "brier": 0.24624786868901544,
+            "ece": 0.03583613842922159,
+            "auc": 0.5630948905109489
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2023,
+            "league": 78,
+            "sample_size": 261,
+            "log_loss": 0.6507209660831951,
+            "brier": 0.2285047789570092,
+            "ece": 0.050175021854080716,
+            "auc": 0.6564211807668898
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2023,
+            "league": 88,
+            "sample_size": 200,
+            "log_loss": 0.6526313934710601,
+            "brier": 0.2301930715102316,
+            "ece": 0.05409862539181007,
+            "auc": 0.6147186147186148
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2023,
+            "league": 94,
+            "sample_size": 2,
+            "log_loss": 0.6565220683540596,
+            "brier": 0.23170724961594535,
+            "ece": 0.48119593428578483,
+            "auc": 1.0
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2024,
+            "league": 135,
+            "sample_size": 352,
+            "log_loss": 0.6833217320502382,
+            "brier": 0.2451214891329532,
+            "ece": 0.03514537271698756,
+            "auc": 0.5856912144702842
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2024,
+            "league": 136,
+            "sample_size": 260,
+            "log_loss": 0.7182158377545311,
+            "brier": 0.26170049587728594,
+            "ece": 0.08404311906805488,
+            "auc": 0.47891494906420284
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2024,
+            "league": 140,
+            "sample_size": 346,
+            "log_loss": 0.6653641133973596,
+            "brier": 0.23638830242058936,
+            "ece": 0.06533565074563882,
+            "auc": 0.6452712867315213
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2024,
+            "league": 203,
+            "sample_size": 198,
+            "log_loss": 0.6666331681887571,
+            "brier": 0.23760410364489476,
+            "ece": 0.047317993934799456,
+            "auc": 0.585751702462022
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2024,
+            "league": 39,
+            "sample_size": 371,
+            "log_loss": 0.6699578734175491,
+            "brier": 0.2386437270182243,
+            "ece": 0.014053669462264764,
+            "auc": 0.5852913255013648
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2024,
+            "league": 61,
+            "sample_size": 288,
+            "log_loss": 0.6792861542827381,
+            "brier": 0.2429199663499011,
+            "ece": 0.028974156259330787,
+            "auc": 0.593701171875
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2024,
+            "league": 78,
+            "sample_size": 295,
+            "log_loss": 0.6450798203471839,
+            "brier": 0.22614317178000193,
+            "ece": 0.0481021575750613,
+            "auc": 0.6694285714285715
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2024,
+            "league": 88,
+            "sample_size": 252,
+            "log_loss": 0.6747222197975217,
+            "brier": 0.24143095840022982,
+            "ece": 0.02108915447218104,
+            "auc": 0.5834604627510805
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2024,
+            "league": 94,
+            "sample_size": 1,
+            "log_loss": 0.6530874543820219,
+            "brier": 0.22998117945074145,
+            "ece": 0.4795635301508461,
+            "auc": null
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2025,
+            "league": 135,
+            "sample_size": 286,
+            "log_loss": 0.7195958404578373,
+            "brier": 0.2621671337273164,
+            "ece": 0.08476471523274928,
+            "auc": 0.47390325107716413
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2025,
+            "league": 136,
+            "sample_size": 311,
+            "log_loss": 0.7022586817098732,
+            "brier": 0.25410594083545934,
+            "ece": 0.09837830691987698,
+            "auc": 0.5730416080734552
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2025,
+            "league": 137,
+            "sample_size": 17,
+            "log_loss": 0.7008427116554801,
+            "brier": 0.2537585058880409,
+            "ece": 0.29711680352194725,
+            "auc": 0.6923076923076923
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2025,
+            "league": 140,
+            "sample_size": 270,
+            "log_loss": 0.6695495809105176,
+            "brier": 0.2387426107065126,
+            "ece": 0.07980762996534886,
+            "auc": 0.6230173975083694
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2025,
+            "league": 144,
+            "sample_size": 179,
+            "log_loss": 0.689442993590298,
+            "brier": 0.24821798976465037,
+            "ece": 0.04170998685244332,
+            "auc": 0.5513784461152883
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2025,
+            "league": 2,
+            "sample_size": 169,
+            "log_loss": 0.6145659009910337,
+            "brier": 0.21278282714370458,
+            "ece": 0.11950722281055719,
+            "auc": 0.6460925039872409
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2025,
+            "league": 203,
+            "sample_size": 227,
+            "log_loss": 0.6708881536017264,
+            "brier": 0.23910237584341199,
+            "ece": 0.040978378855121296,
+            "auc": 0.6154323862754232
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2025,
+            "league": 3,
+            "sample_size": 159,
+            "log_loss": 0.6736813392162053,
+            "brier": 0.24053931564870756,
+            "ece": 0.029277967577271375,
+            "auc": 0.6077872744539411
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2025,
+            "league": 39,
+            "sample_size": 295,
+            "log_loss": 0.6861038951460158,
+            "brier": 0.24640979895831672,
+            "ece": 0.0501837036227503,
+            "auc": 0.5716991591980043
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2025,
+            "league": 61,
+            "sample_size": 207,
+            "log_loss": 0.6686084629590583,
+            "brier": 0.2379744663138685,
+            "ece": 0.023700337259087437,
+            "auc": 0.6295743091859597
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2025,
+            "league": 78,
+            "sample_size": 231,
+            "log_loss": 0.6475886456478598,
+            "brier": 0.22935926094402953,
+            "ece": 0.058898679196800335,
+            "auc": 0.5988179669030733
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2025,
+            "league": 848,
+            "sample_size": 120,
+            "log_loss": 0.713119026450039,
+            "brier": 0.26017840819113375,
+            "ece": 0.09118422311346729,
+            "auc": 0.47619047619047616
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2025,
+            "league": 88,
+            "sample_size": 208,
+            "log_loss": 0.6397601295909229,
+            "brier": 0.22483086904368849,
+            "ece": 0.05592351597451802,
+            "auc": 0.6309488764596213
+          },
+          {
+            "market": "under_over_2_5",
+            "season": 2025,
+            "league": 94,
+            "sample_size": 222,
+            "log_loss": 0.6780778353207823,
+            "brier": 0.2426551830517592,
+            "ece": 0.12406617378324107,
+            "auc": 0.6722350230414746
+          }
+        ]
+      }
+    }
+  }
+}

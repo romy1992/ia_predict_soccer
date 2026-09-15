@@ -2,6 +2,8 @@ import unittest
 import uuid
 from unittest import mock
 
+import numpy as np
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -294,6 +296,187 @@ class TestExtractLineSpecificOddsFeatures(unittest.TestCase):
         self.assertAlmostEqual(low_line["odds_mean"], (1.30 + 3.20) / 2)
         self.assertAlmostEqual(high_line["odds_mean"], (6.75 + 1.06) / 2)
         self.assertNotAlmostEqual(low_line["odds_mean"], high_line["odds_mean"])
+
+
+class TestMissingStatsArePreservedForAnalysis(unittest.TestCase):
+    """2026-09-13: `_safe_float` azzera i mancanti ALLA FONTE, quindi dopo
+    l'estrazione un dato assente e uno zero reale sono indistinguibili. Su
+    `expected_goals` (assente sul 46% delle partite) significa dare al modello
+    "squadra che non tira mai in porta" invece di "non lo sappiamo". Il
+    default resta l'azzeramento (i modelli registrati sono addestrati cosi'),
+    ma serve un percorso che preservi i NaN per poter fare EDA."""
+
+    MATCH = {
+        "id_team_home": 10,
+        "id_team_away": 20,
+        "mean_statistics": [
+            {"id_team": 10, "expected_goals": None, "shots_on_goal": 4.2},
+            {"id_team": 20, "expected_goals": 1.3, "shots_on_goal": 5.1},
+        ],
+    }
+
+    def test_default_still_zeroes_missing_values(self):
+        features = FilterMarketService._extract_mean_features(self.MATCH)
+        self.assertEqual(features["expected_goals_home_stat"], 0.0)
+        self.assertEqual(features["expected_goals_diff_stat"], -1.3)
+
+    def test_keep_missing_preserves_nan_and_propagates_to_the_difference(self):
+        features = FilterMarketService._extract_mean_features(self.MATCH, keep_missing=True)
+        self.assertTrue(np.isnan(features["expected_goals_home_stat"]))
+        # La differenza con un termine ignoto e' a sua volta ignota: azzerarla
+        # inventerebbe un vantaggio/svantaggio mai osservato.
+        self.assertTrue(np.isnan(features["expected_goals_diff_stat"]))
+        # I valori realmente presenti non vengono toccati.
+        self.assertAlmostEqual(features["expected_goals_away_stat"], 1.3)
+        self.assertAlmostEqual(features["shots_on_goal_home_stat"], 4.2)
+
+    def test_a_real_zero_stays_zero_in_both_modes(self):
+        match = {
+            "id_team_home": 10,
+            "id_team_away": 20,
+            "mean_statistics": [
+                {"id_team": 10, "red_cards": 0},
+                {"id_team": 20, "red_cards": 0},
+            ],
+        }
+        for keep in (False, True):
+            features = FilterMarketService._extract_mean_features(match, keep_missing=keep)
+            self.assertEqual(features["red_cards_home_stat"], 0.0, f"keep_missing={keep}")
+
+
+class TestPerOutcomeOddsFeatures(unittest.TestCase):
+    """Feature quote SEPARATE PER ESITO (2026-09-13): la media legacy e'
+    calcolata su tutto il bucket del mercato, che contiene TUTTI gli esiti -
+    quindi non corrisponde alla quota di nessuna scommessa reale. Qui si
+    verifica che ogni esito abbia la propria media fra bookmaker."""
+
+    def test_over_and_under_get_separate_means(self):
+        market_odds = {
+            "over 2.5_Bet365": "1.80",
+            "over 2.5_Pinnacle": "1.82",
+            "under 2.5_Bet365": "2.05",
+            "under 2.5_Pinnacle": "2.01",
+        }
+        features = FilterMarketService._extract_per_outcome_odds_features(market_odds)
+
+        self.assertAlmostEqual(features["odds_mean_over_2_5"], (1.80 + 1.82) / 2)
+        self.assertAlmostEqual(features["odds_mean_under_2_5"], (2.05 + 2.01) / 2)
+        self.assertEqual(features["odds_count_over_2_5"], 2.0)
+        self.assertEqual(features["odds_count_under_2_5"], 2.0)
+        # La media legacy mescola i due lati e cade in mezzo: non e' la
+        # quota di nessuno dei due esiti.
+        legacy = FilterMarketService._extract_market_odds_features(market_odds)
+        self.assertGreater(legacy["odds_mean"], features["odds_mean_over_2_5"])
+        self.assertLess(legacy["odds_mean"], features["odds_mean_under_2_5"])
+
+    def test_goal_no_goal_keys_with_trailing_underscore_are_parsed(self):
+        """`map_odds()` produce 'goal__book'/'no_goal__book' (l'esito ha gia'
+        un underscore finale): lo split deve cadere sull'ULTIMO underscore,
+        altrimenti 'no_goal' finirebbe spezzato."""
+        market_odds = {
+            "goal__Bet365": "1.72",
+            "goal__Pinnacle": "1.75",
+            "no_goal__Bet365": "2.10",
+            "no_goal__Pinnacle": "2.05",
+        }
+        features = FilterMarketService._extract_per_outcome_odds_features(market_odds)
+
+        self.assertAlmostEqual(features["odds_mean_goal"], (1.72 + 1.75) / 2)
+        self.assertAlmostEqual(features["odds_mean_no_goal"], (2.10 + 2.05) / 2)
+
+    def test_three_outcome_market_keeps_outcomes_apart(self):
+        market_odds = {
+            "home_Bet365": "1.95",
+            "draw_Bet365": "3.60",
+            "away_Bet365": "4.20",
+        }
+        features = FilterMarketService._extract_per_outcome_odds_features(market_odds)
+
+        self.assertAlmostEqual(features["odds_mean_home"], 1.95)
+        self.assertAlmostEqual(features["odds_mean_draw"], 3.60)
+        self.assertAlmostEqual(features["odds_mean_away"], 4.20)
+
+    def test_normalized_probabilities_sum_to_one_and_overround_is_the_margin(self):
+        market_odds = {"home_B": "2.00", "draw_B": "4.00", "away_B": "4.00"}
+        features = FilterMarketService._extract_per_outcome_odds_features(market_odds)
+
+        # 1/2 + 1/4 + 1/4 = 1.0 esatto: mercato senza margine.
+        self.assertAlmostEqual(features["overround"], 1.0)
+        total = sum(v for k, v in features.items() if k.startswith("prob_norm_"))
+        self.assertAlmostEqual(total, 1.0)
+
+        # Con margine: le probabilita' grezze sommano > 1, le normalizzate no.
+        with_margin = FilterMarketService._extract_per_outcome_odds_features(
+            {"home_B": "1.90", "draw_B": "3.70", "away_B": "3.80"}
+        )
+        self.assertGreater(with_margin["overround"], 1.0)
+        self.assertAlmostEqual(
+            sum(v for k, v in with_margin.items() if k.startswith("prob_norm_")), 1.0
+        )
+
+    def test_line_specific_extraction_also_splits_the_two_sides(self):
+        """Filtrare per linea non bastava: dentro la linea 8.5 restavano
+        insieme 'over 8.5' e 'under 8.5' (entrambe contengono "8.5")."""
+        market_odds = {
+            "over 8.5_bookA": "1.50",
+            "under 8.5_bookA": "2.49",
+            "over 11.5_bookA": "6.75",
+        }
+        features = FilterMarketService._extract_line_specific_odds_features(market_odds, line=8.5)
+
+        self.assertAlmostEqual(features["odds_mean_over_8_5"], 1.50)
+        self.assertAlmostEqual(features["odds_mean_under_8_5"], 2.49)
+        self.assertNotIn("odds_mean_over_11_5", features)
+
+    def test_alias_prefixes_merge_into_the_same_outcome(self):
+        """2026-09-13: il provider ha cambiato convenzione a meta' 2025 -
+        'alternate over 1.5' e 'over 1.5' sono la stessa scommessa, usate in
+        periodi DISGIUNTI (verificato sui dati: fino a giugno 2025 la prima,
+        da agosto 2025 la seconda, distribuzioni sovrapponibili). Senza
+        unificarle ogni feature resta vuota su meta' delle partite."""
+        market_odds = {
+            "over 1.5_Bet365": "1.25",
+            "alternate over 1.5_Pinnacle": "1.27",
+            "under 1.5_Bet365": "3.80",
+            "alternate under 1.5_Pinnacle": "3.90",
+        }
+        features = FilterMarketService._extract_per_outcome_odds_features(market_odds)
+
+        # Un solo gruppo per lato, con ENTRAMBI i bookmaker dentro.
+        self.assertEqual(features["odds_count_over_1_5"], 2.0)
+        self.assertAlmostEqual(features["odds_mean_over_1_5"], (1.25 + 1.27) / 2)
+        self.assertNotIn("odds_mean_alternate_over_1_5", features)
+        # L'overround torna quello di un mercato a due esiti, non la somma
+        # di due mercati sovrapposti.
+        self.assertLess(features["overround"], 1.2)
+
+    def test_corner_and_card_prefixes_merge_too(self):
+        market_odds = {"corner over 8.5_bookA": "1.50", "over 8.5_bookB": "1.54"}
+        features = FilterMarketService._extract_per_outcome_odds_features(market_odds)
+
+        self.assertEqual(features["odds_count_over_8_5"], 2.0)
+        self.assertAlmostEqual(features["odds_mean_over_8_5"], (1.50 + 1.54) / 2)
+
+    def test_a_prefix_that_is_the_whole_outcome_is_not_stripped(self):
+        """Togliere il prefisso non deve mai svuotare l'esito."""
+        self.assertEqual(FilterMarketService._normalize_outcome_name("card"), "card")
+        self.assertEqual(FilterMarketService._normalize_outcome_name("corner"), "corner")
+
+    def test_empty_or_invalid_odds_return_empty_like_legacy(self):
+        self.assertEqual(FilterMarketService._extract_per_outcome_odds_features({}), {})
+        self.assertEqual(
+            FilterMarketService._extract_per_outcome_odds_features({"over 2.5_B": "0"}), {}
+        )
+
+    def test_legacy_features_are_still_emitted_for_already_promoted_models(self):
+        """I modelli gia' promossi elencano le colonne legacy nei loro
+        `feature_names`: se sparissero, il serving le riempirebbe con 0.0
+        azzerando in silenzio tutta l'informazione quote."""
+        market_odds = {"over 2.5_B": "1.80", "under 2.5_B": "2.05"}
+        legacy = FilterMarketService._extract_market_odds_features(market_odds)
+        for name in ("odds_mean", "odds_std", "odds_min", "odds_max", "odds_count", "odds_slot_1"):
+            self.assertIn(name, legacy)
+        self.assertTrue(FilterMarketService.LEGACY_ODDS_FEATURES.issuperset(legacy.keys()))
 
 
 if __name__ == "__main__":
