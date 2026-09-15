@@ -40,8 +40,12 @@ feature, lo stesso gia' usato da `promuovi_e_archivia.py`. Un mercato ancora a
 69 feature non prende una cartella dedicata — il suo modello e' vecchia
 procedura e va in archivio come gli altri.
 
-`archivio/` resta piatta di proposito: e' conservazione, i nomi file sono gia'
-unici e una gerarchia li' dentro non servirebbe a nessuno.
+`archivio/` ha la stessa separazione per mercato dei modelli in produzione
+(2026-09-15, richiesta dell'operatore): una cartella di conservazione piatta
+con dentro decine di `.pkl` di mercati diversi e' esattamente il problema da
+cui si parte. Il mercato si ricava dai mercati del registry (prefisso piu'
+lungo), poi dalla cartella `<mercato>_models/`, poi da cio' che precede
+`_champion` nel nome. Le `<mercato>_models/` svuotate vengono rimosse.
 
 ## Il punto da tenere presente: archiviare non e' ritirare
 
