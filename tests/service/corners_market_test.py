@@ -256,6 +256,44 @@ class TestFeatureColumnsForLineScoping(unittest.TestCase):
         self.assertNotIn("odds_mean_line_8_5", columns)
         self.assertNotIn("odds_mean_line_11_5", columns)
 
+    def test_no_column_of_another_line_ever_leaks_into_the_active_line(self):
+        """Regressione (2026-09-13): le feature quote per esito sono emesse
+        da DUE percorsi con suffissi diversi - '..._over_9_5_line_9_5' dal
+        builder per linea e '..._over_9_5' dal bucket intero. La seconda
+        forma sfuggiva all'esclusione, quindi il modello della linea 8.5
+        riceveva anche le quote di 9.5/10.5/11.5: esattamente il leak che le
+        quote per-linea erano nate per eliminare."""
+        matches = _synthetic_matches(n=40)
+        frame = build_corners_frame_from_records(matches)
+
+        for active in DEFAULT_LINES:
+            columns = _feature_columns_for(frame, DEFAULT_LINES, active_line=active, use_line_specific_odds=True)
+            other_labels = [
+                str(line).replace(".", "_") for line in DEFAULT_LINES if line != active
+            ]
+            leaked = [
+                col
+                for col in columns
+                if col.startswith(("odds_", "implied_prob_", "prob_norm_", "overround"))
+                and any(col.endswith(f"_{label}") for label in other_labels)
+            ]
+            self.assertEqual(leaked, [], f"linea attiva {active}: colonne di altre linee {leaked}")
+
+    def test_per_outcome_odds_split_over_and_under_within_the_active_line(self):
+        """Filtrare per linea non basta: dentro la linea restano i due lati
+        ('over 8.5' e 'under 8.5' contengono entrambi "8.5")."""
+        matches = _synthetic_matches(n=40)
+        frame = build_corners_frame_from_records(matches)
+
+        columns = _feature_columns_for(frame, DEFAULT_LINES, active_line=8.5, use_line_specific_odds=True)
+        over = [c for c in columns if c.startswith("odds_mean_over_8_5")]
+        under = [c for c in columns if c.startswith("odds_mean_under_8_5")]
+
+        self.assertTrue(over, "manca la media quote del lato Over")
+        self.assertTrue(under, "manca la media quote del lato Under")
+        row = frame.iloc[0]
+        self.assertNotAlmostEqual(row[over[0]], row[under[0]])
+
 
 class TestComputeMonotonicityReport(unittest.TestCase):
     """2026-09-12: "le linee di corners seguono lo stesso principio di

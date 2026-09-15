@@ -135,6 +135,133 @@ class FilterMarketService:
 
         return None
 
+    # Prefisso delle feature quote AGGREGATE "legacy" (una media sola su
+    # tutto il bucket del mercato, esiti mescolati). Restano emesse per non
+    # degradare i modelli gia' promossi - i loro `feature_names` le elencano
+    # e `PredictionSnapshotService` riempirebbe con 0.0 quelle mancanti,
+    # azzerando in silenzio tutta l'informazione quote in serving. Il
+    # training dei modelli NUOVI le esclude via `LEGACY_ODDS_FEATURES`.
+    LEGACY_ODDS_FEATURES: frozenset[str] = frozenset(
+        {"odds_count", "odds_mean", "odds_std", "odds_min", "odds_max"}
+        | {f"odds_slot_{i}" for i in range(1, 11)}
+    )
+
+    @staticmethod
+    def _split_outcome_and_bookmaker(key: str) -> tuple[str, str]:
+        """Spezza una chiave quote nel formato prodotto da `map_odds()`,
+        `f'{alternate_value}_{name_book}'`, nella coppia (esito, bookmaker).
+
+        Lo split e' sull'ULTIMO underscore perche' l'esito ne contiene
+        spesso uno (`no_goal_`, `goal_`) mentre il nome del bookmaker,
+        nei dati osservati, non ne contiene mai (es. 'Bet365', '1xBet',
+        'William Hill' - gli spazi restano spazi). Se il nome di un
+        bookmaker contenesse un underscore lo split cadrebbe nel punto
+        sbagliato: e' l'unico caso in cui questo parsing sbaglia, ed e'
+        per questo che le chiavi anomale vanno verificate sui dati reali
+        prima di addestrare.
+        """
+        outcome, separator, bookmaker = key.rpartition("_")
+        if not separator:
+            # Nessun underscore: chiave non conforme, l'intera stringa e'
+            # trattata come esito e il bookmaker resta ignoto (mai scartata
+            # in silenzio: finirebbe comunque in un gruppo esito suo).
+            return key.strip(), ""
+        return outcome.strip(), bookmaker.strip()
+
+    # Prefissi che il provider antepone all'esito senza cambiarne il
+    # significato: 'alternate over 1.5' e 'over 1.5' sono la STESSA
+    # scommessa (2026-09-13, verificato sui dati - le due forme coprono
+    # periodi disgiunti, `alternate` fino a giugno 2025 e la forma semplice
+    # da agosto 2025, con distribuzioni di quota e correlazione col target
+    # sovrapponibili). Analogamente 'corner over 8.5' e 'over 8.5' dentro il
+    # mercato corners, 'card over 3.5' e 'over 3.5' dentro cards.
+    #
+    # Senza questa unificazione ogni feature per esito resta vuota sulla
+    # meta' delle partite in cui il provider usava l'altro nome: su
+    # Under/Over 1.5 la copertura passa dal 44% al 100%.
+    _OUTCOME_ALIAS_PREFIXES: tuple[str, ...] = ("alternate", "corner", "card")
+
+    @staticmethod
+    def _normalize_outcome_name(outcome: str) -> str:
+        """Slug stabile per comporre il nome della feature: 'over 2.5' ->
+        'over_2_5', 'no_goal_' -> 'no_goal', '1X' -> '1x',
+        'alternate over 1.5' -> 'over_1_5'."""
+        slug = outcome.strip().lower()
+        for char in (" ", ".", "-", "/"):
+            slug = slug.replace(char, "_")
+        while "__" in slug:
+            slug = slug.replace("__", "_")
+        slug = slug.strip("_")
+
+        # Un solo prefisso alla volta e SOLO se resta qualcosa dopo: cosi'
+        # l'esito 'card' di un ipotetico mercato binario non diventa vuoto.
+        for prefisso in FilterMarketService._OUTCOME_ALIAS_PREFIXES:
+            atteso = f"{prefisso}_"
+            if slug.startswith(atteso) and len(slug) > len(atteso):
+                return slug[len(atteso):]
+        return slug
+
+    @staticmethod
+    def _extract_per_outcome_odds_features(market_odds: dict) -> dict:
+        """Feature quote SEPARATE PER ESITO (2026-09-13, richiesto
+        esplicitamente dall'operatore: "per ogni mercato devi prendere la
+        media delle quote bookmakers... sia per il goal e no goal separati,
+        under *.5 e over *.5 separati").
+
+        `_extract_market_odds_features` calcola UNA media su tutto il bucket
+        del mercato, che pero' contiene TUTTI gli esiti (home+draw+away per
+        h2h, over+under per i totali, goal+no_goal per BTTS): la media
+        risultante non corrisponde alla quota di nessuna scommessa reale
+        (verificato sui dati: su h2h, con casa a 1.95 e trasferta a 4.20, al
+        modello arrivava 3.23). Qui le quote vengono prima RAGGRUPPATE per
+        esito leggendolo dalla chiave, poi aggregate dentro ogni gruppo -
+        cioe' la media fra bookmaker DELLO STESSO esito.
+
+        Oltre alle statistiche descrittive per esito produce:
+        - `implied_prob_<esito>`: 1/quota media, la probabilita' implicita
+          GREZZA (somma > 1 su tutti gli esiti: include il margine);
+        - `overround`: la somma di quelle probabilita', cioe' il margine del
+          bookmaker su questo mercato/partita;
+        - `prob_norm_<esito>`: la probabilita' implicita normalizzata per
+          l'overround, cioe' la stima del mercato ripulita dal margine -
+          l'unica direttamente confrontabile con la probabilita' del modello.
+
+        Ritorna `{}` se nessuna quota valida, come la funzione legacy.
+        """
+        grouped: dict[str, list[float]] = {}
+        for key, raw_value in market_odds.items():
+            value = FilterMarketService._safe_float(raw_value)
+            if value <= 0:
+                continue
+            outcome, _bookmaker = FilterMarketService._split_outcome_and_bookmaker(str(key))
+            slug = FilterMarketService._normalize_outcome_name(outcome)
+            if not slug:
+                continue
+            grouped.setdefault(slug, []).append(value)
+
+        if not grouped:
+            return {}
+
+        features: dict[str, float] = {}
+        implied_by_outcome: dict[str, float] = {}
+        for slug, values in grouped.items():
+            mean = float(np.mean(values))
+            features[f"odds_count_{slug}"] = float(len(values))
+            features[f"odds_mean_{slug}"] = mean
+            features[f"odds_std_{slug}"] = float(np.std(values))
+            features[f"odds_min_{slug}"] = float(np.min(values))
+            features[f"odds_max_{slug}"] = float(np.max(values))
+            implied = 1.0 / mean
+            features[f"implied_prob_{slug}"] = implied
+            implied_by_outcome[slug] = implied
+
+        overround = float(sum(implied_by_outcome.values()))
+        features["overround"] = overround
+        for slug, implied in implied_by_outcome.items():
+            features[f"prob_norm_{slug}"] = implied / overround if overround > 0 else 0.0
+
+        return features
+
     @staticmethod
     def _extract_market_odds_features(market_odds: dict) -> dict:
         odds_values = [FilterMarketService._safe_float(v) for v in market_odds.values() if v is not None]
@@ -200,22 +327,49 @@ class FilterMarketService:
             extracted_line = FilterMarketService._extract_line_from_odds_key(key)
             if extracted_line is not None and abs(extracted_line - line) < tolerance:
                 filtered[key] = value
-        return FilterMarketService._extract_market_odds_features(filtered)
+
+        # Filtrare per linea non basta: dentro UNA linea restano comunque i
+        # due lati ('over 8.5_X' e 'under 8.5_X' contengono entrambi "8.5" e
+        # passano entrambi il filtro sopra). Le feature per esito separano
+        # anche quelli; le legacy restano per i modelli gia' promossi.
+        features = FilterMarketService._extract_market_odds_features(filtered)
+        features.update(FilterMarketService._extract_per_outcome_odds_features(filtered))
+        return features
 
     @staticmethod
-    def _extract_mean_features(match: dict) -> dict:
+    def _float_or_nan(value) -> float:
+        """Come `_safe_float`, ma un dato ASSENTE resta assente (NaN) invece
+        di diventare 0.0 (2026-09-13).
+
+        `_safe_float` azzera i mancanti alla fonte, prima ancora che il
+        DataFrame esista: per il modello "non lo sappiamo" diventa cosi'
+        "squadra che non tira mai in porta". Su `expected_goals` (assente sul
+        46% delle partite) e `goals_prevented` (73%) questo falsa proprio le
+        statistiche piu' legate ai gol. Usato SOLO dal percorso di analisi
+        (`build_dataset(fill_missing=False)`): il default resta l'azzeramento,
+        perche' i modelli gia' registrati sono stati addestrati cosi'.
+        """
+        if value is None:
+            return float("nan")
+        if isinstance(value, str) and value.replace("%", "").strip() == "":
+            return float("nan")
+        return FilterMarketService._safe_float(value)
+
+    @staticmethod
+    def _extract_mean_features(match: dict, keep_missing: bool = False) -> dict:
         mean_home, mean_away = FilterMarketService._resolve_mean_stats(match)
         if not mean_home or not mean_away:
             return {}
 
+        converti = FilterMarketService._float_or_nan if keep_missing else FilterMarketService._safe_float
         features = {}
         keys = set(mean_home.keys()).union(set(mean_away.keys()))
         for key in keys:
             if key == "id_team":
                 continue
 
-            home_v = FilterMarketService._safe_float(mean_home.get(key))
-            away_v = FilterMarketService._safe_float(mean_away.get(key))
+            home_v = converti(mean_home.get(key))
+            away_v = converti(mean_away.get(key))
             normalized = FilterMarketService._normalize_feature_name(key)
             if normalized == "":
                 continue
@@ -226,7 +380,7 @@ class FilterMarketService:
 
         return features
 
-    def _build_row(self, match: dict, market: str, with_target: bool) -> Optional[dict]:
+    def _build_row(self, match: dict, market: str, with_target: bool, keep_missing: bool = False) -> Optional[dict]:
         odds_list = match.get("odds") or []
         if not odds_list:
             return None
@@ -243,8 +397,12 @@ class FilterMarketService:
             "prediction_at": match.get("date_match"),
         }
 
+        # Entrambe di proposito: le legacy (esiti mescolati) tengono in vita
+        # i modelli gia' promossi finche' non vengono riaddestrati, le nuove
+        # per esito sono quelle che i modelli nuovi useranno davvero.
         row.update(self._extract_market_odds_features(market_odds))
-        row.update(self._extract_mean_features(match))
+        row.update(self._extract_per_outcome_odds_features(market_odds))
+        row.update(self._extract_mean_features(match, keep_missing=keep_missing))
 
         # Senza feature utili non ha senso produrre la riga.
         if len(row) <= 3:
@@ -262,21 +420,38 @@ class FilterMarketService:
 
         return row
 
-    def build_dataset(self, market: str, seasons: Optional[list[int]] = None) -> pd.DataFrame:
+    def build_dataset(
+        self, market: str, seasons: Optional[list[int]] = None, fill_missing: bool = True
+    ) -> pd.DataFrame:
+        """`fill_missing=False` (2026-09-13) restituisce i NaN cosi' come sono,
+        invece di azzerarli.
+
+        L'azzeramento di default e' storico e resta il comportamento per il
+        training (i modelli registrati sono stati addestrati cosi'), ma rende
+        impossibile QUALUNQUE analisi sui valori mancanti: dopo `fillna(0)`
+        un dato assente e uno zero reale sono lo stesso numero. Su
+        `expected_goals`, assente sul 46% delle partite, questo significa
+        dare in pasto al modello "squadra che non tira mai in porta" invece
+        di "non lo sappiamo" - e infatti la statistica piu' predittiva per i
+        gol risulta penultima per importanza. Serve quindi un modo di
+        estrarre il dataset GREZZO per l'EDA.
+        """
         if market not in self.SUPPORTED_MARKETS:
             raise ValueError(f"Mercato non supportato: {market}")
 
         rows = []
         for match in self._search_matches(seasons=seasons, status="FT"):
-            row = self._build_row(match=match, market=market, with_target=True)
+            row = self._build_row(
+                match=match, market=market, with_target=True, keep_missing=not fill_missing
+            )
             if row:
                 rows.append(row)
 
         if not rows:
             return pd.DataFrame()
 
-        df = pd.DataFrame(rows).replace([np.inf, -np.inf], np.nan).fillna(0)
-        return df
+        df = pd.DataFrame(rows).replace([np.inf, -np.inf], np.nan)
+        return df.fillna(0) if fill_missing else df
 
     def _fetch_match_dict(self, fixture_id: int) -> Optional[dict]:
         match = self.match_repo.filter_by(dict_search={"id_fixture": fixture_id}).first()
