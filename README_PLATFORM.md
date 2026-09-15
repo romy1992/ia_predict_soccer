@@ -120,6 +120,8 @@ Lo scheduler registra 6 job APScheduler COMPLETAMENTE separati e indipendenti (`
 
 `data_daily_refresh` e' lo STESSO job invocato dal bottone "Aggiorna tutto" della Sidebar (sempre visibile, in ogni pagina del frontend): importa le partite di IERI (tutti i campionati censiti) + sincronizza il calendario prossimo (`DAILY_REFRESH_DAYS_AHEAD` giorni, default 7, con upsert sulle partite gia' presenti). Si sovrappone volutamente alla finestra di `data_future_sync` — disattivabile da Impostazioni se si vuole un solo giro/giorno.
 
+Tutti i job che passano da `download_import_matches` (`data_daily_refresh`, `data_sync_today`, `data_future_sync`, `data_settlement`) e il bottone "Aggiorna tutto" condividono un advisory lock Postgres (`src/jobs/job_lock.py`, 2026-09-15): `api` e `scheduler` sono container distinti e `max_instances=1` di APScheduler vale solo dentro il proprio processo, quindi senza lock il bottone premuto mentre girava il job schedulato produceva due import sovrapposti sulla stessa finestra di date — 116 partite finite a DB in doppia copia. Chi non ottiene il lock salta il giro e lo storico registra un `success` con `skipped_locked` (non un `failed`, che `_is_job_due` non potrebbe distinguere da un problema vero).
+
 Ogni job logga il proprio esito in `best_models/jobs_history.jsonl` (`job_type`: `today_update`/`settlement`/`future_sync`/`daily_refresh`/`retrain`/`live_sync`). `build_scheduler(cfg)` costruisce lo scheduler SENZA avviarlo (usato dai test); `start_scheduler()` lo avvia (entry point di `python -m src.jobs.scheduler`).
 
 ## Trigger manuale da API
@@ -155,7 +157,8 @@ Parametri utili:
 Endpoint dashboard dedicati alla UI React:
 - `GET /dashboard/overview?target_date=YYYY-MM-DD`
 - `GET /dashboard/live?target_date=YYYY-MM-DD&limit=30`
-- `GET /dashboard/day?target_date=YYYY-MM-DD&phase=all|to_play|live|finished&search=term`
+- `GET /dashboard/day?target_date=YYYY-MM-DD&phase=all|to_play|live|finished|unknown&search=term`
+  - `unknown` (2026-09-15): partita con calcio d'inizio passato da oltre 4 ore ma ancora senza stato finale a DB, cioe' una riga che il sync non ha aggiornato. Prima queste righe venivano classificate `live` deducendo la fase dall'orario, e una partita di giorni prima restava "In diretta" per sempre (vedi `DashboardService._classify_phase`).
 - `GET /dashboard/match/{fixture_id}`
 
 Endpoint dataset LIVE distinto (LIVE-01, `src/data/live/`) — dato GREZZO della pipeline live, separato dal dataset pre-match e da `/dashboard/live` (che resta invariato):

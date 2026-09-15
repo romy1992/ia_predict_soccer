@@ -128,6 +128,13 @@ export function phaseLabel(phase) {
   if (phase === "finished") {
     return "Finita";
   }
+  // `unknown` (backend, 2026-09-15): partita con calcio d'inizio passato da
+  // piu' di 4 ore ma ancora senza stato finale a DB. Non e' "In diretta" (era
+  // il vecchio comportamento, che teneva partite di giorni prima marcate come
+  // in corso) ne' "Da giocare": e' una riga che il sync non ha aggiornato.
+  if (phase === "unknown") {
+    return "Da aggiornare";
+  }
   return "Da giocare";
 }
 
@@ -137,6 +144,9 @@ export function phaseClass(phase) {
   }
   if (phase === "finished") {
     return "badge-finished";
+  }
+  if (phase === "unknown") {
+    return "badge-stale";
   }
   return "badge-upcoming";
 }

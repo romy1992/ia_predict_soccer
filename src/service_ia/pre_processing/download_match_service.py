@@ -22,7 +22,11 @@ from src.repository.odds_snapshot_repository import OddsSnapshotRepository
 from src.service_ia.config.app_config import load_app_config
 from src.service_ia.mapper.statistic_mapper import get_attribute_statistics, form_last_5_tot
 from src.service_ia.model.match import Match, Statistics, Odds, OddsSnapshot
-from src.service_ia.pre_processing.api_sports_provider import ApiSportsProvider, ApiSportsQuotaExceededError
+from src.service_ia.pre_processing.api_sports_provider import (
+    ApiSportsProvider,
+    ApiSportsQuotaExceededError,
+    ApiSportsUnavailableError,
+)
 from src.service_ia.utility.request_api import base_api_statistics, get_api_sports_provider
 
 logging.basicConfig(level=logging.DEBUG)
@@ -430,6 +434,11 @@ def download_import_matches(
         "updated": 0,
         "skipped": 0,
         "failed": 0,
+        # Leghe per cui il provider non ha risposto affatto (retry esauriti):
+        # distinte da `failed`, che conta le singole fixture. Un valore > 0
+        # significa "questo import e' PARZIALE", informazione che prima
+        # andava completamente perduta (vedi `ApiSportsUnavailableError`).
+        "failed_leagues": 0,
         "fixtures_seen": 0,
         "snapshots_upserted": 0,
         "params": {
@@ -446,8 +455,13 @@ def download_import_matches(
         "quota_exceeded": False,
     }
 
-    list_matches = []
-    list_dict_matches = []
+    # 2026-09-15: non esiste piu' una `list_matches` di righe nuove
+    # bufferizzate fino alla fine del job (era la causa delle righe
+    # duplicate, vedi `upsert_base_by_fixture`): ogni fixture viene
+    # persistita nella sua iterazione. Gli snapshot restano bufferizzati -
+    # li' il buffer serve a fare un solo bulk upsert invece di migliaia di
+    # round-trip, e non c'e' identita' da contendere (la PK `id_snapshot` e'
+    # un hash deterministico del contenuto).
     snapshot_buffer: list[OddsSnapshot] = []
 
     for season in seasons:
@@ -491,6 +505,26 @@ def download_import_matches(
                     'error': f'API-Sports quota esaurita (season={season}, league={league}): {quota_exc}',
                 })
                 break
+            except ApiSportsUnavailableError as unavailable_exc:
+                # 2026-09-15: PRIMA `request()` restituiva `[]` a retry
+                # esauriti, indistinguibile da "nessuna partita in questa
+                # lega/data": la lega veniva saltata e il job chiudeva
+                # `success` con `failed=0` e `errors=[]`, senza che nulla
+                # dicesse che un intero campionato non era stato importato
+                # (vedi `ApiSportsUnavailableError`). Ora il fallimento e'
+                # esplicito e finisce nel report - ma NON interrompe il giro
+                # come fa la quota esaurita: un 5xx o un rate-limit al minuto
+                # riguardano questa richiesta, non tutte le leghe successive.
+                logging.error(
+                    '<<< API-Sports non disponibile per season=%s league=%s: %s >>>',
+                    season, league, unavailable_exc,
+                )
+                report['failed_leagues'] += 1
+                report['errors'].append({
+                    'fixture_id': None,
+                    'error': f'API-Sports non disponibile (season={season}, league={league}): {unavailable_exc}',
+                })
+                continue
             report['fixtures_seen'] += len(fixtures)
 
             for fixture in fixtures:
@@ -532,8 +566,23 @@ def download_import_matches(
                     odds_map = map_odds(match, id_fix, fixture_bookmakers=fixture_bookmakers)
                     odds_objs = [Odds(**odds_map)] if odds_map else None
 
+                    # Bug fix 2026-09-15 (righe duplicate): la riga base viene
+                    # scritta SUBITO con un upsert su `id_fixture`, che
+                    # restituisce l'`id_match_fk` definitivo - quello di chi ha
+                    # vinto la corsa, se due import girano sovrapposti. PRIMA
+                    # le righe nuove restavano in `list_matches` fino alla fine
+                    # del job (minuti), invisibili a chiunque altro: due giri
+                    # paralleli inserivano due volte la stessa partita e una
+                    # delle due copie non veniva piu' aggiornata, restando a
+                    # `NS` per sempre (vedi `MatchRepository.upsert_base_by_fixture`).
+                    # Va fatto PRIMA di `map_odds_snapshots`, che deve agganciare
+                    # gli snapshot all'id definitivo e non a un uuid appena
+                    # generato che potrebbe non finire mai a DB.
+                    id_match_fk, inserita_ora = repo_match.upsert_base_by_fixture(dict_match)
+                    dict_match['id_match_fk'] = id_match_fk
+
                     snapshots = map_odds_snapshots(
-                        id_match=dict_match['id_match_fk'],
+                        id_match=id_match_fk,
                         id_fixture=id_fix,
                         fixture_bookmakers=fixture_bookmakers,
                     )
@@ -543,18 +592,14 @@ def download_import_matches(
                     if odds_objs:
                         dict_match['odds'] = odds_objs
 
-                    dict_match_json = dict(dict_match)
-                    dict_match_json['statistics'] = [s.to_dict() for s in stats_objs]
-                    if odds_objs:
-                        dict_match_json['odds'] = [o.to_dict() for o in odds_objs]
-
-                    if match is None:
-                        obj = Match(**dict_match)
-                        list_matches.append(obj)
-                        list_dict_matches.append(dict_match_json)
+                    # L'upsert ha già scritto le colonne base; questo `save`
+                    # (merge) serve alle RELAZIONI statistics/odds, che con
+                    # `cascade="all, delete-orphan"` vengono sostituite da
+                    # quelle appena mappate - esattamente come prima.
+                    repo_match.save(Match(**dict_match))
+                    if inserita_ora:
                         report['inserted'] += 1
                     else:
-                        repo_match.save(Match(**dict_match))
                         report['updated'] += 1
                 except ApiSportsQuotaExceededError as quota_exc:
                     # BUGFIX 2026-09-06: PRIMA questa eccezione veniva
@@ -594,13 +639,14 @@ def download_import_matches(
                 # iterazione (vedi cima del metodo).
                 break
 
-    try:
-        repo_match.save_all(list_matches)
-    except Exception:
-        logging.error('Errore nel salvataggio massivo a db. File temporaneo salvato')
-        if len(list_dict_matches) > 0:
-            with open("error_save_dict.json", "w", encoding="utf-8") as f:
-                json.dump(list_dict_matches, f, ensure_ascii=False, indent=4)
+    # 2026-09-15: qui c'era il `repo_match.save_all(list_matches)` finale, con
+    # dump su `error_save_dict.json` se il bulk insert saltava. Non serve piu':
+    # ogni fixture e' ora persistita nella propria iterazione (upsert +
+    # merge), quindi non esiste piu' un bulk "tutto o niente" da recuperare a
+    # posteriori e un fallimento resta isolato alla singola fixture, contato
+    # in `report['failed']` con il dettaglio in `report['errors']` - una
+    # granularita' migliore di quella che dava il file. Vedi la nota in
+    # `re_processor_error`, che quel file lo leggeva.
 
     try:
         repo_snapshot.save_many(snapshot_buffer)
@@ -630,6 +676,14 @@ def re_processor_error():
     """
     Riprocessa il file di errori avvenuto durante il download
     :return: prova a salvare tutto a db
+
+    NOTA (2026-09-15): `download_import_matches` non produce piu'
+    `error_save_dict.json`. Quel file era il recupero di un bulk insert
+    "tutto o niente" a fine job, che non esiste piu' (ogni fixture viene
+    persistita singolarmente con upsert+merge, e un fallimento finisce in
+    `report['errors']`). La funzione resta invocabile a mano per riprocessare
+    un file prodotto da un'esecuzione PRECEDENTE alla modifica, se ne avete
+    ancora uno da recuperare.
     """
     # Lettura da file JSON
     with open("error_save_dict.json", "r", encoding="utf-8") as f:
