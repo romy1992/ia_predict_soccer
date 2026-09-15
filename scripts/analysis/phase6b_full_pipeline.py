@@ -148,27 +148,61 @@ def eda_report(df: pd.DataFrame, market: str) -> dict[str, Any]:
     }
 
 
-def drop_redundant(columns: list[str], corr: dict[str, float], pairs: list[dict[str, Any]]) -> list[str]:
+PROTECTED_ODDS = {
+    "h2h": [
+        "prob_norm_home",
+        "prob_norm_draw",
+        "prob_norm_away",
+        "odds_mean_home",
+        "odds_mean_draw",
+        "odds_mean_away",
+        "overround",
+    ],
+    "dc": [
+        "implied_prob_1x",
+        "implied_prob_x2",
+        "implied_prob_12",
+        "odds_mean_1x",
+        "odds_mean_x2",
+        "odds_mean_12",
+        "overround",
+    ],
+}
+
+
+def drop_redundant(
+    columns: list[str], corr: dict[str, float], pairs: list[dict[str, Any]], protected: set[str]
+) -> list[str]:
     keep = list(columns)
     for row in pairs:
         a, b = row["a"], row["b"]
         if a not in keep or b not in keep:
             continue
-        # Tieni quella piu' correlata col target; a parita' la prima.
-        drop = b if abs(corr.get(a, 0.0)) >= abs(corr.get(b, 0.0)) else a
-        if drop in keep:
+        if a in protected and b in protected:
+            continue
+        if a in protected:
+            drop = b
+        elif b in protected:
+            drop = a
+        else:
+            drop = b if abs(corr.get(a, 0.0)) >= abs(corr.get(b, 0.0)) else a
+        if drop in keep and drop not in protected:
             keep.remove(drop)
     return keep
 
 
 def features_after_eda(df: pd.DataFrame, market: str, eda: dict[str, Any]) -> list[str]:
+    """`df` deve essere GIA' filtrato alle righe con quote canoniche: l'EDA
+    sul raw dc include il 50% di JSON contaminati (solo corner), dove le
+    quote 1X/X2 sono NaN, e un taglio al 20% butta via TUTTE le feature di
+    quota."""
     base = h2h_feature_columns(df) if market == "h2h" else dc_feature_columns(df)
-    too_missing = {col for col, payload in eda["missing_columns"].items() if payload["pct"] > 0.20}
+    protected = set(PROTECTED_ODDS[market])
+    missing_pct = df.isna().mean()
+    too_missing = {c for c in base if float(missing_pct.get(c, 0.0)) > 0.20 and c not in protected}
     base = [c for c in base if c in df.columns and c not in too_missing]
     corr = {row["column"]: row["spearman"] for row in eda["top_corr_vs_y"]}
-    # Anche le colonne non in top20: ricalcolo veloce solo per i pair.
-    corr_full = corr
-    return drop_redundant(base, corr_full, eda["redundant_pairs_over_0_95"])
+    return drop_redundant(base, corr, eda["redundant_pairs_over_0_95"], protected)
 
 
 def train_one(market: str, frame: pd.DataFrame, feature_columns: list[str]) -> dict[str, Any]:
@@ -348,10 +382,14 @@ def main() -> None:
     eda_h2h = eda_report(h2h_raw, "h2h")
     eda_dc = eda_report(dc_raw, "dc")
 
-    h2h = _prepare_frame(h2h_raw.fillna(0), H2H_REQUIRED_ODDS)
-    dc = _prepare_frame(dc_raw.fillna(0), DC_REQUIRED_ODDS)
-    h2h_features = features_after_eda(h2h, "h2h", eda_h2h)
-    dc_features = features_after_eda(dc, "dc", eda_dc)
+    h2h = _prepare_frame(h2h_raw, H2H_REQUIRED_ODDS)
+    dc = _prepare_frame(dc_raw, DC_REQUIRED_ODDS)
+    eda_h2h_train = eda_report(h2h, "h2h_dopo_filtro_quote")
+    eda_dc_train = eda_report(dc, "dc_dopo_filtro_quote")
+    h2h_features = features_after_eda(h2h, "h2h", eda_h2h_train)
+    dc_features = features_after_eda(dc, "dc", eda_dc_train)
+    h2h = h2h.fillna(0)
+    dc = dc.fillna(0)
     print(f"\nfeature dopo EDA: h2h={len(h2h_features)}  dc={len(dc_features)}")
     print(f"h2h quote tenute: {[c for c in h2h_features if not c.endswith('_stat')]}")
     print(f"dc  quote tenute: {[c for c in dc_features if not c.endswith('_stat')]}")
