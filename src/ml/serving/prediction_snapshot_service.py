@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import os
 from typing import Any, Optional
 
 import numpy as np
@@ -10,6 +9,7 @@ import pandas as pd
 from src.repository.match_prediction_snapshot_repository import MatchPredictionSnapshotRepository
 from src.service_ia.model.match import MatchPredictionSnapshot
 from src.service_ia.training.market_service.filter_market_service import FilterMarketService
+from src.service_ia.training.model_paths import resolve_model_path
 from src.service_ia.training.model_registry import ModelRegistry
 
 # Stesso insieme di `dashboard_service.FINAL_STATUSES` (fonte di verita' per
@@ -224,8 +224,14 @@ class PredictionSnapshotService:
             if not model_meta:
                 continue
 
-            model_path = model_meta.get("model_path")
-            if not model_path or not os.path.exists(model_path):
+            # Il percorso del registry viene RISOLTO, non usato alla cieca:
+            # dopo la riorganizzazione di `best_models/` (2026-09-15) un file
+            # puo' stare in `under_over/<mercato>/` o in `archivio/`, e una
+            # riga rimasta indietro darebbe una predizione mancante invece di
+            # un errore visibile. Se il percorso registrato esiste, e' sempre
+            # quello che vince.
+            model_path = resolve_model_path(model_meta.get("model_path"))
+            if not model_path:
                 continue
 
             frame = frames.get(market)

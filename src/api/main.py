@@ -117,6 +117,7 @@ from src.service_ia.config.app_config import load_app_config
 from src.service_ia.pre_processing.api_sports_provider import ApiSportsProvider
 from src.service_ia.pre_processing.settlement_service import SettlementService
 from src.service_ia.training.market_service.filter_market_service import FilterMarketService
+from src.service_ia.training.model_paths import resolve_model_path
 from src.service_ia.training.model_registry import ModelRegistry
 from src.service_ia.training.prediction_logger import PredictionLogger
 
@@ -406,9 +407,14 @@ def predict(market: str, payload: PredictRequest) -> PredictResponse:
     if not active:
         raise HTTPException(status_code=404, detail=f"Nessun modello disponibile per mercato {market}")
 
-    model_path = active.get("model_path")
-    if not model_path or not os.path.exists(model_path):
-        raise HTTPException(status_code=404, detail=f"File modello non trovato: {model_path}")
+    # Il percorso registrato viene risolto (`resolve_model_path`) e non usato
+    # alla cieca: dopo la riorganizzazione di `best_models/` un modello puo'
+    # stare in `under_over/<mercato>/` o in `archivio/`. Il valore registrato
+    # vince sempre quando esiste; il messaggio d'errore mostra comunque quello,
+    # non il percorso cercato, perche' e' li' che va corretta la riga.
+    model_path = resolve_model_path(active.get("model_path"))
+    if not model_path:
+        raise HTTPException(status_code=404, detail=f"File modello non trovato: {active.get('model_path')}")
 
     model = joblib.load(model_path)
 
