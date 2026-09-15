@@ -44,6 +44,7 @@ class MarketTrainResult:
     best_cv_f1: Optional[float]
     selected_features: list[str]
     details: dict[str, Any]
+    estimator: Optional[Any] = None
 
 
 def _build_temporal_cv(df: pd.DataFrame) -> Optional[list[tuple[list[int], list[int]]]]:
@@ -478,6 +479,8 @@ def train_market(
     selection_method: str = "kbest",
     save_model: bool = True,
     feature_columns: Optional[list[str]] = None,
+    search_strategy: str = "grid",
+    random_search_iter: int = 10,
 ) -> MarketTrainResult:
     """`feature_columns` (2026-09-13) restringe il training a un sottoinsieme
     ESPLICITO di colonne, invece di partire da tutte quelle che il builder
@@ -488,6 +491,11 @@ def train_market(
     log-loss e Brier, perche' possesso/xG/corner aggiungevano rumore. Il
     selettore dentro la grid (`selector__k`) continua a lavorare, ma su un
     bacino gia' ripulito invece che su tutto.
+
+    `search_strategy="random"` (stesso di `_select_champion_via_model_search`):
+    RandomizedSearchCV su logistic / random_forest / random_forest_smote, poi
+    voting e stacking sui 2 migliori. Il default resta `"grid"` cosi' il job
+    notturno non cambia comportamento.
 
     `None` (default) lascia il comportamento storico: tutte le colonne non
     meta finiscono nel bacino di partenza.
@@ -572,6 +580,8 @@ def train_market(
         season_series=season_series,
         league_series=league_series,
         selection_method=selection_method,
+        search_strategy=search_strategy,
+        random_search_iter=random_search_iter,
     )
     model_results = search_result.model_results
     champion_name = search_result.champion_name
@@ -670,11 +680,14 @@ def train_market(
             "selection_in_pipeline": True,
             "selection_metric": "composite_probability_score",
             "champion_selection_score": champion_payload.get("selection_score"),
+            "search_strategy": search_strategy,
+            "random_search_iter": random_search_iter if search_strategy == "random" else None,
             "input_features": len(feature_names),
             "selected_features": len(champion_selected_features),
             "calibration": calibration_payload,
             "models": model_results,
         },
+        estimator=champion_estimator,
     )
 
 
