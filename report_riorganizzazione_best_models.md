@@ -130,6 +130,19 @@ per predire": rende il serving indifferente a dove sta fisicamente il file.
   sempre. Ricostruisce il percorso di partenza dal relativo (non dal nome
   file) e non sovrascrive mai un omonimo gia' in archivio.
 
+### Due script che il nuovo layout avrebbe rotto
+
+- `scripts/fix_registry_model_paths.py` riscriveva ogni `model_path` come
+  `<radice>/<nome file>`. Dopo la riorganizzazione quel comportamento
+  riporterebbe **tutte** le righe nella radice — disfarebbe lo spostamento e
+  romperebbe l'intero registry in un colpo solo. Ora riscrive solo la radice e
+  lascia intatta la posizione dentro `best_models`.
+- `scripts/analysis/apply_monotonic_to_champions.py` cercava
+  `<mercato>_champion.pkl` solo nella radice. Ora risolve il percorso, cosi'
+  trova il champion anche in `archivio/` o nella cartella del mercato, e se
+  davvero non c'e' lo dice con un errore esplicito invece di un traceback
+  generico.
+
 ## Verifica fatta qui
 
 `python3 -m pytest tests/service/model_paths_test.py tests/service/riorganizza_best_models_test.py`
