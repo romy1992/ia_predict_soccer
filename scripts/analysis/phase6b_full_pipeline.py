@@ -409,7 +409,12 @@ def main() -> None:
             "save_model": False,
             "coherence": "se h2h predice casa, dc=1X; P(1X)=max(P(1X), P(casa))",
         },
-        "eda": {"h2h": eda_h2h, "dc": eda_dc},
+        "eda": {
+            "h2h_raw": eda_h2h,
+            "dc_raw": eda_dc,
+            "h2h_dopo_filtro_quote": eda_h2h_train,
+            "dc_dopo_filtro_quote": eda_dc_train,
+        },
         "h2h": {
             "champion": h2h_run["champion"],
             "candidates": h2h_run["candidates"],
