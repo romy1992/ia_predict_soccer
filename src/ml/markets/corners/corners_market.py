@@ -150,6 +150,7 @@ def build_corners_frame_from_records(
     matches: list[dict[str, Any]],
     lines: tuple[float, ...] = DEFAULT_LINES,
     odds_market: str = ODDS_MARKET,
+    fill_missing: bool = True,
 ) -> pd.DataFrame:
     """Dataset (feature odds/mean_stats generiche + feature dedicate corner +
     target reale PER OGNI linea) sulle fixture con quote 'corners' disponibili."""
@@ -176,7 +177,9 @@ def build_corners_frame_from_records(
     if not rows:
         return pd.DataFrame()
 
-    frame = pd.DataFrame(rows).replace([np.inf, -np.inf], np.nan).fillna(0)
+    frame = pd.DataFrame(rows).replace([np.inf, -np.inf], np.nan)
+    if fill_missing:
+        frame = frame.fillna(0)
     frame["id_fixture"] = frame["id_fixture"].astype(int)
     frame["prediction_at"] = pd.to_datetime(frame["prediction_at"], utc=True, errors="coerce")
     frame = frame.dropna(subset=["prediction_at"]).sort_values(by=["prediction_at", "id_fixture"]).reset_index(drop=True)

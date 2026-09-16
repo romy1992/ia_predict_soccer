@@ -480,6 +480,9 @@ class FilterMarketService:
         gol risulta penultima per importanza. Serve quindi un modo di
         estrarre il dataset GREZZO per l'EDA.
         """
+        if market in self.LINE_MARKETS:
+            return self._build_line_dataset(market=market, seasons=seasons, fill_missing=fill_missing)
+
         if market not in self.SUPPORTED_MARKETS:
             raise ValueError(f"Mercato non supportato: {market}")
 
@@ -496,6 +499,47 @@ class FilterMarketService:
 
         df = pd.DataFrame(rows).replace([np.inf, -np.inf], np.nan)
         return df.fillna(0) if fill_missing else df
+
+    def _build_line_dataset(
+        self, market: str, seasons: Optional[list[int]], fill_missing: bool
+    ) -> pd.DataFrame:
+        """`build_dataset` per i mercati a linea configurabile (2026-09-16).
+
+        `LINE_MARKETS` (corners_line_*/cards_line_*) non passava mai da
+        `build_dataset`: nessun modo di estrarre il grezzo con NaN
+        preservati, quindi impossibile fare l'EDA che la procedura di
+        rifacimento richiede prima di ogni altro passo. I builder dedicati
+        (`build_corners_frame_from_records`/`build_cards_frame_from_records`)
+        gia' calcolano TUTTE le linee della famiglia in un colpo solo (le
+        feature sono le stesse, cambia solo la colonna target): si richiama
+        quello, con `fill_missing` propagato, e si isola la colonna
+        `y_<linea>` richiesta rinominandola `y`.
+        """
+        import re
+
+        match_linea = re.match(r"^(corners|cards)_line_(\d+_\d+)$", market)
+        if not match_linea:
+            raise ValueError(f"Mercato non supportato: {market}")
+        famiglia, linea_label = match_linea.group(1), match_linea.group(2)
+
+        matches = self._search_matches(seasons=seasons, status="FT")
+        if famiglia == "corners":
+            from src.ml.markets.corners.corners_market import build_corners_frame_from_records
+            frame = build_corners_frame_from_records(matches, fill_missing=fill_missing)
+        else:
+            from src.ml.markets.cards.cards_market import build_cards_frame_from_records
+            frame = build_cards_frame_from_records(matches, fill_missing=fill_missing)
+
+        if frame.empty:
+            return frame
+
+        colonna_y = f"y_{linea_label}"
+        if colonna_y not in frame.columns:
+            raise ValueError(f"Colonna target {colonna_y} assente nel frame {famiglia}")
+
+        colonne_y_altre = [c for c in frame.columns if c.startswith("y_") and c != colonna_y]
+        frame = frame.drop(columns=colonne_y_altre).rename(columns={colonna_y: "y"})
+        return frame
 
     def _fetch_match_dict(self, fixture_id: int) -> Optional[dict]:
         match = self.match_repo.filter_by(dict_search={"id_fixture": fixture_id}).first()
