@@ -63,7 +63,9 @@ class TestRunPredictionSnapshotRefresh(unittest.TestCase):
         self.addCleanup(self._session_patch.stop)
 
         self._registry_patch = mock.patch.object(
-            scheduler_module, "ModelRegistry", lambda: mock.Mock(list_markets=lambda: ["h2h"])
+            scheduler_module,
+            "ModelRegistry",
+            lambda: mock.Mock(list_markets=lambda: ["h2h"], list_active_markets=lambda: ["h2h"]),
         )
         self._registry_patch.start()
         self.addCleanup(self._registry_patch.stop)
