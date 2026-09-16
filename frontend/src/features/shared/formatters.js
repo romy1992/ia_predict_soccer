@@ -84,6 +84,27 @@ export function predictionLabel(market, prediction, row) {
 }
 
 /**
+ * `payload.probability` e' sempre P(classe 1) per costruzione - convenzione
+ * di tutta la pipeline di serving (vedi `_extract_probability`/
+ * `PredictionSnapshotService`: `prediction = probability >= 0.5`), MAI
+ * "probabilita' della classe mostrata". Quando la previsione e' la classe 0
+ * (es. "Under X"), mostrare `payload.probability` grezzo accanto
+ * all'etichetta di `predictionLabel` mostra il COMPLEMENTO della confidenza
+ * reale (bug segnalato 2026-09-16: "Under 4.5" a 5.8% nei badge contro
+ * 94.2% nel pronostico vincitore, stesso identico pick). Il pronostico
+ * vincitore gia' fa questo flip lato backend (`predicted_probability` in
+ * `dashboard_service.py`); questo e' l'equivalente per tutto cio' che nel
+ * frontend legge `payload.probability` grezzo.
+ */
+export function pickProbability(prediction, probability) {
+  const p = Number(probability);
+  if (Number.isNaN(p)) {
+    return p;
+  }
+  return prediction === 1 ? p : 1 - p;
+}
+
+/**
  * Model Diagnostics (2026-09-12): etichette di classe 0/1 per mercato, USATE
  * SOLO qui invece di hardcodare "Under"/"Over" nel componente React (che si
  * applicherebbe a torto anche a h2h/goal_no_goal/dc) - stessa idea di
