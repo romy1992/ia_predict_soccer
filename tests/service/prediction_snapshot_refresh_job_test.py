@@ -234,6 +234,9 @@ class TestRunPredictionSnapshotRefresh(unittest.TestCase):
         self.assertEqual(sorted(fake_service.calls), [20, 21, 22])
         self.assertEqual(result["fixtures_considered"], 3)
         self.assertEqual(result["target_date"], self._today_iso())
+        self.assertEqual(result["percent"], 100.0)
+        self.assertEqual(result["fixtures_done"], 3)
+        self.assertEqual(result["fixtures_total"], 3)
 
     def test_target_date_excludes_other_days_even_inside_default_windows(self):
         """Una fixture NS di domani rientrerebbe nella finestra di default
@@ -250,6 +253,28 @@ class TestRunPredictionSnapshotRefresh(unittest.TestCase):
 
         self.assertEqual(fake_service.calls, [30])
         self.assertEqual(result["fixtures_recently_finished"], 0)
+
+    def test_progress_is_written_during_the_run(self):
+        self._seed_match(50, status="NS", days_from_today=0)
+        self._seed_match(51, status="NS", days_from_today=0)
+        percents = []
+
+        class _Spy(_FakeSnapshotService):
+            def resolve_predictions(inner_self, fixture_id, markets, db_match=None, status=None):
+                rows = scheduler_module.JobHistory().tail(limit=5, job_type="prediction_snapshot_refresh")
+                if rows:
+                    percents.append((rows[-1].get("summary") or {}).get("percent"))
+                return super().resolve_predictions(fixture_id, markets, db_match=db_match, status=status)
+
+        fake_service = _Spy()
+        betslip_service = self._mock_betslip_service()
+        with mock.patch.object(scheduler_module, "PredictionSnapshotService", lambda: fake_service):
+            with mock.patch.object(scheduler_module, "BetslipService", lambda: betslip_service):
+                result = scheduler_module.run_prediction_snapshot_refresh(target_date=self._today_iso())
+
+        self.assertEqual(result["percent"], 100.0)
+        self.assertTrue(percents)
+        self.assertLess(min(p for p in percents if p is not None), 100.0)
 
     def test_past_target_date_does_not_attempt_betslip_proposals(self):
         """Le proposte esistono solo da oggi in avanti (il generatore
