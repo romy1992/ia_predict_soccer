@@ -1,3 +1,4 @@
+import os
 import tempfile
 import unittest
 import uuid
@@ -55,6 +56,7 @@ class TestRunPredictionSnapshotRefresh(unittest.TestCase):
     funzione target in `TestJobTargetsAreCorrectAndIndependent`)."""
 
     def setUp(self):
+        os.environ.pop("PREDICTION_REFRESH_STEP_SLEEP", None)
         self.session_factory = _make_session_factory()
         self._session_patch = mock.patch.object(scheduler_module, "SessionLocal", self.session_factory)
         self._session_patch.start()
