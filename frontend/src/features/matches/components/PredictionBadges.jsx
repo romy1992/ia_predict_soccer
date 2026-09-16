@@ -1,4 +1,4 @@
-import { confidenceClass, formatPercent, marketLabel, outcomeClass, predictionLabel, valueClass } from "../../shared/formatters";
+import { confidenceClass, formatPercent, marketLabel, outcomeClass, pickProbability, predictionLabel, valueClass } from "../../shared/formatters";
 
 export default function PredictionBadges({ row, modelMarkets }) {
   const predictions = row?.predictions || {};
@@ -26,8 +26,9 @@ export default function PredictionBadges({ row, modelMarkets }) {
         // vedi `outcomeClass`. Altrimenti (partita non ancora conclusa, o
         // esito non determinabile per quel mercato) resta il colore per
         // confidenza di sempre.
+        const pickProb = pickProbability(payload.prediction, payload.probability);
         const settledClass = outcomeClass(payload.correct);
-        const chipClass = settledClass || confidenceClass(payload.probability);
+        const chipClass = settledClass || confidenceClass(pickProb);
         const marketDecisions = (row.decision_cards || []).filter((card) => card.market === marketKey);
         const decision = marketDecisions.find((card) => card.is_market_best) || marketDecisions[0];
         return (
@@ -44,7 +45,7 @@ export default function PredictionBadges({ row, modelMarkets }) {
           >
             <strong>{marketLabel(marketKey)}</strong>
             <em>{predictionLabel(marketKey, payload.prediction, row)}</em>
-            <small>{formatPercent(payload.probability)}</small>
+            <small>{formatPercent(pickProb)}</small>
             <small className={`prediction-value-label ${valueClass(decision?.value_label || "SENZA QUOTA")}`}>
               {decision?.value_label || "SENZA QUOTA"}
             </small>
