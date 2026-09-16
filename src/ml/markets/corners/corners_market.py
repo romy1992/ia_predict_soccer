@@ -96,6 +96,14 @@ def _corner_dedicated_features(match: dict[str, Any]) -> dict[str, float]:
     }
 
 
+# Quote placeholder trovate a DB (2026-09-16, report_corners_8_5_passo1.md):
+# BetMGM, BetRivers, Bovada quotano lo STESSO valore fisso Over/Under 8.5 su
+# migliaia di fixture completamente diverse (overround identico su 5.363
+# partite distinte per ciascuno) - non compatibile con quote di mercato
+# reali, coprono ~60% delle righe e sporcano odds_mean/overround aggregati.
+CONTAMINATED_BOOKMAKERS = frozenset({"BetMGM", "BetRivers", "Bovada"})
+
+
 def _line_specific_odds_features(match: dict[str, Any], odds_market: str, lines: tuple[float, ...]) -> dict[str, Any]:
     """Feature quote SEPARATE per linea (2026-09-12 - vedi
     `FilterMarketService._extract_line_specific_odds_features`): a
@@ -114,7 +122,10 @@ def _line_specific_odds_features(match: dict[str, Any], odds_market: str, lines:
 
     features: dict[str, Any] = {}
     for line in lines:
-        line_features = FilterMarketService._extract_line_specific_odds_features(market_odds, line)
+        exclude = CONTAMINATED_BOOKMAKERS if odds_market == "corners" else frozenset()
+        line_features = FilterMarketService._extract_line_specific_odds_features(
+            market_odds, line, exclude_bookmakers=exclude
+        )
         for key, value in line_features.items():
             features[f"{key}_{_line_label(line)}"] = value
     return features
