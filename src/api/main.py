@@ -219,8 +219,15 @@ def health_database() -> DatabaseHealthResponse:
 
 @app.get("/markets")
 def markets() -> dict[str, list[str]]:
-    # sorted for stable UI rendering
-    values = sorted(FilterMarketService.SUPPORTED_MARKETS)
+    # Alimenta SIA il filtro "Mercato" della Dashboard SIA il selettore
+    # "Crea previsione manuale": esclude i mercati la cui produzione e'
+    # finita in archivio/ (stessa distinzione di
+    # ModelRegistry.list_active_markets(), gia' usata da Dashboard/
+    # scheduler per non servire piu' un modello lasciato indietro dalla
+    # riorganizzazione di best_models/ - es. under_over_4_5), cosi' non
+    # restano selezionabili in nessuno dei due punti.
+    active_markets = set(ModelRegistry().list_active_markets())
+    values = sorted(m for m in FilterMarketService.SUPPORTED_MARKETS if m in active_markets)
     return {"markets": values}
 
 
