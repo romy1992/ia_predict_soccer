@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import functools
 import logging
+import os
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -615,6 +616,11 @@ def run_prediction_snapshot_refresh(
             except Exception as exc:
                 errors.append({"fixture_id": match.id_fixture, "message": str(exc)})
             _publish_progress()
+            # Optional per-fixture pause so a long job stays visible across a
+            # page refresh (UI demo / local testing). Default 0: no delay.
+            step_sleep = float(os.environ.get("PREDICTION_REFRESH_STEP_SLEEP", "0") or 0)
+            if step_sleep > 0:
+                time.sleep(step_sleep)
 
         # Dopo l'aggiornamento delle predizioni salva automaticamente le
         # proposte per ogni giornata futura. Lo snapshot è idempotente:
