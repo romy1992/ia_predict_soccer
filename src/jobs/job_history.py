@@ -102,6 +102,18 @@ class JobHistory:
                 return index
         return None
 
+    def get(self, job_id: str) -> Optional[dict[str, Any]]:
+        """Una riga per `job_id`, o `None`. Serve al polling del bottone
+        "Ricalcola previsioni": dopo un refresh pagina il frontend riprende
+        dallo stesso job, non dallo stato React perso."""
+        if not job_id:
+            return None
+        rows = self._read_rows()
+        index = self._find_index(rows=rows, job_id=str(job_id))
+        if index is None:
+            return None
+        return rows[index]
+
     def _build_row(
         self,
         job_type: str,

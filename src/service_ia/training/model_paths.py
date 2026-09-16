@@ -8,6 +8,8 @@ la cartella ha una forma:
         under_over/under_over_1_5/   i modelli della procedura nuova
         under_over/under_over_2_5/
         under_over/under_over_3_5/
+        h2h/                         champion h2h (quote per esito)
+        dc/                          champion dc (quote per esito)
         archivio/                    tutto quello della vecchia procedura
         registry/                    index.jsonl + metadati
 
@@ -37,10 +39,15 @@ BEST_MODELS_DIRNAME = "best_models"
 CONTAINER_BEST_MODELS = "/app/best_models"
 ARCHIVIO_DIRNAME = "archivio"
 
-# Mercati rifatti con la procedura nuova (quote separate per esito, 33
-# feature). Solo questi hanno una cartella dedicata: gli altri restano dove
-# sono finche' non vengono rifatti a loro volta.
+# Mercati rifatti con la procedura nuova Under/Over (quote separate per
+# esito, 33 feature). Restano in `under_over/<mercato>/`. Non mescolare con
+# h2h/dc: quelli hanno un numero di feature diverso e stanno in
+# `best_models/<mercato>/`.
 MERCATI_NUOVA_PROCEDURA = ("under_over_1_5", "under_over_2_5", "under_over_3_5")
+
+# Cartella = nome mercato (`best_models/h2h`, `best_models/dc`). I pkl
+# vecchi restano in `archivio/<mercato>/` e non si cancellano.
+MERCATI_CARTELLA_EVENTO = ("h2h", "dc")
 
 
 def best_models_root() -> str:
@@ -58,11 +65,14 @@ def best_models_root() -> str:
 def destination_subdir(market: str) -> str:
     """Sottocartella (relativa a `best_models`) dove salvare un modello nuovo.
 
-    Per i mercati della procedura nuova e' `under_over/<mercato>`; per tutti
-    gli altri e' la radice, cosi' nulla cambia per chi non e' stato rifatto.
+    Under/Over 1.5/2.5/3.5: `under_over/<mercato>`.
+    h2h e dc: `<mercato>` (cioe' `best_models/h2h`, `best_models/dc`).
+    Tutti gli altri: radice, finche' non vengono rifatti.
     """
     if market in MERCATI_NUOVA_PROCEDURA:
         return os.path.join("under_over", market)
+    if market in MERCATI_CARTELLA_EVENTO:
+        return market
     return ""
 
 
@@ -142,6 +152,10 @@ def _candidate_paths(path: str, root: str) -> Iterable[str]:
     yield os.path.join(root, ARCHIVIO_DIRNAME, nome)
     for mercato in MERCATI_NUOVA_PROCEDURA:
         yield os.path.join(root, "under_over", mercato, nome)
+        yield os.path.join(root, ARCHIVIO_DIRNAME, mercato, nome)
+    for mercato in MERCATI_CARTELLA_EVENTO:
+        yield os.path.join(root, mercato, nome)
+        yield os.path.join(root, ARCHIVIO_DIRNAME, mercato, nome)
 
 
 def resolve_model_path(path: Optional[str], root: Optional[str] = None) -> Optional[str]:

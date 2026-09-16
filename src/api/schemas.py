@@ -129,6 +129,21 @@ class JobResponse(BaseModel):
     details: Optional[dict[str, Any]] = None
 
 
+class JobStatusResponse(BaseModel):
+    """Polling di un singolo job (barra di avanzamento "Ricalcola previsioni")."""
+
+    job_id: str
+    job_type: str
+    status: str
+    params: dict[str, Any] = {}
+    summary: dict[str, Any] = {}
+    error: Optional[dict[str, Any]] = None
+    queued_at: Optional[str] = None
+    started_at: Optional[str] = None
+    finished_at: Optional[str] = None
+    duration_seconds: Optional[float] = None
+
+
 class JobSettingRow(BaseModel):
     job_id: str
     label: str

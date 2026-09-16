@@ -61,6 +61,16 @@ class TestJobHistory(unittest.TestCase):
             self.assertEqual(len(rows), 1)
             self.assertEqual(rows[0]["summary"]["inserted"], 10)
 
+    def test_get_restituisce_la_riga_o_none(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            history = JobHistory(path=f"{tmp}/jobs.jsonl")
+            created = history.queue_job("prediction_snapshot_refresh", params={"target_date": "2026-09-16"})
+            found = history.get(created["job_id"])
+            self.assertIsNotNone(found)
+            self.assertEqual(found["job_type"], "prediction_snapshot_refresh")
+            self.assertIsNone(history.get("manca"))
+            self.assertIsNone(history.get(""))
+
     def test_mark_failed_sets_error(self):
         with tempfile.TemporaryDirectory() as tmp:
             history = JobHistory(path=f"{tmp}/jobs.jsonl")
