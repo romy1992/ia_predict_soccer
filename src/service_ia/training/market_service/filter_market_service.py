@@ -345,9 +345,15 @@ class FilterMarketService:
             return None
 
     @staticmethod
-    def _extract_line_specific_odds_features(market_odds: dict, line: float, tolerance: float = 0.01) -> dict:
+    def _extract_line_specific_odds_features(
+        market_odds: dict, line: float, tolerance: float = 0.01,
+        exclude_bookmakers: frozenset = frozenset(),
+    ) -> dict:
         """Come `_extract_market_odds_features`, ma filtra PRIMA le chiavi
-        alla sola linea richiesta (2026-09-12, scoperto investigando perche'
+        alla sola linea richiesta, e opzionalmente esclude bookmaker con
+        quote placeholder note (2026-09-16, corners: BetMGM/BetRivers/Bovada
+        quotano lo stesso valore fisso su migliaia di fixture diverse - non
+        e' mercato reale). Introdotto originariamente (2026-09-12, scoperto investigando perche'
         Corners/Cards (MARKET-05/06, linea configurabile) avessero un AUC
         vicino al coin-flip): a differenza dei mercati Under/Over gol (dove
         `map_odds()` separa gia' le quote per soglia in bucket dedicati,
@@ -365,8 +371,13 @@ class FilterMarketService:
         filtered = {}
         for key, value in market_odds.items():
             extracted_line = FilterMarketService._extract_line_from_odds_key(key)
-            if extracted_line is not None and abs(extracted_line - line) < tolerance:
-                filtered[key] = value
+            if extracted_line is None or abs(extracted_line - line) >= tolerance:
+                continue
+            if exclude_bookmakers:
+                _outcome, bookmaker = FilterMarketService._split_outcome_and_bookmaker(str(key))
+                if bookmaker in exclude_bookmakers:
+                    continue
+            filtered[key] = value
 
         # Filtrare per linea non basta: dentro UNA linea restano comunque i
         # due lati ('over 8.5_X' e 'under 8.5_X' contengono entrambi "8.5" e
