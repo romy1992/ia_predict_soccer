@@ -33,6 +33,7 @@ Le tre funzioni servono a tre momenti diversi:
 from __future__ import annotations
 
 import os
+import re
 from typing import Iterable, Optional
 
 BEST_MODELS_DIRNAME = "best_models"
@@ -48,6 +49,13 @@ MERCATI_NUOVA_PROCEDURA = ("under_over_1_5", "under_over_2_5", "under_over_3_5")
 # Cartella = nome mercato (`best_models/h2h`, `best_models/dc`). I pkl
 # vecchi restano in `archivio/<mercato>/` e non si cancellano.
 MERCATI_CARTELLA_EVENTO = ("h2h", "dc", "goal_no_goal")
+
+# Mercati a linea (2026-09-16): `corners_line_8_5`, `cards_line_3_5`, ecc.
+# (`LINE_MARKETS` in `filter_market_service.py`) - una cartella per FAMIGLIA
+# (`best_models/corners/<mercato>/`, `best_models/cards/<mercato>/`), cosi'
+# le linee della stessa famiglia restano raggruppate invece di finire nella
+# radice piatta insieme a tutto il resto non ancora rifatto.
+_RE_MERCATO_LINEA = re.compile(r"^(corners|cards)_line_\d+_\d+$")
 
 
 def best_models_root() -> str:
@@ -73,6 +81,9 @@ def destination_subdir(market: str) -> str:
         return os.path.join("under_over", market)
     if market in MERCATI_CARTELLA_EVENTO:
         return market
+    linea = _RE_MERCATO_LINEA.match(market)
+    if linea:
+        return os.path.join(linea.group(1), market)
     return ""
 
 
