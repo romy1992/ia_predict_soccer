@@ -6,6 +6,7 @@ import {
   marketLabel,
   phaseClass,
   phaseLabel,
+  pickProbability,
   predictionLabel,
   valueClass,
 } from "../../shared/formatters";
@@ -172,7 +173,7 @@ export default function MatchDetailPanel({
                   </span>
                 )}
                 <div className="decision-metrics">
-                  <span>Conf.: {formatPercent(payload.probability)}</span>
+                  <span>Conf.: {formatPercent(pickProbability(payload.prediction, payload.probability))}</span>
                 </div>
               </div>
             ))}

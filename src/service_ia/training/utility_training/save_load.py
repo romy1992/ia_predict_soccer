@@ -24,7 +24,12 @@ class SaveLoad:
 
     def generate_filename(self):
         """
-        Genera il percorso completo del file per salvare il modello
+        Genera il percorso completo del file per salvare il modello.
+
+        `filename` puo' contenere una sottocartella relativa a `best_models`
+        (es. `under_over/under_over_1_5/under_over_1_5_champion_20260914`):
+        `save_model` crea la cartella se non esiste, quindi i mercati rifatti
+        con la procedura nuova salvano direttamente nella propria cartella.
         :return: percorso completo del file
         """
         self.filename = os.path.abspath(

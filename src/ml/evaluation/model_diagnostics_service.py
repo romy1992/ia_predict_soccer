@@ -25,7 +25,6 @@ una vista diagnostica dedicata."""
 
 from __future__ import annotations
 
-import os
 from dataclasses import asdict, dataclass, field
 from typing import Any, Optional
 
@@ -36,6 +35,7 @@ from sklearn.metrics import confusion_matrix, precision_recall_fscore_support, r
 
 from src.ml.evaluation.probability_metrics import temporal_oof_probabilities
 from src.service_ia.training.market_service.filter_market_service import FilterMarketService
+from src.service_ia.training.model_paths import resolve_model_path
 from src.service_ia.training.model_registry import ModelRegistry
 from src.service_ia.training.train_multi_market import _build_temporal_cv, _filter_valid_splits
 
@@ -92,8 +92,12 @@ def evaluate_market_diagnostics(
     if not model_meta:
         return MarketDiagnostics(market=market, status="no_model")
 
-    model_path = model_meta.get("model_path")
-    if not model_path or not os.path.exists(model_path):
+    # Percorso RISOLTO: dopo la riorganizzazione di `best_models/` il file
+    # puo' stare in `under_over/<mercato>/` o in `archivio/`, e una riga di
+    # registry rimasta indietro farebbe sparire il mercato dalla diagnostica
+    # come se non avesse un modello.
+    model_path = resolve_model_path(model_meta.get("model_path"))
+    if not model_path:
         return MarketDiagnostics(market=market, status="no_model")
 
     df = FilterMarketService().build_dataset(market=market, seasons=seasons)

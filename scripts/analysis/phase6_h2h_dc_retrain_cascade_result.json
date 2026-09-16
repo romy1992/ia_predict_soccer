@@ -1,0 +1,618 @@
+{
+  "elapsed_seconds": 85.74,
+  "odds_key_audit": {
+    "table_counts": {
+      "n_odds": 20813,
+      "n_h2h": 20785,
+      "n_dc": 20778
+    },
+    "h2h": {
+      "rows_with_json": 20697,
+      "rows_with_home_draw_away": 20697,
+      "slug_row_coverage": {
+        "away": 20697,
+        "draw": 20697,
+        "home": 20697
+      },
+      "note": "100% home/draw/away se slug_row_coverage ha solo quelle tre chiavi."
+    },
+    "dc": {
+      "rows_with_json": 12136,
+      "rows_with_1x": 6513,
+      "rows_with_12": 6495,
+      "rows_with_raw_X2": 1121,
+      "rows_with_raw_draw_away": 5389,
+      "rows_with_x2_after_alias": 6510,
+      "rows_contaminated_with_over_under": 6411,
+      "slug_row_coverage": {
+        "1x": 6513,
+        "x2": 6510,
+        "12": 6495,
+        "under_12_5": 6411,
+        "over_12_5": 6411
+      },
+      "raw_outcome_prefixes": {
+        "12": 58404,
+        "1X": 58343,
+        "draw/away": 53931,
+        "corner_Over_12.5": 12855,
+        "corner_Under_12.5": 12855,
+        "X2": 4486
+      },
+      "note": "draw/away viene unificato a x2 da _OUTCOME_ALIASES. corner Over/Under 12.5 nel bucket dc e' contamination: CANONICAL_ODDS_OUTCOMES['dc'] lo esclude dall'overround."
+    }
+  },
+  "h2h": {
+    "n": 7830,
+    "accuracy": 0.6655172413793103,
+    "majority_baseline_accuracy": 0.5647509578544061,
+    "accuracy_minus_majority_pp": 10.076628352490424,
+    "majority_class": 0,
+    "class_counts": {
+      "0": 4422,
+      "1": 3408
+    },
+    "positive_rate": 0.43524904214559385,
+    "pred_positive_rate": 0.4611749680715198,
+    "macro_f1": 0.6618900021712686,
+    "weighted_f1": 0.6664251693191777,
+    "minority_class": 1,
+    "minority_recall": 0.6455399061032864,
+    "auc": 0.7270239909606895,
+    "brier": 0.210938200930096,
+    "ece": 0.05401790540150101,
+    "log_loss": 0.6095123328407671,
+    "selection_score": 0.7193503448739491,
+    "confusion_matrix": {
+      "tn": 3011,
+      "fp": 1411,
+      "fn": 1208,
+      "tp": 2200,
+      "labels": "[true 0/1] x [pred 0/1]"
+    },
+    "classification_report": {
+      "0": {
+        "precision": 0.7136762265939797,
+        "recall": 0.6809136137494346,
+        "f1-score": 0.696910079851869,
+        "support": 4422.0
+      },
+      "1": {
+        "precision": 0.6092495153697037,
+        "recall": 0.6455399061032864,
+        "f1-score": 0.6268699244906681,
+        "support": 3408.0
+      },
+      "accuracy": 0.6655172413793103,
+      "macro avg": {
+        "precision": 0.6614628709818418,
+        "recall": 0.6632267599263605,
+        "f1-score": 0.6618900021712686,
+        "support": 7830.0
+      },
+      "weighted avg": {
+        "precision": 0.668224600559199,
+        "recall": 0.6655172413793103,
+        "f1-score": 0.6664251693191777,
+        "support": 7830.0
+      }
+    },
+    "degenerate": false,
+    "bookmaker_implied_baseline": {
+      "accuracy": 0.6734355044699872,
+      "macro_f1": 0.6571803559389147,
+      "auc": 0.7337445163215081,
+      "brier": 0.2059561680430667,
+      "ece": 0.024643079254869905,
+      "log_loss": 0.5978690308755947,
+      "confusion_matrix": {
+        "tn": 3489,
+        "fp": 933,
+        "fn": 1624,
+        "tp": 1784
+      },
+      "classification_report": {
+        "0": {
+          "precision": 0.6823782515157442,
+          "recall": 0.7890094979647219,
+          "f1-score": 0.7318300996329313,
+          "support": 4422.0
+        },
+        "1": {
+          "precision": 0.6566065513433934,
+          "recall": 0.5234741784037559,
+          "f1-score": 0.582530612244898,
+          "support": 3408.0
+        },
+        "accuracy": 0.6734355044699872,
+        "macro avg": {
+          "precision": 0.6694924014295688,
+          "recall": 0.6562418381842389,
+          "f1-score": 0.6571803559389147,
+          "support": 7830.0
+        },
+        "weighted avg": {
+          "precision": 0.6711611437012651,
+          "recall": 0.6734355044699872,
+          "f1-score": 0.6668476407544616,
+          "support": 7830.0
+        }
+      },
+      "pred_positive_rate": 0.3469987228607918
+    },
+    "status": "ok",
+    "n_rows": 15665,
+    "n_oof": 7830,
+    "n_features": 63,
+    "feature_columns": [
+      "prob_norm_home",
+      "prob_norm_draw",
+      "prob_norm_away",
+      "odds_mean_home",
+      "odds_mean_draw",
+      "odds_mean_away",
+      "odds_count_home",
+      "odds_std_home",
+      "overround",
+      "mean_goals_prevented_home_stat",
+      "mean_goals_prevented_away_stat",
+      "mean_goals_prevented_diff_stat",
+      "mean_fouls_home_stat",
+      "mean_fouls_away_stat",
+      "mean_fouls_diff_stat",
+      "mean_shots_off_goal_home_stat",
+      "mean_shots_off_goal_away_stat",
+      "mean_shots_off_goal_diff_stat",
+      "mean_expected_goals_home_stat",
+      "mean_expected_goals_away_stat",
+      "mean_expected_goals_diff_stat",
+      "mean_passes_accurate_home_stat",
+      "mean_passes_accurate_away_stat",
+      "mean_passes_accurate_diff_stat",
+      "mean_shots_outsidebox_home_stat",
+      "mean_shots_outsidebox_away_stat",
+      "mean_shots_outsidebox_diff_stat",
+      "mean_shots_on_goal_home_stat",
+      "mean_shots_on_goal_away_stat",
+      "mean_shots_on_goal_diff_stat",
+      "mean_offsides_home_stat",
+      "mean_offsides_away_stat",
+      "mean_offsides_diff_stat",
+      "mean_yellow_cards_home_stat",
+      "mean_yellow_cards_away_stat",
+      "mean_yellow_cards_diff_stat",
+      "mean_goalkeeper_saves_home_stat",
+      "mean_goalkeeper_saves_away_stat",
+      "mean_goalkeeper_saves_diff_stat",
+      "mean_red_cards_home_stat",
+      "mean_red_cards_away_stat",
+      "mean_red_cards_diff_stat",
+      "mean_corner_kicks_home_stat",
+      "mean_corner_kicks_away_stat",
+      "mean_corner_kicks_diff_stat",
+      "mean_ball_possession_home_stat",
+      "mean_ball_possession_away_stat",
+      "mean_ball_possession_diff_stat",
+      "mean_passes_home_stat",
+      "mean_passes_away_stat",
+      "mean_passes_diff_stat",
+      "mean_total_shots_home_stat",
+      "mean_total_shots_away_stat",
+      "mean_total_shots_diff_stat",
+      "mean_shots_insidebox_home_stat",
+      "mean_shots_insidebox_away_stat",
+      "mean_shots_insidebox_diff_stat",
+      "mean_total_passes_home_stat",
+      "mean_total_passes_away_stat",
+      "mean_total_passes_diff_stat",
+      "mean_blocked_shots_home_stat",
+      "mean_blocked_shots_away_stat",
+      "mean_blocked_shots_diff_stat"
+    ],
+    "cv_folds": 5
+  },
+  "dc": {
+    "n": 2250,
+    "accuracy": 0.7017777777777777,
+    "majority_baseline_accuracy": 0.6893333333333334,
+    "accuracy_minus_majority_pp": 1.244444444444437,
+    "majority_class": 1,
+    "class_counts": {
+      "0": 699,
+      "1": 1551
+    },
+    "positive_rate": 0.6893333333333334,
+    "pred_positive_rate": 0.6186666666666667,
+    "macro_f1": 0.6705221953140499,
+    "weighted_f1": 0.7089489720227024,
+    "minority_class": 0,
+    "minority_recall": 0.6337625178826896,
+    "auc": 0.7340651515612706,
+    "brier": 0.20317634880258567,
+    "ece": 0.14014684415165213,
+    "log_loss": 0.5921532093220264,
+    "selection_score": 0.7248989215098594,
+    "confusion_matrix": {
+      "tn": 443,
+      "fp": 256,
+      "fn": 415,
+      "tp": 1136,
+      "labels": "[true 0/1] x [pred 0/1]"
+    },
+    "classification_report": {
+      "0": {
+        "precision": 0.5163170163170163,
+        "recall": 0.6337625178826896,
+        "f1-score": 0.5690430314707772,
+        "support": 699.0
+      },
+      "1": {
+        "precision": 0.8160919540229885,
+        "recall": 0.7324306898774984,
+        "f1-score": 0.7720013591573225,
+        "support": 1551.0
+      },
+      "accuracy": 0.7017777777777777,
+      "macro avg": {
+        "precision": 0.6662044851700024,
+        "recall": 0.683096603880094,
+        "f1-score": 0.6705221953140499,
+        "support": 2250.0
+      },
+      "weighted avg": {
+        "precision": 0.7229618733756665,
+        "recall": 0.7017777777777777,
+        "f1-score": 0.7089489720227024,
+        "support": 2250.0
+      }
+    },
+    "degenerate": false,
+    "bookmaker_implied_baseline": {
+      "accuracy": 0.7235555555555555,
+      "macro_f1": 0.590666913134225,
+      "auc": 0.7375070216363249,
+      "brier": 0.18316368794872687,
+      "ece": 0.03540861846735668,
+      "log_loss": 0.5439388947086229,
+      "confusion_matrix": {
+        "tn": 173,
+        "fp": 526,
+        "fn": 96,
+        "tp": 1455
+      },
+      "classification_report": {
+        "0": {
+          "precision": 0.6431226765799256,
+          "recall": 0.2474964234620887,
+          "f1-score": 0.3574380165289256,
+          "support": 699.0
+        },
+        "1": {
+          "precision": 0.7344775365976779,
+          "recall": 0.9381044487427466,
+          "f1-score": 0.8238958097395244,
+          "support": 1551.0
+        },
+        "accuracy": 0.7235555555555555,
+        "macro avg": {
+          "precision": 0.6888001065888018,
+          "recall": 0.5928004361024176,
+          "f1-score": 0.590666913134225,
+          "support": 2250.0
+        },
+        "weighted avg": {
+          "precision": 0.7060966267521629,
+          "recall": 0.7235555555555555,
+          "f1-score": 0.6789829219820983,
+          "support": 2250.0
+        }
+      },
+      "pred_positive_rate": 0.8804444444444445
+    },
+    "status": "ok",
+    "n_rows": 4508,
+    "n_oof": 2250,
+    "n_features": 63,
+    "feature_columns": [
+      "implied_prob_1x",
+      "implied_prob_x2",
+      "implied_prob_12",
+      "odds_mean_1x",
+      "odds_mean_x2",
+      "odds_mean_12",
+      "odds_count_1x",
+      "odds_std_1x",
+      "overround",
+      "mean_goals_prevented_home_stat",
+      "mean_goals_prevented_away_stat",
+      "mean_goals_prevented_diff_stat",
+      "mean_fouls_home_stat",
+      "mean_fouls_away_stat",
+      "mean_fouls_diff_stat",
+      "mean_shots_off_goal_home_stat",
+      "mean_shots_off_goal_away_stat",
+      "mean_shots_off_goal_diff_stat",
+      "mean_expected_goals_home_stat",
+      "mean_expected_goals_away_stat",
+      "mean_expected_goals_diff_stat",
+      "mean_passes_accurate_home_stat",
+      "mean_passes_accurate_away_stat",
+      "mean_passes_accurate_diff_stat",
+      "mean_shots_outsidebox_home_stat",
+      "mean_shots_outsidebox_away_stat",
+      "mean_shots_outsidebox_diff_stat",
+      "mean_shots_on_goal_home_stat",
+      "mean_shots_on_goal_away_stat",
+      "mean_shots_on_goal_diff_stat",
+      "mean_offsides_home_stat",
+      "mean_offsides_away_stat",
+      "mean_offsides_diff_stat",
+      "mean_yellow_cards_home_stat",
+      "mean_yellow_cards_away_stat",
+      "mean_yellow_cards_diff_stat",
+      "mean_goalkeeper_saves_home_stat",
+      "mean_goalkeeper_saves_away_stat",
+      "mean_goalkeeper_saves_diff_stat",
+      "mean_red_cards_home_stat",
+      "mean_red_cards_away_stat",
+      "mean_red_cards_diff_stat",
+      "mean_corner_kicks_home_stat",
+      "mean_corner_kicks_away_stat",
+      "mean_corner_kicks_diff_stat",
+      "mean_ball_possession_home_stat",
+      "mean_ball_possession_away_stat",
+      "mean_ball_possession_diff_stat",
+      "mean_passes_home_stat",
+      "mean_passes_away_stat",
+      "mean_passes_diff_stat",
+      "mean_total_shots_home_stat",
+      "mean_total_shots_away_stat",
+      "mean_total_shots_diff_stat",
+      "mean_shots_insidebox_home_stat",
+      "mean_shots_insidebox_away_stat",
+      "mean_shots_insidebox_diff_stat",
+      "mean_total_passes_home_stat",
+      "mean_total_passes_away_stat",
+      "mean_total_passes_diff_stat",
+      "mean_blocked_shots_home_stat",
+      "mean_blocked_shots_away_stat",
+      "mean_blocked_shots_diff_stat"
+    ],
+    "cv_folds": 5
+  },
+  "cascade_ab": {
+    "status": "ok",
+    "n_eligible_train_rows": 1694,
+    "n_eval_rows": 1244,
+    "join_coverage": 0.7528888888888889,
+    "delta_selection_score": -0.0005109249493098211,
+    "delta_auc": 9.164558818142154e-05,
+    "delta_macro_f1": -0.002165485968278591,
+    "adopted": false,
+    "verdict": "SCARTATO: delta selection_score -0.0005 (auc +0.0001, macro-F1 -0.0022) non batte il dc indipendente. Stesso esito di phase3_cascading_ab_test.py: la cascata non si adotta.",
+    "baseline_dc": {
+      "n": 1244,
+      "accuracy": 0.6704180064308681,
+      "majority_baseline_accuracy": 0.6961414790996785,
+      "accuracy_minus_majority_pp": -2.5723472668810365,
+      "majority_class": 1,
+      "class_counts": {
+        "0": 378,
+        "1": 866
+      },
+      "positive_rate": 0.6961414790996785,
+      "pred_positive_rate": 0.6077170418006431,
+      "macro_f1": 0.6368922694019586,
+      "weighted_f1": 0.6801741732911328,
+      "minority_class": 0,
+      "minority_recall": 0.6031746031746031,
+      "auc": 0.716191942519887,
+      "brier": 0.20705048736725815,
+      "ece": 0.13705964049013608,
+      "log_loss": 0.60143243272777,
+      "selection_score": 0.713424204043188,
+      "confusion_matrix": {
+        "tn": 228,
+        "fp": 150,
+        "fn": 260,
+        "tp": 606,
+        "labels": "[true 0/1] x [pred 0/1]"
+      },
+      "classification_report": {
+        "0": {
+          "precision": 0.4672131147540984,
+          "recall": 0.6031746031746031,
+          "f1-score": 0.5265588914549654,
+          "support": 378.0
+        },
+        "1": {
+          "precision": 0.8015873015873016,
+          "recall": 0.6997690531177829,
+          "f1-score": 0.7472256473489519,
+          "support": 866.0
+        },
+        "accuracy": 0.6704180064308681,
+        "macro avg": {
+          "precision": 0.6344002081707,
+          "recall": 0.6514718281461931,
+          "f1-score": 0.6368922694019586,
+          "support": 1244.0
+        },
+        "weighted avg": {
+          "precision": 0.6999848557489168,
+          "recall": 0.6704180064308681,
+          "f1-score": 0.6801741732911328,
+          "support": 1244.0
+        }
+      },
+      "degenerate": false,
+      "bookmaker_implied_baseline": {
+        "accuracy": 0.7186495176848875,
+        "macro_f1": 0.5769266646973772,
+        "auc": 0.7229003995747645,
+        "brier": 0.18525276648420191,
+        "ece": 0.03411275830392863,
+        "log_loss": 0.5504465295272184,
+        "confusion_matrix": {
+          "tn": 87,
+          "fp": 291,
+          "fn": 59,
+          "tp": 807
+        },
+        "classification_report": {
+          "0": {
+            "precision": 0.5958904109589042,
+            "recall": 0.23015873015873015,
+            "f1-score": 0.3320610687022901,
+            "support": 378.0
+          },
+          "1": {
+            "precision": 0.7349726775956285,
+            "recall": 0.9318706697459584,
+            "f1-score": 0.8217922606924644,
+            "support": 866.0
+          },
+          "accuracy": 0.7186495176848875,
+          "macro avg": {
+            "precision": 0.6654315442772663,
+            "recall": 0.5810146999523443,
+            "f1-score": 0.5769266646973772,
+            "support": 1244.0
+          },
+          "weighted avg": {
+            "precision": 0.6927113457719293,
+            "recall": 0.7186495176848875,
+            "f1-score": 0.6729832650555786,
+            "support": 1244.0
+          }
+        },
+        "pred_positive_rate": 0.882636655948553
+      }
+    },
+    "cascade_dc_plus_h2h_oof": {
+      "n": 1244,
+      "accuracy": 0.6688102893890675,
+      "majority_baseline_accuracy": 0.6961414790996785,
+      "accuracy_minus_majority_pp": -2.7331189710610992,
+      "majority_class": 1,
+      "class_counts": {
+        "0": 378,
+        "1": 866
+      },
+      "positive_rate": 0.6961414790996785,
+      "pred_positive_rate": 0.6093247588424437,
+      "macro_f1": 0.63472678343368,
+      "weighted_f1": 0.6784971805553356,
+      "minority_class": 0,
+      "minority_recall": 0.5978835978835979,
+      "auc": 0.7162835881080685,
+      "brier": 0.2069670306112578,
+      "ece": 0.13674567072854604,
+      "log_loss": 0.6013278412778539,
+      "selection_score": 0.7129132790938781,
+      "confusion_matrix": {
+        "tn": 226,
+        "fp": 152,
+        "fn": 260,
+        "tp": 606,
+        "labels": "[true 0/1] x [pred 0/1]"
+      },
+      "classification_report": {
+        "0": {
+          "precision": 0.46502057613168724,
+          "recall": 0.5978835978835979,
+          "f1-score": 0.5231481481481481,
+          "support": 378.0
+        },
+        "1": {
+          "precision": 0.7994722955145118,
+          "recall": 0.6997690531177829,
+          "f1-score": 0.7463054187192119,
+          "support": 866.0
+        },
+        "accuracy": 0.6688102893890675,
+        "macro avg": {
+          "precision": 0.6322464358230995,
+          "recall": 0.6488263255006904,
+          "f1-score": 0.63472678343368,
+          "support": 1244.0
+        },
+        "weighted avg": {
+          "precision": 0.6978462907502773,
+          "recall": 0.6688102893890675,
+          "f1-score": 0.6784971805553356,
+          "support": 1244.0
+        }
+      },
+      "degenerate": false,
+      "bookmaker_implied_baseline": {
+        "accuracy": 0.7186495176848875,
+        "macro_f1": 0.5769266646973772,
+        "auc": 0.7229003995747645,
+        "brier": 0.18525276648420191,
+        "ece": 0.03411275830392863,
+        "log_loss": 0.5504465295272184,
+        "confusion_matrix": {
+          "tn": 87,
+          "fp": 291,
+          "fn": 59,
+          "tp": 807
+        },
+        "classification_report": {
+          "0": {
+            "precision": 0.5958904109589042,
+            "recall": 0.23015873015873015,
+            "f1-score": 0.3320610687022901,
+            "support": 378.0
+          },
+          "1": {
+            "precision": 0.7349726775956285,
+            "recall": 0.9318706697459584,
+            "f1-score": 0.8217922606924644,
+            "support": 866.0
+          },
+          "accuracy": 0.7186495176848875,
+          "macro avg": {
+            "precision": 0.6654315442772663,
+            "recall": 0.5810146999523443,
+            "f1-score": 0.5769266646973772,
+            "support": 1244.0
+          },
+          "weighted avg": {
+            "precision": 0.6927113457719293,
+            "recall": 0.7186495176848875,
+            "f1-score": 0.6729832650555786,
+            "support": 1244.0
+          }
+        },
+        "pred_positive_rate": 0.882636655948553
+      }
+    }
+  },
+  "promotion": {
+    "auto_promoted": false,
+    "candidates": [
+      {
+        "market": "h2h",
+        "propose_promotion": true,
+        "beats_majority": true,
+        "beats_bookmaker_auc": false,
+        "reason": "accuracy +10.08 pp sul majority, macro-F1=0.6618900021712686, minority_recall=0.6455399061032864, degenere=False, auc_modello=0.7270239909606895 auc_bookmaker=0.7337445163215081"
+      },
+      {
+        "market": "dc",
+        "propose_promotion": false,
+        "beats_majority": false,
+        "beats_bookmaker_auc": false,
+        "reason": "accuracy +1.24 pp sul majority, macro-F1=0.6705221953140499, minority_recall=0.6337625178826896, degenere=False, auc_modello=0.7340651515612706 auc_bookmaker=0.7375070216363249"
+      }
+    ],
+    "next_step": "Se propose_promotion=true, lanciare train_market(market, feature_columns=...) con save_model=True (resta candidate) e promuovere a mano. Questo script non ha salvato nessun pkl."
+  },
+  "notes": {
+    "h2h_target": "y=1 vittoria casa, y=0 pareggio+trasferta (NON e' un 1X2 a 3 classi)",
+    "dc_target": "y=1 esito 1X (casa o pareggio), y=0 vittoria trasferta",
+    "oof": "walk-forward expanding window, mai in-sample",
+    "promotion": "nessun pkl salvato, nessuno stage cambiato"
+  }
+}

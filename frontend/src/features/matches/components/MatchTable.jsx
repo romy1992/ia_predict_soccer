@@ -5,6 +5,7 @@ import {
   formatSignedNumber,
   phaseClass,
   phaseLabel,
+  pickProbability,
   predictionLabel,
   valueClass,
 } from "../../shared/formatters";
@@ -67,7 +68,7 @@ export default function MatchTable({
             const decision = row.best_decision;
             const raw = rawPredictionFor(row, selectedMarket, showAllMarkets);
             const pick = decision?.pick || (raw ? predictionLabel(selectedMarket, raw.prediction, row) : "N/D");
-            const probability = decision?.predicted_probability ?? raw?.probability;
+            const probability = decision?.predicted_probability ?? (raw ? pickProbability(raw.prediction, raw.probability) : null);
             return (
             <tr
               key={`match-${row.fixture_id}`}
@@ -123,7 +124,7 @@ export default function MatchTable({
         const decision = row.best_decision;
         const raw = rawPredictionFor(row, selectedMarket, showAllMarkets);
         const pick = decision?.pick || (raw ? predictionLabel(selectedMarket, raw.prediction, row) : "N/D");
-        const probability = decision?.predicted_probability ?? raw?.probability;
+        const probability = decision?.predicted_probability ?? (raw ? pickProbability(raw.prediction, raw.probability) : null);
         return (
           <article className="match-mobile-card" key={`mobile-${row.fixture_id}`}>
             <div className="match-mobile-head">

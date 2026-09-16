@@ -120,18 +120,20 @@ export function recomputeMatchPredictions(fixtureId, { markets } = {}) {
 }
 
 /**
- * Bottone "Ricalcola previsioni del giorno" (2026-09-13): forza subito il
- * giro schedulato delle predizioni sulla sola data selezionata, cosi' un
- * mercato appena promosso a production si popola senza aspettare il job
- * automatico. `async_run: false` perche' il chiamante ricarica la lista
- * appena finito (con true tornerebbe prima che le righe esistano).
+ * Bottone "Ricalcola previsioni del giorno": accoda il job e torna subito
+ * `job_id`. Il frontend polla `/jobs/{id}` (barra + resume dopo refresh).
+ * Non chiama il provider esterno: nessuna quota API consumata.
  */
 export function refreshDayPredictions(targetDate) {
   return request("/jobs/prediction-snapshot-refresh", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ target_date: targetDate, async_run: false }),
+    body: JSON.stringify({ target_date: targetDate, async_run: true }),
   });
+}
+
+export function getJob(jobId) {
+  return request(`/jobs/${encodeURIComponent(jobId)}`);
 }
 
 export function getOracleMatchDetail(fixtureId, { markets } = {}) {

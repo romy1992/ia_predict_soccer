@@ -1,20 +1,53 @@
 from __future__ import annotations
 
+import contextlib
 import datetime as dt
 import json
 import os
 from uuid import uuid4
 from typing import Any, Optional
 
+try:
+    import fcntl
+except ImportError:  # Windows (dev/test locale): nessun altro processo scrive lo stesso file
+    fcntl = None
+
 
 class JobHistory:
-    """Track import/retrain job executions for dashboard status."""
+    """Track import/retrain job executions for dashboard status.
+
+    `jobs_history.jsonl` e' condiviso (stesso volume Docker) tra il
+    container `api` (bottoni manuali, es. "Ricalcola previsioni") e il
+    container `scheduler` (heartbeat APScheduler, stesso job type in
+    background): due PROCESSI diversi possono quindi fare
+    read-modify-write sullo stesso file in concorrenza. Senza lock,
+    l'ultimo a scrivere vince e puo' cancellare la riga appena creata
+    dall'altro processo (visto in produzione come `ValueError: Job id non
+    trovato` non appena un job pubblica progressi frequenti via
+    `update_job`, es. la barra di avanzamento di "Ricalcola previsioni").
+    `_locked()` (flock su un file di lock dedicato, valido tra processi
+    diversi sullo stesso host/volume) serializza ogni read-modify-write;
+    `_write_rows` scrive su file temporaneo + `os.replace` cosi' un
+    lettore concorrente (es. `tail()`, che non prende il lock) vede sempre
+    o il contenuto vecchio o quello nuovo, mai un file a meta'."""
 
     _UNSET = object()
 
     def __init__(self, path: str = os.path.join("best_models", "jobs_history.jsonl")):
         self.path = os.path.abspath(path)
         os.makedirs(os.path.dirname(self.path), exist_ok=True)
+        self._lock_path = f"{self.path}.lock"
+
+    @contextlib.contextmanager
+    def _locked(self):
+        with open(self._lock_path, "a") as lock_file:
+            if fcntl is not None:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                if fcntl is not None:
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
     @staticmethod
     def _now_iso() -> str:
@@ -57,9 +90,11 @@ class JobHistory:
         return rows
 
     def _write_rows(self, rows: list[dict[str, Any]]) -> None:
-        with open(self.path, "w", encoding="utf-8") as f:
+        tmp_path = f"{self.path}.tmp-{os.getpid()}-{uuid4().hex}"
+        with open(tmp_path, "w", encoding="utf-8") as f:
             for row in rows:
                 f.write(json.dumps(row, ensure_ascii=False) + "\n")
+        os.replace(tmp_path, self.path)
 
     def _find_index(self, rows: list[dict[str, Any]], job_id: str) -> Optional[int]:
         for index, row in enumerate(rows):
@@ -67,7 +102,19 @@ class JobHistory:
                 return index
         return None
 
-    def create_job(
+    def get(self, job_id: str) -> Optional[dict[str, Any]]:
+        """Una riga per `job_id`, o `None`. Serve al polling del bottone
+        "Ricalcola previsioni": dopo un refresh pagina il frontend riprende
+        dallo stesso job, non dallo stato React perso."""
+        if not job_id:
+            return None
+        rows = self._read_rows()
+        index = self._find_index(rows=rows, job_id=str(job_id))
+        if index is None:
+            return None
+        return rows[index]
+
+    def _build_row(
         self,
         job_type: str,
         status: str,
@@ -79,7 +126,7 @@ class JobHistory:
         finished_at: Optional[str] = None,
     ) -> dict[str, Any]:
         now_iso = self._now_iso()
-        row = {
+        return {
             "job_id": job_id or str(uuid4()),
             "job_type": job_type,
             "status": status,
@@ -93,9 +140,31 @@ class JobHistory:
             "error": error,
         }
 
-        rows = self._read_rows()
-        rows.append(row)
-        self._write_rows(rows)
+    def create_job(
+        self,
+        job_type: str,
+        status: str,
+        params: Optional[dict[str, Any]] = None,
+        summary: Optional[dict[str, Any]] = None,
+        error: Optional[dict[str, Any]] = None,
+        job_id: Optional[str] = None,
+        started_at: Optional[str] = None,
+        finished_at: Optional[str] = None,
+    ) -> dict[str, Any]:
+        row = self._build_row(
+            job_type=job_type,
+            status=status,
+            params=params,
+            summary=summary,
+            error=error,
+            job_id=job_id,
+            started_at=started_at,
+            finished_at=finished_at,
+        )
+        with self._locked():
+            rows = self._read_rows()
+            rows.append(row)
+            self._write_rows(rows)
         return row
 
     def update_job(
@@ -109,33 +178,34 @@ class JobHistory:
         started_at: Optional[str] = None,
         finished_at: Optional[str] = None,
     ) -> dict[str, Any]:
-        rows = self._read_rows()
-        index = self._find_index(rows=rows, job_id=job_id)
-        if index is None:
-            raise ValueError(f"Job id non trovato: {job_id}")
+        with self._locked():
+            rows = self._read_rows()
+            index = self._find_index(rows=rows, job_id=job_id)
+            if index is None:
+                raise ValueError(f"Job id non trovato: {job_id}")
 
-        row = rows[index]
-        if status:
-            row["status"] = status
-        if params is not None:
-            row["params"] = params
-        if summary is not None:
-            row["summary"] = summary
-        if error is not self._UNSET:
-            row["error"] = error
-        if started_at is not None:
-            row["started_at"] = started_at
-        if finished_at is not None:
-            row["finished_at"] = finished_at
+            row = rows[index]
+            if status:
+                row["status"] = status
+            if params is not None:
+                row["params"] = params
+            if summary is not None:
+                row["summary"] = summary
+            if error is not self._UNSET:
+                row["error"] = error
+            if started_at is not None:
+                row["started_at"] = started_at
+            if finished_at is not None:
+                row["finished_at"] = finished_at
 
-        row["timestamp"] = self._now_iso()
-        row["duration_seconds"] = self._duration_seconds(
-            started_at=row.get("started_at"),
-            finished_at=row.get("finished_at"),
-        )
+            row["timestamp"] = self._now_iso()
+            row["duration_seconds"] = self._duration_seconds(
+                started_at=row.get("started_at"),
+                finished_at=row.get("finished_at"),
+            )
 
-        rows[index] = row
-        self._write_rows(rows)
+            rows[index] = row
+            self._write_rows(rows)
         return row
 
     def queue_job(self, job_type: str, params: Optional[dict[str, Any]] = None) -> dict[str, Any]:
@@ -143,19 +213,25 @@ class JobHistory:
 
     def mark_running(self, job_id: str, params: Optional[dict[str, Any]] = None) -> dict[str, Any]:
         now_iso = self._now_iso()
-        rows = self._read_rows()
-        index = self._find_index(rows=rows, job_id=job_id)
-        if index is None:
-            return self.create_job(job_type="unknown", status="running", params=params, job_id=job_id, started_at=now_iso)
+        with self._locked():
+            rows = self._read_rows()
+            index = self._find_index(rows=rows, job_id=job_id)
+            if index is None:
+                row = self._build_row(
+                    job_type="unknown", status="running", params=params, job_id=job_id, started_at=now_iso
+                )
+                rows.append(row)
+                self._write_rows(rows)
+                return row
 
-        row = rows[index]
-        row["status"] = "running"
-        row["timestamp"] = now_iso
-        row["started_at"] = row.get("started_at") or now_iso
-        if params is not None:
-            row["params"] = params
-        rows[index] = row
-        self._write_rows(rows)
+            row = rows[index]
+            row["status"] = "running"
+            row["timestamp"] = now_iso
+            row["started_at"] = row.get("started_at") or now_iso
+            if params is not None:
+                row["params"] = params
+            rows[index] = row
+            self._write_rows(rows)
         return row
 
     def mark_success(self, job_id: str, summary: Optional[dict[str, Any]] = None) -> dict[str, Any]:
@@ -185,7 +261,7 @@ class JobHistory:
         details: Optional[dict[str, Any]] = None,
     ) -> dict[str, Any]:
         now_iso = self._now_iso()
-        row = self.create_job(
+        row = self._build_row(
             job_type=job_type,
             status=status,
             params={},
@@ -195,12 +271,11 @@ class JobHistory:
             finished_at=now_iso,
         )
         if duration_seconds is not None:
+            row["duration_seconds"] = float(duration_seconds)
+        with self._locked():
             rows = self._read_rows()
-            index = self._find_index(rows=rows, job_id=row["job_id"])
-            if index is not None:
-                rows[index]["duration_seconds"] = float(duration_seconds)
-                self._write_rows(rows)
-                row = rows[index]
+            rows.append(row)
+            self._write_rows(rows)
         return row
 
     def tail(self, limit: int = 100, job_type: Optional[str] = None, status: Optional[str] = None) -> list[dict[str, Any]]:
