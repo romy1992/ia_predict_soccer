@@ -575,7 +575,7 @@ def run_prediction_snapshot_refresh(
             upcoming_matches = []
             finished_matches = []
 
-        markets = ModelRegistry().list_markets()
+        markets = ModelRegistry().list_active_markets()
         service = PredictionSnapshotService()
 
         existing_snapshots = service.repo.get_latest_bulk([m.id_fixture for m in finished_matches])

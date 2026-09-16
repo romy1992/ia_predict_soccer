@@ -12,6 +12,7 @@ from src.ml.registry.promotion_policy import (
     PromotionPolicy,
     evaluate_promotion,
 )
+from src.service_ia.training.model_paths import is_archived_model_path
 
 logging.basicConfig(level=logging.INFO)
 
@@ -325,6 +326,26 @@ class ModelRegistry:
                 markets.add(market)
 
         return sorted(markets)
+
+    def list_active_markets(self) -> list[str]:
+        """Come `list_markets()` ma esclude i mercati il cui modello in
+        produzione e' stato lasciato in `archivio/` dalla riorganizzazione
+        di `best_models/` del 2026-09-15 (es. under_over_4_5, mai rifatto
+        con la procedura nuova a 33 feature separate per esito) - quel
+        modello resta caricabile e nel registry per lo storico
+        (`list_markets()`/diagnostics lo vedono ancora), ma un operatore ha
+        chiesto esplicitamente di non offrirlo piu' come mercato attivo in
+        Dashboard finche' non torna con un modello nuovo. Un mercato senza
+        ALCUN modello in produzione (candidate ancora in corso) resta
+        incluso: e' un caso diverso, gia' gestito a parte in Dashboard col
+        badge "In coda"."""
+        active = []
+        for market in self.list_markets():
+            production = self.get_production(market=market)
+            if production is not None and is_archived_model_path(production.get("model_path")):
+                continue
+            active.append(market)
+        return active
 
     def tail(self, limit: int = 100, market: Optional[str] = None) -> list[Dict[str, Any]]:
         rows = self._registration_rows()

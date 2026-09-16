@@ -4,6 +4,7 @@ import unittest
 
 from src.service_ia.training.model_paths import (
     destination_subdir,
+    is_archived_model_path,
     relative_to_best_models,
     resolve_model_path,
     to_container_path,
@@ -27,6 +28,20 @@ class TestRelativeToBestModels(unittest.TestCase):
     def test_percorso_fuori_da_best_models(self):
         self.assertIsNone(relative_to_best_models("/tmp/altrove/m.pkl"))
         self.assertIsNone(relative_to_best_models(""))
+
+
+class TestIsArchivedModelPath(unittest.TestCase):
+    def test_riconosce_larchivio_in_ogni_forma_di_percorso(self):
+        self.assertTrue(is_archived_model_path("/app/best_models/archivio/m.pkl"))
+        self.assertTrue(is_archived_model_path(r"C:\git\repo\best_models\archivio\dc\m.pkl"))
+        self.assertTrue(is_archived_model_path("best_models/archivio/m.pkl"))
+
+    def test_percorso_attivo_o_estraneo_non_e_archiviato(self):
+        self.assertFalse(is_archived_model_path("/app/best_models/under_over/under_over_1_5/m.pkl"))
+        self.assertFalse(is_archived_model_path("/app/best_models/h2h/m.pkl"))
+        self.assertFalse(is_archived_model_path("/tmp/altrove/m.pkl"))
+        self.assertFalse(is_archived_model_path(None))
+        self.assertFalse(is_archived_model_path(""))
 
 
 class TestToContainerPath(unittest.TestCase):

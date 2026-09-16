@@ -108,6 +108,22 @@ def relative_to_best_models(path: str) -> Optional[str]:
     return None
 
 
+def is_archived_model_path(path: Optional[str]) -> bool:
+    """True se `path` (in una qualunque delle forme gestite sopra -
+    container, di un'altra macchina, o relativo dalla radice del repo)
+    punta dentro `archivio/`.
+
+    Un modello li' dentro resta CARICABILE (`resolve_model_path` lo trova
+    comunque, la riorganizzazione non cancella nulla) ma e' quello che la
+    procedura vecchia ha lasciato indietro - serve a `ModelRegistry.
+    list_active_markets()` per smettere di offrirlo come mercato attivo
+    in Dashboard senza doverlo rimuovere dal registry/storico."""
+    relativo = relative_to_best_models(path) if path else None
+    if relativo is None:
+        return False
+    return relativo == ARCHIVIO_DIRNAME or relativo.startswith(f"{ARCHIVIO_DIRNAME}/")
+
+
 def to_container_path(path: str) -> str:
     """Percorso in forma container, PRESERVANDO le sottocartelle.
 
