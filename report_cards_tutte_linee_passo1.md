@@ -67,3 +67,48 @@ distinti su centinaia/migliaia di fixture): nessun altro pattern sospetto.
   `corners_market.py`, gia' presente sul branch — va replicato in
   `cards_market.py` se non gia' fatto, ma questo esula da questo
   incarico di sola analisi).
+
+## Dopo esclusione Bovada
+
+Fix applicato in `cards_market.py` (`CONTAMINATED_BOOKMAKERS = {"Bovada"}`,
+stesso pattern dei corner) e ri-estrazione identica al Passo 1.
+
+| Linea | Shape | NaN totali | y mean (P(over)) |
+|---|---:|---:|---:|
+| cards_line_3_5 | (8423, 453) | 2.275.039 | 0.6105 |
+| cards_line_4_5 | (8423, 453) | 2.275.039 | 0.4351 |
+| cards_line_5_5 | (8423, 453) | 2.275.039 | 0.2780 |
+| cards_line_6_5 | (8423, 453) | 2.275.039 | 0.1663 |
+
+Shape e y mean identici a prima (stesse 8.423 fixture, nessun dato DB
+cambiato nel frattempo — confermato anche dalla colonna aggregata
+`odds_count`, generale e non filtrata per linea, invariata a mean=14.858
+prima/dopo). L'unico effetto e' sulle feature per linea, dove Bovada viene
+ora escluso dal conteggio/media.
+
+### Confronto `odds_count_line_<linea>` prima/dopo
+
+| Linea | Mean prima | Mean dopo | Median prima | Median dopo | Righe non-NaN prima | Righe non-NaN dopo |
+|---|---:|---:|---:|---:|---:|---:|
+| 3_5 | 3.485 | 6.333 | 2.0 | 6.0 | 7.804 | 2.674 |
+| 4_5 | 3.639 | 6.342 | 2.0 | 6.0 | 8.240 | 3.110 |
+| 5_5 | 4.447 | 4.447 | 4.0 | 4.0 | 2.812 | 2.812 |
+| 6_5 | 3.798 | 3.798 | 4.0 | 4.0 | 2.077 | 2.077 |
+
+**La media SALE, non scende** — apparentemente controintuitivo, ma corretto:
+non e' un valore che cresce riga per riga, e' un effetto di composizione.
+Verificato riga per riga (merge su `id_fixture`): nessuna riga ha un
+`odds_count_line_3_5`/`_4_5` più alto dopo il fix; per ogni fixture il
+conteggio resta identico o diventa `NaN`. Sulla linea 3.5, 5.130 fixture
+(5.573 → 443 al bucket `odds_count=2`) avevano **Bovada come UNICO
+quotante**: escluso Bovada, quelle righe passano da "2 quote fittizie" a
+`NaN` (nessuna quota reale disponibile) e escono dal calcolo della media
+(`.mean()` ignora i NaN). Le righe con conteggio ≥4 (altri bookmaker
+presenti) restano **esattamente invariate** — segno che Bovada, quando
+compare, non coesiste quasi mai con altri bookmaker sulla stessa
+fixture/linea. Il risultato netto: la media sale perché il denominatore si
+restringe alle sole righe con quote reali, ma la **copertura** (righe
+non-NaN) crolla — da 7.804 a 2.674 su 3.5 (-66%), da 8.240 a 3.110 su 4.5
+(-62%). Le linee 5.5 e 6.5 sono **identiche in ogni cifra**: Bovada non
+quota quelle linee (coerente con l'indagine originale, concentrata sulla
+linea 3.5 piu' liquida), quindi l'esclusione non le tocca.
