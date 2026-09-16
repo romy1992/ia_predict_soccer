@@ -402,6 +402,16 @@ def build_referee_features_dataset(
     return pd.DataFrame(rows)
 
 
+# Bookmaker con quote Over/Under 3.5 cards COSTANTI (1.61/2.23) su 6.411
+# fixture distinte (62.5% delle fixture quotate su questa linea, verificato
+# 2026-09-16, vedi `report_cards_tutte_linee_passo1.md`) - stesso pattern
+# placeholder gia' trovato sui corner (dove Bovada era uno dei tre
+# bookmaker contaminati, vedi `corners_market.CONTAMINATED_BOOKMAKERS`).
+# BetMGM/BetRivers non quotano affatto il mercato cards, quindi la loro
+# assenza dalla lista non e' un'omissione: non c'e' nulla da escludere.
+CONTAMINATED_BOOKMAKERS = frozenset({"Bovada"})
+
+
 def _line_specific_odds_features(match: dict[str, Any], odds_market: str, lines: tuple[float, ...]) -> dict[str, Any]:
     """Feature quote SEPARATE per linea (2026-09-12 - vedi
     `FilterMarketService._extract_line_specific_odds_features`): a
@@ -418,9 +428,12 @@ def _line_specific_odds_features(match: dict[str, Any], odds_market: str, lines:
     if not isinstance(market_odds, dict) or not market_odds:
         return {}
 
+    exclude = CONTAMINATED_BOOKMAKERS if odds_market == "cards" else frozenset()
     features: dict[str, Any] = {}
     for line in lines:
-        line_features = FilterMarketService._extract_line_specific_odds_features(market_odds, line)
+        line_features = FilterMarketService._extract_line_specific_odds_features(
+            market_odds, line, exclude_bookmakers=exclude
+        )
         for key, value in line_features.items():
             features[f"{key}_{_line_label(line)}"] = value
     return features
