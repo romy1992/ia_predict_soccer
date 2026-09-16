@@ -513,7 +513,7 @@ class FilterMarketService:
         gia' calcolano TUTTE le linee della famiglia in un colpo solo (le
         feature sono le stesse, cambia solo la colonna target): si richiama
         quello, con `fill_missing` propagato, e si isola la colonna
-        `y_<linea>` richiesta rinominandola `y`.
+        `y_line_<linea>` richiesta rinominandola `y`.
         """
         import re
 
@@ -533,7 +533,7 @@ class FilterMarketService:
         if frame.empty:
             return frame
 
-        colonna_y = f"y_{linea_label}"
+        colonna_y = f"y_line_{linea_label}"
         if colonna_y not in frame.columns:
             raise ValueError(f"Colonna target {colonna_y} assente nel frame {famiglia}")
 
