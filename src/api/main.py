@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import logging
 import os
+import threading
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Optional
 
@@ -42,6 +44,7 @@ from src.api.schemas import (
     JobSettingsResponse,
     JobSettingsUpdateRequest,
     JobSettlementRequest,
+    JobStatusResponse,
     JobTodayUpdateRequest,
     JobsHistoryResponse,
     LiveFixtureEventsResponse,
@@ -152,6 +155,13 @@ def _project_root() -> str:
 
 def _summary_path() -> str:
     return os.path.join(_project_root(), "best_models", "training_summary.json")
+
+
+def _run_prediction_snapshot_refresh_job(target_date: Optional[str], job_id: str) -> None:
+    try:
+        run_prediction_snapshot_refresh(target_date=target_date, job_id=job_id)
+    except Exception:
+        logging.exception("prediction_snapshot_refresh job %s failed", job_id)
 
 
 def _load_summary() -> list[dict[str, Any]]:
@@ -644,16 +654,14 @@ def trigger_daily_refresh(payload: JobDailyRefreshRequest, background_tasks: Bac
 
 
 @app.post("/jobs/prediction-snapshot-refresh", response_model=JobResponse)
-def trigger_prediction_snapshot_refresh(
-    payload: JobPredictionSnapshotRefreshRequest, background_tasks: BackgroundTasks
-) -> JobResponse:
+def trigger_prediction_snapshot_refresh(payload: JobPredictionSnapshotRefreshRequest) -> JobResponse:
     """Bottone "Ricalcola previsioni del giorno" della Dashboard (2026-09-13):
     esegue ORA lo stesso giro del job schedulato `prediction_snapshot_refresh`
-    ma scopato alla sola data richiesta, cosi' un mercato appena promosso a
-    production (caso reale: Corners/Cards a linea configurabile) si popola
-    subito sul giorno che si sta guardando invece di aspettare il prossimo
-    giro automatico. Lavora solo su dati gia' a DB: nessuna chiamata
-    API-Sports, nessuna quota consumata."""
+    ma scopato alla sola data richiesta. `async_run=true` (default del
+    bottone) mette il lavoro in un thread e ritorna subito `job_id`: il
+    frontend polla `GET /jobs/{job_id}` e mostra una barra, anche se la
+    pagina viene ricaricata. `async_run=false` resta sincrono per i test.
+    Lavora solo su dati gia' a DB: nessuna chiamata API-Sports."""
     if payload.target_date:
         try:
             date.fromisoformat(payload.target_date)
@@ -665,11 +673,17 @@ def trigger_prediction_snapshot_refresh(
     params = {"target_date": payload.target_date}
     if payload.async_run:
         row = JobHistory().queue_job(job_type="prediction_snapshot_refresh", params=params)
-        background_tasks.add_task(
-            run_prediction_snapshot_refresh,
-            target_date=payload.target_date,
-            job_id=row["job_id"],
+        # Thread dedicato (non FastAPI BackgroundTasks): il ricalcolo e'
+        # sincrono e lungo, e BackgroundTasks bloccherebbe lo stesso worker
+        # che deve servire il polling di avanzamento. Senza questo il bottone
+        # restava disabilitato fino al refresh della pagina.
+        thread = threading.Thread(
+            target=_run_prediction_snapshot_refresh_job,
+            kwargs={"target_date": payload.target_date, "job_id": row["job_id"]},
+            daemon=True,
+            name=f"prediction-snapshot-refresh-{str(row['job_id'])[:8]}",
         )
+        thread.start()
         return JobResponse(
             queued=True, message="Prediction snapshot refresh job queued", details={"job_id": row["job_id"]}
         )
@@ -936,6 +950,28 @@ def odds_snapshots(fixture_id: int) -> dict[str, Any]:
 def jobs_history(limit: int = 100, job_type: Optional[str] = None, status: Optional[str] = None) -> JobsHistoryResponse:
     rows = JobHistory().tail(limit=limit, job_type=job_type, status=status)
     return JobsHistoryResponse(rows=rows)
+
+
+@app.get("/jobs/{job_id}", response_model=JobStatusResponse)
+def job_status(job_id: str) -> JobStatusResponse:
+    """Stato + summary di avanzamento di un job. Usato dal bottone
+    "Ricalcola previsioni": il frontend persiste `job_id` e, anche dopo un
+    refresh, riprende la barra finche' il processo non termina."""
+    row = JobHistory().get(job_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"Job non trovato: {job_id}")
+    return JobStatusResponse(
+        job_id=str(row.get("job_id") or job_id),
+        job_type=str(row.get("job_type") or ""),
+        status=str(row.get("status") or ""),
+        params=row.get("params") or {},
+        summary=row.get("summary") or {},
+        error=row.get("error"),
+        queued_at=row.get("queued_at"),
+        started_at=row.get("started_at"),
+        finished_at=row.get("finished_at"),
+        duration_seconds=row.get("duration_seconds"),
+    )
 
 
 @app.get("/predictions/log", response_model=PredictionLogResponse)
