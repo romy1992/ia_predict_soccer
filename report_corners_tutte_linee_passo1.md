@@ -77,6 +77,50 @@ training sulle 4 linee, non solo sulla 8.5. Stima di ordine di grandezza,
 non un ricalcolo esatto con/senza (fuori scope qui, richiede riquery DB
 per-bookmaker).
 
+## Dopo esclusione bookmaker placeholder
+
+Re-estrazione dopo `b8f81b1` ("corners: esclude BetMGM/BetRivers/Bovada
+dalle feature per linea"), stessa procedura del Passo 1, stesso DB
+`dev` remoto, sola lettura.
+
+| Linea | Shape | NaN totali | `y` NaN | Base rate Over (`y.mean()`) |
+|---|---|---:|---:|---:|
+| `corners_line_8_5` | (8872, 1167) | 6.302.087 | 0 | 0,6115 |
+| `corners_line_9_5` | (8872, 1167) | 6.302.087 | 0 | 0,4973 |
+| `corners_line_10_5` | (8872, 1167) | 6.302.087 | 0 | 0,3867 |
+| `corners_line_11_5` | (8872, 1167) | 6.302.087 | 0 | 0,2809 |
+
+Shape, `y` e base rate identici al Passo 1 (target non toccato
+dall'esclusione, solo le feature quote). NaN totali in aumento
+(6.150.497 → 6.302.087, +151.590): coerente con la rimozione delle
+quote dei 3 bookmaker placeholder, che ora lasciano NaN dove prima
+c'era una quota costante.
+
+Verifica su `odds_count_line_*` (bookmaker quotanti/riga, righe non-NaN):
+
+| Linea | Non-NaN righe | Media | Mediana | Min / Max |
+|---|---:|---:|---:|---:|
+| `corners_line_8_5` | 8.853/8.872 | 5,62 | 2 | 2 / 24 |
+| `corners_line_9_5` | 8.859/8.872 | 6,42 | 2 | 2 / 24 |
+| `corners_line_10_5` | 8.852/8.872 | 5,58 | 2 | 2 / 22 |
+| `corners_line_11_5` | 3.790/8.872 | 8,45 | 8 | 2 / 18 |
+
+Confronto diretto su `corners_line_8_5` (stessa metrica del Passo 1):
+media `odds_count_line_8_5` **9,10 → 5,62**, mediana **8 → 2** —
+conferma che l'esclusione dei 3 bookmaker placeholder ha effettivamente
+ridotto il conteggio, come atteso (erano tipicamente ~3 degli 8
+bookmaker quotanti per riga).
+
+Per `corners_line_11_5` il calo delle righe con quota disponibile
+(8.872 → 3.790) è molto più marcato che sulle altre linee: essendo una
+linea alternativa meno comune, gran parte dei bookmaker reali non la
+quotano affatto, quindi rimuovere i 3 placeholder (che la quotavano su
+quasi tutte le partite) elimina l'unica quota disponibile su molte
+righe. Comportamento atteso, non un'anomalia.
+
+4 CSV sovrascritti in `scripts/analysis/_export/`
+(`corners_line_{8_5,9_5,10_5,11_5}_raw.csv`).
+
 ## Conclusione operativa
 
 - **Passo 1 sbloccato**: bug di naming corretto in
