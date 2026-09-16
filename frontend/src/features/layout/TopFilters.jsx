@@ -1,4 +1,4 @@
-import { formatDateIt, marketLabel } from "../shared/formatters";
+import { formatDateIt, marketLabel, todayIso } from "../shared/formatters";
 
 export default function TopFilters({
   selectedDate,
@@ -18,6 +18,7 @@ export default function TopFilters({
   refreshDayPredictionsError,
 }) {
   const dateOptions = availableDates && availableDates.length > 0 ? availableDates : [selectedDate];
+  const today = todayIso();
 
   return (
     <header className="topbar">
@@ -33,8 +34,9 @@ export default function TopFilters({
           Data
           <select value={selectedDate} onChange={(e) => onChangeDate(e.target.value)}>
             {dateOptions.map((iso) => (
-              <option key={iso} value={iso}>
+              <option key={iso} value={iso} style={iso === today ? { fontWeight: "bold" } : undefined}>
                 {formatDateIt(iso)}
+                {iso === today ? " (Oggi)" : ""}
               </option>
             ))}
           </select>
