@@ -1514,7 +1514,7 @@ class DashboardService:
         search_text: Optional[str] = None,
         force_refresh: bool = False,
     ) -> DashboardDayData:
-        model_markets = self._normalize_market_request(markets) or self.registry.list_markets()
+        model_markets = self._normalize_market_request(markets) or self.registry.list_active_markets()
         rows: list[dict[str, Any]] = []
         seen_fixtures: set[int] = set()
 
@@ -1615,7 +1615,7 @@ class DashboardService:
         with_predictions: bool = True,
         markets: Optional[list[str]] = None,
     ) -> dict[str, Any]:
-        model_markets = self._normalize_market_request(markets) or self.registry.list_markets()
+        model_markets = self._normalize_market_request(markets) or self.registry.list_active_markets()
         day = self.get_day_matches(
             target_date=target_date,
             limit=0,
@@ -1796,7 +1796,7 @@ class DashboardService:
         with_predictions: bool = True,
         markets: Optional[list[str]] = None,
     ) -> dict[str, Any]:
-        model_markets = self._normalize_market_request(markets) or self.registry.list_markets()
+        model_markets = self._normalize_market_request(markets) or self.registry.list_active_markets()
 
         api_fixture = self._fetch_api_fixture_detail(fixture_id)
         db_match = self._fetch_db_match_by_fixture(fixture_id)
@@ -1875,7 +1875,7 @@ class DashboardService:
         per ogni mercato richiesto (o tutti i mercati registrati se
         `markets` non specificato). MAI chiamato in automatico da nessun
         job/vista lista - solo da questa azione utente deliberata."""
-        model_markets = self._normalize_market_request(markets) or self.registry.list_markets()
+        model_markets = self._normalize_market_request(markets) or self.registry.list_active_markets()
 
         api_fixture = self._fetch_api_fixture_detail(fixture_id)
         db_match = self._fetch_db_match_by_fixture(fixture_id)

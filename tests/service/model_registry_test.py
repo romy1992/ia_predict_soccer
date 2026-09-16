@@ -430,6 +430,56 @@ class TestModelRegistry(unittest.TestCase):
             self.assertGreaterEqual(len(all_events), len(h2h_events))
 
 
+class TestListActiveMarkets(unittest.TestCase):
+    def test_esclude_il_mercato_con_produzione_in_archivio(self):
+        # Scenario reale della riorganizzazione 2026-09-15: under_over_4_5
+        # non e' mai stato rifatto con la procedura nuova, il suo .pkl e'
+        # finito in archivio/ - deve sparire da Dashboard ma restare in
+        # list_markets() per lo storico/diagnostics.
+        with tempfile.TemporaryDirectory() as tmp:
+            registry = ModelRegistry(registry_dir=tmp)
+            archiviato = registry.register(
+                model_path=os.path.join(tmp, "best_models", "archivio", "under_over_4_5_champion.pkl"),
+                market="under_over_4_5",
+                model_name="logistic",
+            )
+            attivo = registry.register(
+                model_path=os.path.join(tmp, "best_models", "under_over", "under_over_1_5", "champion.pkl"),
+                market="under_over_1_5",
+                model_name="logistic",
+            )
+            registry.promote(run_id=archiviato["run_id"], to_stage="production", actor="test")
+            registry.promote(run_id=attivo["run_id"], to_stage="production", actor="test")
+
+            self.assertIn("under_over_4_5", registry.list_markets())
+            self.assertNotIn("under_over_4_5", registry.list_active_markets())
+            self.assertIn("under_over_1_5", registry.list_active_markets())
+
+    def test_mercato_senza_produzione_resta_attivo(self):
+        # Un candidate ancora in valutazione (nessuna produzione) NON e'
+        # "archiviato": deve restare visibile (badge "In coda" in Dashboard),
+        # distinzione gia' esistente e voluta - vedi PredictionBadges.jsx.
+        with tempfile.TemporaryDirectory() as tmp:
+            registry = ModelRegistry(registry_dir=tmp)
+            registry.register(
+                model_path=os.path.join(tmp, "candidate.pkl"), market="goal_no_goal", model_name="logistic"
+            )
+
+            self.assertIn("goal_no_goal", registry.list_active_markets())
+
+    def test_produzione_fuori_da_archivio_resta_attiva(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            registry = ModelRegistry(registry_dir=tmp)
+            run = registry.register(
+                model_path=os.path.join(tmp, "best_models", "h2h", "champion.pkl"),
+                market="h2h",
+                model_name="logistic",
+            )
+            registry.promote(run_id=run["run_id"], to_stage="production", actor="test")
+
+            self.assertIn("h2h", registry.list_active_markets())
+
+
 if __name__ == "__main__":
     unittest.main()
 
