@@ -41,6 +41,8 @@ import Sidebar from "./features/layout/Sidebar";
 import TopFilters from "./features/layout/TopFilters";
 import {
   dayPredictionsProgressFromJob,
+  jobSnapshotFromStorage,
+  persistDayPredictionsJob,
   readDayPredictionsJob,
   writeDayPredictionsJob,
 } from "./features/dashboard/dayPredictionsJobStorage";
@@ -110,7 +112,7 @@ export default function App() {
   const [recomputePredictionsError, setRecomputePredictionsError] = useState("");
   const [refreshDayPredictionsError, setRefreshDayPredictionsError] = useState("");
   const [dayPredictionsJobId, setDayPredictionsJobId] = useState(() => readDayPredictionsJob()?.jobId || null);
-  const [dayPredictionsJob, setDayPredictionsJob] = useState(null);
+  const [dayPredictionsJob, setDayPredictionsJob] = useState(() => jobSnapshotFromStorage(readDayPredictionsJob()));
   const handledDayPredictionsJobRef = useRef(null);
   const [oracleFixtureId, setOracleFixtureId] = useState(null);
   const [previousPage, setPreviousPage] = useState("dashboard");
@@ -632,14 +634,15 @@ export default function App() {
       if (!jobId) {
         throw new Error("Job di ricalcolo non accodato");
       }
-      writeDayPredictionsJob({ jobId, targetDate: selectedDate });
       handledDayPredictionsJobRef.current = null;
-      setDayPredictionsJob({
+      const queuedJob = {
         job_id: jobId,
         status: "queued",
         params: { target_date: selectedDate },
         summary: { target_date: selectedDate, fixtures_total: 0, fixtures_done: 0, percent: 0 },
-      });
+      };
+      persistDayPredictionsJob(queuedJob);
+      setDayPredictionsJob(queuedJob);
       setDayPredictionsJobId(jobId);
     } catch (err) {
       writeDayPredictionsJob(null);
@@ -658,6 +661,9 @@ export default function App() {
         const row = await getJob(dayPredictionsJobId);
         if (!cancelled) {
           setDayPredictionsJob(row);
+          if (row && ["queued", "running"].includes(row.status)) {
+            persistDayPredictionsJob(row);
+          }
         }
       } catch (err) {
         if (!cancelled) {
