@@ -181,11 +181,41 @@ class FilterMarketService:
     # Under/Over 1.5 la copertura passa dal 44% al 100%.
     _OUTCOME_ALIAS_PREFIXES: tuple[str, ...] = ("alternate", "corner", "card")
 
+    # Alias di esito DOPO la normalizzazione dello slug. Verificato su Odds.dc
+    # a DB (2026-09-15): circa 5.4k righe hanno 'draw/away_{book}' invece di
+    # 'X2_{book}' (map_odds rimappa Draw/Away -> X2 solo sul percorso attuale;
+    # i dati storici restano nella forma raw). Senza questo merge
+    # `odds_mean_x2` resta vuoto sulla maggioranza delle partite e
+    # `odds_mean_draw_away` e' un duplicato della stessa scommessa.
+    # 'home/draw' -> 1X e 'home/away' -> 12 per simmetria, anche se oggi
+    # quelle forme sono gia' rimappate in ingestione.
+    _OUTCOME_ALIASES: dict[str, str] = {
+        "home_draw": "1x",
+        "home_away": "12",
+        "draw_away": "x2",
+    }
+
+    # Esiti canonici per mercato ESCLUSIVO (o DC a tre chiavi note). Usati
+    # da `_extract_per_outcome_odds_features` per NON far entrare nello
+    # overround chiavi spurie. Verificato su Odds.dc: il 53% dei JSON `dc`
+    # contiene anche `corner_Over_12.5`/`corner_Under_12.5` (contamination
+    # da un altro mercato nello stesso bucket) - senza questo filtro
+    # l'overround di dc sommerebbe 1X+12+X2+over 12.5+under 12.5.
+    CANONICAL_ODDS_OUTCOMES: dict[str, frozenset[str]] = {
+        "h2h": frozenset({"home", "draw", "away"}),
+        "dc": frozenset({"1x", "12", "x2"}),
+        "goal_no_goal": frozenset({"goal", "no_goal"}),
+        "under_over_1_5": frozenset({"over_1_5", "under_1_5"}),
+        "under_over_2_5": frozenset({"over_2_5", "under_2_5"}),
+        "under_over_3_5": frozenset({"over_3_5", "under_3_5"}),
+        "under_over_4_5": frozenset({"over_4_5", "under_4_5"}),
+    }
+
     @staticmethod
     def _normalize_outcome_name(outcome: str) -> str:
         """Slug stabile per comporre il nome della feature: 'over 2.5' ->
         'over_2_5', 'no_goal_' -> 'no_goal', '1X' -> '1x',
-        'alternate over 1.5' -> 'over_1_5'."""
+        'alternate over 1.5' -> 'over_1_5', 'draw/away' -> 'x2'."""
         slug = outcome.strip().lower()
         for char in (" ", ".", "-", "/"):
             slug = slug.replace(char, "_")
@@ -198,15 +228,23 @@ class FilterMarketService:
         for prefisso in FilterMarketService._OUTCOME_ALIAS_PREFIXES:
             atteso = f"{prefisso}_"
             if slug.startswith(atteso) and len(slug) > len(atteso):
-                return slug[len(atteso):]
-        return slug
+                slug = slug[len(atteso):]
+                break
+        return FilterMarketService._OUTCOME_ALIASES.get(slug, slug)
 
     @staticmethod
-    def _extract_per_outcome_odds_features(market_odds: dict) -> dict:
+    def _extract_per_outcome_odds_features(
+        market_odds: dict, allowed_slugs: Optional[frozenset[str]] = None
+    ) -> dict:
         """Feature quote SEPARATE PER ESITO (2026-09-13, richiesto
         esplicitamente dall'operatore: "per ogni mercato devi prendere la
         media delle quote bookmakers... sia per il goal e no goal separati,
         under *.5 e over *.5 separati").
+
+        `allowed_slugs` (2026-09-15): se fornito, gli esiti fuori da quel
+        insieme non entrano ne' nelle medie ne' nell'overround. Serve per
+        h2h/dc (e gli under/over) dove il bucket JSON puo' contenere chiavi
+        di altri mercati o alias gia' unificati altrove.
 
         `_extract_market_odds_features` calcola UNA media su tutto il bucket
         del mercato, che pero' contiene TUTTI gli esiti (home+draw+away per
@@ -236,6 +274,8 @@ class FilterMarketService:
             outcome, _bookmaker = FilterMarketService._split_outcome_and_bookmaker(str(key))
             slug = FilterMarketService._normalize_outcome_name(outcome)
             if not slug:
+                continue
+            if allowed_slugs is not None and slug not in allowed_slugs:
                 continue
             grouped.setdefault(slug, []).append(value)
 
@@ -401,7 +441,11 @@ class FilterMarketService:
         # i modelli gia' promossi finche' non vengono riaddestrati, le nuove
         # per esito sono quelle che i modelli nuovi useranno davvero.
         row.update(self._extract_market_odds_features(market_odds))
-        row.update(self._extract_per_outcome_odds_features(market_odds))
+        row.update(
+            self._extract_per_outcome_odds_features(
+                market_odds, allowed_slugs=self.CANONICAL_ODDS_OUTCOMES.get(market)
+            )
+        )
         row.update(self._extract_mean_features(match, keep_missing=keep_missing))
 
         # Senza feature utili non ha senso produrre la riga.

@@ -278,6 +278,17 @@ button:disabled {
   }
 }
 
+.progress-bar.determinate {
+  overflow: hidden;
+}
+
+.progress-bar-value {
+  height: 100%;
+  border-radius: 999px;
+  background: #2f4f90;
+  transition: width 0.35s ease;
+}
+
 .job-status-banner {
   margin-top: 12px;
   border-radius: 10px;
