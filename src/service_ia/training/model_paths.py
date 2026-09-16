@@ -47,7 +47,7 @@ MERCATI_NUOVA_PROCEDURA = ("under_over_1_5", "under_over_2_5", "under_over_3_5")
 
 # Cartella = nome mercato (`best_models/h2h`, `best_models/dc`). I pkl
 # vecchi restano in `archivio/<mercato>/` e non si cancellano.
-MERCATI_CARTELLA_EVENTO = ("h2h", "dc")
+MERCATI_CARTELLA_EVENTO = ("h2h", "dc", "goal_no_goal")
 
 
 def best_models_root() -> str:
