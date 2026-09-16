@@ -11,6 +11,7 @@ import {
   getOfficialBetslips,
   getOfficialBetslipStatistics,
   getHealth,
+  getJob,
   getJobs,
   getJobSettings,
   getMarkets,
@@ -38,6 +39,13 @@ import {
 import AppRouter from "./features/layout/AppRouter";
 import Sidebar from "./features/layout/Sidebar";
 import TopFilters from "./features/layout/TopFilters";
+import {
+  dayPredictionsProgressFromJob,
+  jobSnapshotFromStorage,
+  persistDayPredictionsJob,
+  readDayPredictionsJob,
+  writeDayPredictionsJob,
+} from "./features/dashboard/dayPredictionsJobStorage";
 import MatchDetailPanel from "./features/matches/components/MatchDetailPanel";
 import { filterRowByMarket, todayIso } from "./features/shared/formatters";
 export default function App() {
@@ -102,8 +110,10 @@ export default function App() {
   const [matchDetailError, setMatchDetailError] = useState("");
   const [recomputingPredictions, setRecomputingPredictions] = useState(false);
   const [recomputePredictionsError, setRecomputePredictionsError] = useState("");
-  const [refreshingDayPredictions, setRefreshingDayPredictions] = useState(false);
   const [refreshDayPredictionsError, setRefreshDayPredictionsError] = useState("");
+  const [dayPredictionsJobId, setDayPredictionsJobId] = useState(() => readDayPredictionsJob()?.jobId || null);
+  const [dayPredictionsJob, setDayPredictionsJob] = useState(() => jobSnapshotFromStorage(readDayPredictionsJob()));
+  const handledDayPredictionsJobRef = useRef(null);
   const [oracleFixtureId, setOracleFixtureId] = useState(null);
   const [previousPage, setPreviousPage] = useState("dashboard");
   const marketsQuery = useMemo(() => {
@@ -604,26 +614,92 @@ export default function App() {
     },
     [marketsQuery, loadMatchDetail]
   );
-  // "Ricalcola previsioni del giorno" (2026-09-13): stesso giro del job
-  // schedulato ma solo sulla data selezionata - serve quando un mercato
-  // viene promosso a production e le fixture gia' a DB restano "In coda"
-  // finche' il job automatico non le ripassa. Ricarica la lista al termine
-  // (la chiamata e' sincrona lato API apposta, vedi `refreshDayPredictions`).
+  // "Ricalcola previsioni del giorno": job ASINCRONO con barra. Il POST
+  // sincrono restava appeso (timeout) e `refreshing` non tornava mai false
+  // finche' non si ricaricava la pagina. Ora si accoda, si polla
+  // `/jobs/{id}`, e `job_id` sta in localStorage cosi' un refresh riprende
+  // la barra fino alla fine.
+  const refreshingDayPredictions =
+    Boolean(dayPredictionsJobId) &&
+    (!dayPredictionsJob || ["queued", "running"].includes(dayPredictionsJob.status));
+  const dayPredictionsProgress = dayPredictionsJob ? dayPredictionsProgressFromJob(dayPredictionsJob) : null;
   const refreshDayPredictionsNow = useCallback(async () => {
-    if (!selectedDate) {
+    if (!selectedDate || refreshingDayPredictions) {
       return;
     }
-    setRefreshingDayPredictions(true);
     setRefreshDayPredictionsError("");
     try {
-      await refreshDayPredictions(selectedDate);
-      await loadDashboardData("full", { forceRefresh: true });
+      const data = await refreshDayPredictions(selectedDate);
+      const jobId = data?.details?.job_id;
+      if (!jobId) {
+        throw new Error("Job di ricalcolo non accodato");
+      }
+      handledDayPredictionsJobRef.current = null;
+      const queuedJob = {
+        job_id: jobId,
+        status: "queued",
+        params: { target_date: selectedDate },
+        summary: { target_date: selectedDate, fixtures_total: 0, fixtures_done: 0, percent: 0 },
+      };
+      persistDayPredictionsJob(queuedJob);
+      setDayPredictionsJob(queuedJob);
+      setDayPredictionsJobId(jobId);
     } catch (err) {
+      writeDayPredictionsJob(null);
+      setDayPredictionsJobId(null);
+      setDayPredictionsJob(null);
       setRefreshDayPredictionsError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setRefreshingDayPredictions(false);
     }
-  }, [selectedDate, loadDashboardData]);
+  }, [selectedDate, refreshingDayPredictions]);
+  useEffect(() => {
+    if (!dayPredictionsJobId) {
+      return undefined;
+    }
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const row = await getJob(dayPredictionsJobId);
+        if (!cancelled) {
+          setDayPredictionsJob(row);
+          if (row && ["queued", "running"].includes(row.status)) {
+            persistDayPredictionsJob(row);
+          }
+        }
+      } catch (err) {
+        if (!cancelled) {
+          const message = err instanceof Error ? err.message : String(err);
+          if (message.includes("Job non trovato")) {
+            writeDayPredictionsJob(null);
+            setDayPredictionsJobId(null);
+            setDayPredictionsJob(null);
+          }
+          setRefreshDayPredictionsError(message);
+        }
+      }
+    };
+    tick();
+    const timer = setInterval(tick, 1500);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [dayPredictionsJobId]);
+  useEffect(() => {
+    if (!dayPredictionsJob || !["success", "failed"].includes(dayPredictionsJob.status)) {
+      return;
+    }
+    if (handledDayPredictionsJobRef.current === dayPredictionsJob.job_id) {
+      return;
+    }
+    handledDayPredictionsJobRef.current = dayPredictionsJob.job_id;
+    writeDayPredictionsJob(null);
+    if (dayPredictionsJob.status === "failed") {
+      const message = dayPredictionsJob.error?.message || "Ricalcolo previsioni fallito";
+      setRefreshDayPredictionsError(message);
+    }
+    loadDashboardData("full", { forceRefresh: true }).catch(() => {});
+    setDayPredictionsJobId(null);
+  }, [dayPredictionsJob, loadDashboardData]);
   const openOracleDetail = useCallback(
     (fixtureId) => {
       setPreviousPage((current) => (activePage === "oracle-detail" ? current : activePage));
@@ -937,6 +1013,7 @@ export default function App() {
             forceRefreshDisabled={isQuotaExhausted || isFilterLoading || isLoading}
             onRefreshDayPredictions={refreshDayPredictionsNow}
             refreshingDayPredictions={refreshingDayPredictions}
+            dayPredictionsProgress={refreshingDayPredictions ? dayPredictionsProgress : null}
             refreshDayPredictionsError={refreshDayPredictionsError}
           />
         )}

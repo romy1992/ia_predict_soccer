@@ -13,8 +13,13 @@ riottiene identico qui.
 
 I modelli vecchi vengono SPOSTATI in `best_models/archivio/`, non cancellati:
 il rollback deve restare possibile. Su richiesta esplicita dell'operatore.
+L'archiviazione guarda TUTTI i mercati del registry, non solo i tre rifatti:
+quello che decide e' se il file e' ancora quello in produzione, non di che
+mercato sia. Nessun modello in produzione viene mai spostato da qui.
 
-Under/Over 4.5, corners, cards, goal_no_goal e h2h non vengono toccati.
+Il riaddestramento e la promozione, invece, riguardano solo Under/Over 1.5,
+2.5 e 3.5: Under/Over 4.5, corners, cards, goal_no_goal e h2h restano in
+produzione con il modello che hanno.
 
 IL CASO 3.5
 Su 3.5 la policy rifiuta la promozione: il gate di qualita' passa su tutte e
@@ -56,10 +61,15 @@ from datetime import date
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
+from src.service_ia.training.model_paths import (  # noqa: E402
+    ARCHIVIO_DIRNAME,
+    CONTAINER_BEST_MODELS as CONTAINER,
+    relative_to_best_models,
+)
+
 BEST = "best_models"
 REGISTRY = os.path.join(BEST, "registry")
-ARCHIVIO = os.path.join(BEST, "archivio")
-CONTAINER = "/app/best_models"
+ARCHIVIO = os.path.join(BEST, ARCHIVIO_DIRNAME)
 
 # mercato -> (linea, candidato da imporre o None, va forzata la promozione?)
 DA_FARE = {
@@ -144,37 +154,72 @@ def archivia(registry, applica: bool) -> None:
 
     Un file spostato senza aggiornare la riga che lo referenzia darebbe "File
     modello non trovato" al primo utilizzo, quindi le due cose vanno insieme.
+
+    Il percorso di partenza viene ricostruito dal percorso RELATIVO a
+    `best_models` (non dal solo nome file): da quando i modelli nuovi stanno in
+    `best_models/under_over/<mercato>/`, cercarli nella radice non li
+    troverebbe piu'. Il file spostato mantiene il proprio nome dentro
+    `archivio/`, che resta piatta: e' una cartella di sola conservazione, i
+    nomi sono gia' unici e una gerarchia li' dentro non servirebbe a nessuno.
     """
     print("\narchiviazione dei modelli non piu' in produzione")
     index = os.path.join(REGISTRY, "index.jsonl")
     righe = [json.loads(l) for l in open(index, encoding="utf-8")]
-    in_produzione = {p["model_path"] for p in (registry.get_production(market=m) for m in DA_FARE) if p}
 
-    spostati, aggiornate = [], 0
-    for r in righe:
-        if r.get("market") not in DA_FARE:
-            continue
-        percorso = r.get("model_path") or ""
-        if not percorso or percorso in in_produzione or "/archivio/" in percorso:
-            continue
-        nome = os.path.basename(percorso)
-        locale = os.path.join(BEST, nome)
+    # Tutti i mercati del registry, non solo quelli appena rifatti: un
+    # campione superato di un mercato che non si sta toccando e' comunque un
+    # file da archiviare, e limitarsi a DA_FARE lo lasciava nella radice per
+    # sempre.
+    mercati = sorted({r.get("market") for r in righe if r.get("market")})
+    in_produzione = {
+        p["model_path"]
+        for p in (registry.get_production(market=m) for m in mercati)
+        if p and p.get("model_path")
+    }
+
+    def in_archivio(percorso: str) -> bool:
+        relativo = relative_to_best_models(percorso) or ""
+        return relativo.startswith(f"{ARCHIVIO_DIRNAME}/")
+
+    def sposta_in_archivio(percorso: str) -> tuple[str, bool]:
+        """Percorso container dentro `archivio/` + se il file e' stato spostato."""
+        relativo = relative_to_best_models(percorso) or os.path.basename(percorso)
+        nome = os.path.basename(relativo)
+        locale = os.path.join(BEST, *relativo.split("/"))
+        destinazione = os.path.join(ARCHIVIO, nome)
+        spostato = False
         if not os.path.exists(locale):
-            print(f"   {nome}: file gia' assente, aggiorno solo la riga")
+            print(f"   {relativo}: file gia' assente, aggiorno solo la riga")
+        elif os.path.exists(destinazione):
+            # Mai sovrascrivere: il file in archivio e' l'unica copia di
+            # qualcosa che non si puo' piu' riprodurre.
+            print(f"   {relativo}: in archivio c'e' gia' {nome}, non sovrascrivo")
+            return percorso, False
         else:
             if applica:
                 os.makedirs(ARCHIVIO, exist_ok=True)
-                shutil.move(locale, os.path.join(ARCHIVIO, nome))
-            spostati.append(nome)
-        r["model_path"] = f"{CONTAINER}/archivio/{nome}"
+                shutil.move(locale, destinazione)
+            spostato = True
+        return f"{CONTAINER}/{ARCHIVIO_DIRNAME}/{nome}", spostato
+
+    spostati, aggiornate = [], 0
+    for r in righe:
+        percorso = r.get("model_path") or ""
+        if not percorso or percorso in in_produzione or in_archivio(percorso):
+            continue
+        nuovo_percorso, spostato = sposta_in_archivio(percorso)
+        if nuovo_percorso == percorso:
+            continue
+        if spostato:
+            spostati.append(relative_to_best_models(percorso) or percorso)
+        r["model_path"] = nuovo_percorso
+
         cal = (r.get("extra") or {}).get("calibration") or {}
-        if cal.get("calibrator_path"):
-            ncal = os.path.basename(cal["calibrator_path"])
-            lcal = os.path.join(BEST, ncal)
-            if os.path.exists(lcal) and applica:
-                os.makedirs(ARCHIVIO, exist_ok=True)
-                shutil.move(lcal, os.path.join(ARCHIVIO, ncal))
-            cal["calibrator_path"] = f"{CONTAINER}/archivio/{ncal}"
+        if cal.get("calibrator_path") and not in_archivio(cal["calibrator_path"]):
+            nuovo_cal, spostato_cal = sposta_in_archivio(cal["calibrator_path"])
+            if spostato_cal:
+                spostati.append(relative_to_best_models(cal["calibrator_path"]) or cal["calibrator_path"])
+            cal["calibrator_path"] = nuovo_cal
         aggiornate += 1
 
     # Fino all'introduzione dei nomi con suffisso data, ogni riaddestramento
@@ -183,9 +228,9 @@ def archivia(registry, applica: bool) -> None:
     # rotte. Il bridge ne ha trovate 4 cosi' il 2026-09-14.
     for r in righe:
         percorso = r.get("model_path") or ""
-        nome = os.path.basename(percorso)
-        if nome in spostati and "/archivio/" not in percorso:
-            r["model_path"] = f"{CONTAINER}/archivio/{nome}"
+        relativo = relative_to_best_models(percorso) or ""
+        if relativo in spostati and not in_archivio(percorso):
+            r["model_path"] = f"{CONTAINER}/{ARCHIVIO_DIRNAME}/{os.path.basename(relativo)}"
             aggiornate += 1
 
     print(f"   file spostati: {len(spostati)}   righe di registry aggiornate: {aggiornate}")

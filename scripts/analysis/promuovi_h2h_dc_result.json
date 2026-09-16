@@ -1,0 +1,52 @@
+{
+  "suffisso": "20260915",
+  "promoted": true,
+  "markets": {
+    "h2h": {
+      "run_id": "h2h_20260915T203316919897Z",
+      "stage": "production",
+      "model_name": "voting",
+      "model_path_container": "/app/best_models/h2h/h2h_champion_20260915.pkl",
+      "model_path_local": "/workspace/best_models/h2h/h2h_champion_20260915.pkl",
+      "n_features": 60,
+      "metrics": {
+        "selection_metric": "composite_probability_score",
+        "selection_score": 0.7208691997022957,
+        "best_cv_f1": 0.6685107600654974,
+        "log_loss": 0.6002156814799037,
+        "brier": 0.20704709742523056,
+        "ece": 0.009585579349019172,
+        "auc": 0.7293143756250757,
+        "calibration_enabled": true,
+        "calibration_method": "isotonic",
+        "model_family": "voting",
+        "rows": 15665,
+        "selected_features_count": 60
+      },
+      "bytes": 19699623
+    },
+    "dc": {
+      "run_id": "dc_20260915T203515582357Z",
+      "stage": "production",
+      "model_name": "random_forest",
+      "model_path_container": "/app/best_models/dc/dc_champion_20260915.pkl",
+      "model_path_local": "/workspace/best_models/dc/dc_champion_20260915.pkl",
+      "n_features": 60,
+      "metrics": {
+        "selection_metric": "composite_probability_score",
+        "selection_score": 0.7238623678993562,
+        "best_cv_f1": 0.7069485970015046,
+        "log_loss": 0.5609840343588115,
+        "brier": 0.18521779933343752,
+        "ece": 0.02491130965639675,
+        "auc": 0.728119935543915,
+        "calibration_enabled": true,
+        "calibration_method": "isotonic",
+        "model_family": "random_forest",
+        "rows": 4508,
+        "selected_features_count": 10
+      },
+      "bytes": 8875165
+    }
+  }
+}

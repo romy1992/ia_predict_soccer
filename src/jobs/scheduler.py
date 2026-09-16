@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import functools
 import logging
+import os
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -574,7 +575,7 @@ def run_prediction_snapshot_refresh(
             upcoming_matches = []
             finished_matches = []
 
-        markets = ModelRegistry().list_markets()
+        markets = ModelRegistry().list_active_markets()
         service = PredictionSnapshotService()
 
         existing_snapshots = service.repo.get_latest_bulk([m.id_fixture for m in finished_matches])
@@ -584,11 +585,28 @@ def run_prediction_snapshot_refresh(
             if any((match.id_fixture, market) not in existing_snapshots for market in markets)
         ]
 
+        work = [*upcoming_matches, *finished_matches_needing_snapshot]
+        fixtures_total = len(work)
         fixtures_considered = 0
         predictions_resolved = 0
         errors: list[dict] = []
 
-        for match in [*upcoming_matches, *finished_matches_needing_snapshot]:
+        def _publish_progress() -> None:
+            percent = 100.0 if fixtures_total <= 0 else round(100.0 * fixtures_considered / fixtures_total, 1)
+            history.update_job(
+                job_id,
+                summary={
+                    "target_date": target_date,
+                    "fixtures_total": fixtures_total,
+                    "fixtures_done": fixtures_considered,
+                    "percent": percent,
+                    "predictions_resolved": predictions_resolved,
+                    "errors_count": len(errors),
+                },
+            )
+
+        _publish_progress()
+        for match in work:
             fixtures_considered += 1
             try:
                 payload = service.resolve_predictions(
@@ -597,6 +615,12 @@ def run_prediction_snapshot_refresh(
                 predictions_resolved += len(payload)
             except Exception as exc:
                 errors.append({"fixture_id": match.id_fixture, "message": str(exc)})
+            _publish_progress()
+            # Optional per-fixture pause so a long job stays visible across a
+            # page refresh (UI demo / local testing). Default 0: no delay.
+            step_sleep = float(os.environ.get("PREDICTION_REFRESH_STEP_SLEEP", "0") or 0)
+            if step_sleep > 0:
+                time.sleep(step_sleep)
 
         # Dopo l'aggiornamento delle predizioni salva automaticamente le
         # proposte per ogni giornata futura. Lo snapshot è idempotente:
@@ -636,6 +660,9 @@ def run_prediction_snapshot_refresh(
             "recently_finished_days": recently_finished_days,
             "target_date": target_date,
             "fixtures_considered": fixtures_considered,
+            "fixtures_total": fixtures_total,
+            "fixtures_done": fixtures_considered,
+            "percent": 100.0 if fixtures_total <= 0 else 100.0,
             "fixtures_upcoming": len(upcoming_matches),
             "fixtures_recently_finished": len(finished_matches_needing_snapshot),
             "predictions_resolved": predictions_resolved,

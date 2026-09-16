@@ -34,6 +34,7 @@ from src.ml.markets.totals.totals_market import (
     _count_monotonicity_violations,
     enforce_monotonic_over_probabilities,
 )
+from src.service_ia.training.model_paths import resolve_model_path
 from src.service_ia.training.train_multi_market import _build_temporal_cv, _filter_valid_splits
 
 MARKETS = ["under_over_1_5", "under_over_2_5", "under_over_3_5", "under_over_4_5"]
@@ -58,7 +59,15 @@ def compute_oof_by_fixture(market: str, export_dir: str, models_dir: str) -> tup
     raw_splits = _build_temporal_cv(df)
     cv_splits = _filter_valid_splits(y=y, splits=raw_splits)
 
-    champion = joblib.load(os.path.join(models_dir, f"{market}_champion.pkl"))
+    # Percorso risolto: dopo la riorganizzazione di `best_models/` il champion
+    # di un mercato puo' stare in `archivio/` o nella cartella del mercato, e
+    # cercarlo solo nella radice darebbe "file non trovato" su un file che c'e'.
+    percorso_champion = resolve_model_path(
+        os.path.join(models_dir, f"{market}_champion.pkl"), root=models_dir
+    )
+    if percorso_champion is None:
+        raise FileNotFoundError(f"Champion non trovato per {market} sotto {models_dir}")
+    champion = joblib.load(percorso_champion)
 
     n = len(df)
     oof_proba = np.full(n, np.nan)

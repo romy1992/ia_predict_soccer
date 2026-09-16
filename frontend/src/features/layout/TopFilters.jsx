@@ -1,4 +1,4 @@
-import { formatDateIt, marketLabel } from "../shared/formatters";
+import { formatDateIt, marketLabel, todayIso } from "../shared/formatters";
 
 export default function TopFilters({
   selectedDate,
@@ -14,9 +14,11 @@ export default function TopFilters({
   forceRefreshDisabled,
   onRefreshDayPredictions,
   refreshingDayPredictions,
+  dayPredictionsProgress,
   refreshDayPredictionsError,
 }) {
   const dateOptions = availableDates && availableDates.length > 0 ? availableDates : [selectedDate];
+  const today = todayIso();
 
   return (
     <header className="topbar">
@@ -32,8 +34,9 @@ export default function TopFilters({
           Data
           <select value={selectedDate} onChange={(e) => onChangeDate(e.target.value)}>
             {dateOptions.map((iso) => (
-              <option key={iso} value={iso}>
+              <option key={iso} value={iso} style={iso === today ? { fontWeight: "bold" } : undefined}>
                 {formatDateIt(iso)}
+                {iso === today ? " (Oggi)" : ""}
               </option>
             ))}
           </select>
@@ -106,10 +109,29 @@ export default function TopFilters({
             >
               {refreshingDayPredictions ? "Ricalcolo in corso..." : "Ricalcola previsioni"}
             </button>
+            {refreshingDayPredictions && (
+              <div
+                className="progress-bar determinate"
+                role="progressbar"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={Math.round(dayPredictionsProgress?.percent || 0)}
+                aria-label="Avanzamento ricalcolo previsioni"
+              >
+                <div
+                  className="progress-bar-value"
+                  style={{ width: `${Math.max(4, dayPredictionsProgress?.percent || 0)}%` }}
+                />
+              </div>
+            )}
             <small>
               {refreshDayPredictionsError
                 ? `Errore: ${refreshDayPredictionsError}`
-                : "Popola i mercati ancora “In coda” per questo giorno."}
+                : refreshingDayPredictions
+                  ? dayPredictionsProgress?.total
+                    ? `Ricalcolo ${dayPredictionsProgress.targetDate || ""}: ${dayPredictionsProgress.done}/${dayPredictionsProgress.total} partite (${Math.round(dayPredictionsProgress.percent)}%)`
+                    : "Avvio ricalcolo..."
+                  : "Popola i mercati ancora “In coda” per questo giorno."}
             </small>
           </div>
         )}

@@ -147,6 +147,34 @@ class TestBuildPredictionFrames(unittest.TestCase):
 
         self.assertIn("h2h", frames)
         self.assertNotIn("dc", frames)
+        self.assertIn("odds_mean_home", frames["h2h"].columns)
+        self.assertIn("prob_norm_home", frames["h2h"].columns)
+        self.assertIn("overround", frames["h2h"].columns)
+
+    def test_dc_prediction_row_unifies_x2_and_drops_corner_keys(self):
+        service = FilterMarketService.__new__(FilterMarketService)
+        match_dict = {
+            "id_fixture": 77,
+            "season": 2026,
+            "current_league": 135,
+            "date_match": "2026-09-01T18:00:00+00:00",
+            "odds": [
+                {
+                    "dc": {
+                        "1X_Bet365": "1.30",
+                        "12_Bet365": "1.40",
+                        "draw/away_10Bet": "1.55",
+                        "corner_Over_12.5_BetRivers": "1.90",
+                    }
+                }
+            ],
+        }
+        frames = service.build_prediction_frames_from_match(match_dict, markets=["dc"])
+        row = frames["dc"].iloc[0]
+        self.assertAlmostEqual(float(row["odds_mean_1x"]), 1.30)
+        self.assertAlmostEqual(float(row["odds_mean_x2"]), 1.55)
+        self.assertNotIn("odds_mean_over_12_5", row.index)
+        self.assertNotIn("odds_mean_draw_away", row.index)
 
     def test_build_prediction_frames_empty_markets_returns_empty_dict(self):
         service = FilterMarketService.__new__(FilterMarketService)
@@ -461,6 +489,69 @@ class TestPerOutcomeOddsFeatures(unittest.TestCase):
         """Togliere il prefisso non deve mai svuotare l'esito."""
         self.assertEqual(FilterMarketService._normalize_outcome_name("card"), "card")
         self.assertEqual(FilterMarketService._normalize_outcome_name("corner"), "corner")
+
+    def test_double_chance_aliases_merge_draw_away_into_x2(self):
+        """Odds.dc a DB (2026-09-15): 'draw/away_{book}' e 'X2_{book}' sono
+        la stessa scommessa, ma la forma raw e' maggioranza (5389 vs 1121).
+        Senza merge `odds_mean_x2` resta vuoto sulla maggior parte delle
+        partite."""
+        self.assertEqual(FilterMarketService._normalize_outcome_name("X2"), "x2")
+        self.assertEqual(FilterMarketService._normalize_outcome_name("draw/away"), "x2")
+        self.assertEqual(FilterMarketService._normalize_outcome_name("1X"), "1x")
+        self.assertEqual(FilterMarketService._normalize_outcome_name("home/draw"), "1x")
+        self.assertEqual(FilterMarketService._normalize_outcome_name("12"), "12")
+        self.assertEqual(FilterMarketService._normalize_outcome_name("home/away"), "12")
+
+        features = FilterMarketService._extract_per_outcome_odds_features(
+            {
+                "1X_Bet365": "1.30",
+                "12_Bet365": "1.40",
+                "draw/away_10Bet": "1.50",
+                "X2_1xBet": "1.54",
+            },
+            allowed_slugs=FilterMarketService.CANONICAL_ODDS_OUTCOMES["dc"],
+        )
+        self.assertAlmostEqual(features["odds_mean_1x"], 1.30)
+        self.assertAlmostEqual(features["odds_mean_12"], 1.40)
+        self.assertAlmostEqual(features["odds_mean_x2"], (1.50 + 1.54) / 2)
+        self.assertEqual(features["odds_count_x2"], 2.0)
+        self.assertNotIn("odds_mean_draw_away", features)
+
+    def test_dc_canonical_filter_drops_corner_contamination_from_overround(self):
+        """Il 53% dei JSON Odds.dc contiene anche corner Over/Under 12.5.
+        Quei lati NON devono entrare nell'overround di Double Chance."""
+        market_odds = {
+            "1X_Bet365": "1.30",
+            "12_Bet365": "1.45",
+            "X2_Bet365": "1.60",
+            "corner_Over_12.5_BetRivers": "1.90",
+            "corner_Under_12.5_BetRivers": "1.90",
+        }
+        allowed = FilterMarketService.CANONICAL_ODDS_OUTCOMES["dc"]
+        filtered = FilterMarketService._extract_per_outcome_odds_features(
+            market_odds, allowed_slugs=allowed
+        )
+        unfiltered = FilterMarketService._extract_per_outcome_odds_features(market_odds)
+
+        self.assertNotIn("odds_mean_over_12_5", filtered)
+        self.assertIn("odds_mean_over_12_5", unfiltered)
+        self.assertLess(filtered["overround"], unfiltered["overround"])
+        # Solo i tre esiti DC: 1/1.30 + 1/1.45 + 1/1.60.
+        expected = (1.0 / 1.30) + (1.0 / 1.45) + (1.0 / 1.60)
+        self.assertAlmostEqual(filtered["overround"], expected)
+
+    def test_h2h_canonical_outcomes_are_home_draw_away(self):
+        features = FilterMarketService._extract_per_outcome_odds_features(
+            {"home_Bet365": "1.95", "draw_Bet365": "3.60", "away_Bet365": "4.20"},
+            allowed_slugs=FilterMarketService.CANONICAL_ODDS_OUTCOMES["h2h"],
+        )
+        self.assertIn("odds_mean_home", features)
+        self.assertIn("prob_norm_home", features)
+        self.assertIn("overround", features)
+        self.assertAlmostEqual(
+            features["prob_norm_home"] + features["prob_norm_draw"] + features["prob_norm_away"],
+            1.0,
+        )
 
     def test_empty_or_invalid_odds_return_empty_like_legacy(self):
         self.assertEqual(FilterMarketService._extract_per_outcome_odds_features({}), {})
