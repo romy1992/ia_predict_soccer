@@ -20,6 +20,9 @@ def test_match_center_contains_required_columns_and_distinct_void_concepts():
     assert "stato VOID" in source
     assert "Quota di pareggio economico" in source
     assert "Non registrata" in source
+    assert "Gialli effettivi" in source
+    assert "Rossi effettivi" in source
+    assert "Totale corners" in source
 
 
 def test_search_button_is_explicitly_scoped_to_match_text():
