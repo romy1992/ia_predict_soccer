@@ -1502,6 +1502,20 @@ class TestSerializeRowsAnnotateCorrectnessOnlyWhenFinished(unittest.TestCase):
         self.assertEqual(row["score"], {"home": 1, "away": 0})
         self.assertTrue(row["predictions"]["h2h"]["correct"])
 
+    def test_extract_actual_totals_sums_cards_and_corners(self):
+        match = Match(
+            id_match_fk=str(uuid.uuid4()), id_fixture=1, id_team_home=10, id_team_away=20,
+        )
+        match.statistics = [
+            Statistics(statistics_team_id=10, yellow_cards=2, red_cards=1, corners=4),
+            Statistics(statistics_team_id=20, yellow_cards=3, red_cards=0, corners=6),
+        ]
+
+        self.assertEqual(
+            DashboardService._extract_actual_totals(match),
+            {"yellow_cards": 5, "red_cards": 1, "cards": 6, "corners": 10},
+        )
+
     def test_serialize_match_adds_correct_for_finished_match(self):
         service = DashboardService()
         match = Match(
@@ -1579,7 +1593,6 @@ class TestSerializeRowsAnnotateCorrectnessOnlyWhenFinished(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
 
 
 

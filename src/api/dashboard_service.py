@@ -1071,6 +1071,38 @@ class DashboardService:
         return scores
 
     @staticmethod
+    def _extract_actual_totals(match: Optional[Match]) -> dict[str, Optional[int]]:
+        """Totali finali delle statistiche mostrabili nel Match Center."""
+        totals = {
+            "yellow_cards": None,
+            "red_cards": None,
+            "cards": None,
+            "corners": None,
+        }
+        if match is None:
+            return totals
+
+        stats = match.statistics or []
+        by_team = {s.statistics_team_id: s for s in stats}
+        home_stat = by_team.get(match.id_team_home)
+        away_stat = by_team.get(match.id_team_away)
+        if home_stat is None or away_stat is None:
+            return totals
+
+        yellow = (home_stat.yellow_cards, away_stat.yellow_cards)
+        red = (home_stat.red_cards, away_stat.red_cards)
+        corners = (home_stat.corners, away_stat.corners)
+        if all(value is not None for value in yellow):
+            totals["yellow_cards"] = int(yellow[0]) + int(yellow[1])
+        if all(value is not None for value in red):
+            totals["red_cards"] = int(red[0]) + int(red[1])
+        if totals["yellow_cards"] is not None and totals["red_cards"] is not None:
+            totals["cards"] = totals["yellow_cards"] + totals["red_cards"]
+        if all(value is not None for value in corners):
+            totals["corners"] = int(corners[0]) + int(corners[1])
+        return totals
+
+    @staticmethod
     def _score_from_api(fixture: dict[str, Any]) -> dict[str, Optional[int]]:
         goals = fixture.get("goals") or {}
         home = goals.get("home")
@@ -1227,6 +1259,7 @@ class DashboardService:
             "status": status,
             "phase": phase,
             "score": self._score_from_api(fixture),
+            "actual_totals": self._extract_actual_totals(db_match),
             "predictions": {},
             # MATCH-01: badge decision/edge/EV per la vista lista, vedi
             # `_decisions_for_row` - default vuoto finche' non calcolato.
@@ -1400,6 +1433,7 @@ class DashboardService:
             "status": match.status,
             "phase": phase,
             "score": self._extract_scores(match),
+            "actual_totals": self._extract_actual_totals(match),
             "predictions": {},
             # MATCH-01: badge decision/edge/EV per la vista lista, vedi
             # `_decisions_for_row` - default vuoto finche' non calcolato.
@@ -1909,7 +1943,6 @@ class DashboardService:
             "predictions": predictions,
             "model_markets": model_markets,
         }
-
 
 
 
