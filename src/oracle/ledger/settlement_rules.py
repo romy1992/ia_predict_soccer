@@ -26,6 +26,9 @@ _DC_MEMBERS = {
     "homeaway": frozenset({"Home", "Away"}),
     "x2": frozenset({"Draw", "Away"}),
     "drawaway": frozenset({"Draw", "Away"}),
+    # Il modello DC legacy e' binario: la classe 0 rappresenta
+    # esclusivamente la vittoria ospite, non l'intera X2.
+    "away": frozenset({"Away"}),
 }
 
 

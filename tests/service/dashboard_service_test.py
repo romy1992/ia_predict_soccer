@@ -1442,6 +1442,13 @@ class TestAnnotatePredictionCorrectness(unittest.TestCase):
         )
         self.assertFalse(predictions["dc"]["correct"])
 
+    def test_double_chance_away_is_correct_on_away_win(self):
+        predictions = {"dc": {"prediction": 0, "probability": 0.7}}  # prevista vittoria ospite
+        DashboardService._annotate_prediction_correctness(
+            predictions, {"score_ft": 0}, {"score_ft": 1}
+        )
+        self.assertTrue(predictions["dc"]["correct"])
+
     def test_has_full_stats_false_still_resolves_score_only_markets(self):
         predictions = {"h2h": {"prediction": 1, "probability": 0.7}}
         DashboardService._annotate_prediction_correctness(
@@ -1572,7 +1579,6 @@ class TestSerializeRowsAnnotateCorrectnessOnlyWhenFinished(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
 
 
 
