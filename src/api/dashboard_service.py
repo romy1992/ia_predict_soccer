@@ -29,6 +29,7 @@ from src.oracle.decision_engine.line_market_signal_policy import evaluate_line_m
 from src.oracle.decision_engine.over_signal_policy import evaluate_over_signal
 from src.oracle.fair_odds.fair_odds_engine import build_fair_odds_outcome
 from src.oracle.ledger.prediction_ledger import resolve_actual_outcome
+from src.oracle.ledger.settlement_rules import outcome_wins
 from src.repository.base.repository_db import SessionLocal
 from src.repository.prediction_ledger_repository import PredictionLedgerRepository
 from src.service_ia.config.app_config import load_app_config
@@ -1177,7 +1178,14 @@ class DashboardService:
             except (ValueError, KeyError, TypeError):
                 entry["correct"] = None
                 continue
-            entry["correct"] = actual == predicted
+            # Per la doppia chance l'esito reale e' atomico (Home/Draw/Away),
+            # mentre la selezione e' composta (1X/12/X2): il confronto
+            # letterale farebbe risultare perso un 1X su un pareggio.
+            entry["correct"] = outcome_wins(
+                market=market,
+                selected_outcome=predicted,
+                actual_outcome=actual,
+            )
 
     @staticmethod
     def _passes_search(row: dict[str, Any], search_text: Optional[str]) -> bool:
@@ -1901,7 +1909,6 @@ class DashboardService:
             "predictions": predictions,
             "model_markets": model_markets,
         }
-
 
 
 
