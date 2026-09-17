@@ -40,6 +40,8 @@ export default function MatchTable({
   }
 
   const showAllMarkets = !selectedMarket || selectedMarket === "all";
+  const showCardsTotals = selectedMarket === "cards";
+  const showCornersTotals = selectedMarket === "corners";
 
   return (
     <>
@@ -51,6 +53,8 @@ export default function MatchTable({
             <th>Torneo</th>
             <th>Partita</th>
             <th>Score/Stato</th>
+            {showCardsTotals && <><th>Gialli effettivi</th><th>Rossi effettivi</th><th>Totale cards</th></>}
+            {showCornersTotals && <th>Totale corners</th>}
             {showAllMarkets && <th>Tutti i mercati</th>}
             <th>{showAllMarkets ? "Pronostico vincitore" : "Pronostico"}</th>
             <th>Probabilità IA</th>
@@ -84,6 +88,14 @@ export default function MatchTable({
                 <div>{row.score?.home ?? "-"} - {row.score?.away ?? "-"}</div>
                 <span className={`phase-badge ${phaseClass(row.phase)}`}>{phaseLabel(row.phase)}</span>
               </td>
+              {showCardsTotals && (
+                <>
+                  <td>{row.actual_totals?.yellow_cards ?? "N/D"}</td>
+                  <td>{row.actual_totals?.red_cards ?? "N/D"}</td>
+                  <td>{row.actual_totals?.cards ?? "N/D"}</td>
+                </>
+              )}
+              {showCornersTotals && <td>{row.actual_totals?.corners ?? "N/D"}</td>}
               {showAllMarkets && <td className="all-markets-cell"><PredictionBadges row={row} modelMarkets={modelMarkets} /></td>}
               <td>{pick}</td>
               <td>{probability == null ? "N/D" : formatPercent(probability)}</td>
@@ -138,6 +150,14 @@ export default function MatchTable({
               </div>
             )}
             <dl>
+              {showCardsTotals && (
+                <>
+                  <div><dt>Gialli effettivi</dt><dd>{row.actual_totals?.yellow_cards ?? "N/D"}</dd></div>
+                  <div><dt>Rossi effettivi</dt><dd>{row.actual_totals?.red_cards ?? "N/D"}</dd></div>
+                  <div><dt>Totale cards</dt><dd>{row.actual_totals?.cards ?? "N/D"}</dd></div>
+                </>
+              )}
+              {showCornersTotals && <div><dt>Totale corners</dt><dd>{row.actual_totals?.corners ?? "N/D"}</dd></div>}
               <div><dt>{showAllMarkets ? "Pronostico vincitore" : "Pronostico"}</dt><dd>{pick}</dd></div>
               <div><dt>Probabilità IA</dt><dd>{probability == null ? "N/D" : formatPercent(probability)}</dd></div>
               <div><dt>Quota mercato</dt><dd>{decision?.market_odd == null ? "N/D" : formatOdd(decision.market_odd)}</dd></div>
