@@ -20,13 +20,25 @@ Valori corners (`corners_line_8_5..11_5`) dal training del 2026-09-12
 (`best_models/corners_cards_from_export_summary.json`,
 `classification_report_post.optimal_threshold`) - PRECEDONO il fix della
 contaminazione bookmaker (BetMGM/BetRivers/Bovada, 2026-09-16) e la
-riverifica che ha concluso di NON promuovere alcun modello corners (segnale
-troppo debole, AUC 0.53-0.57 anche sui dati puliti - vedi
-`docs/soccer_oracle_v2_detailed/PROMPT_mercato_corners.md`). Restano qui
-solo perche' nessun modello corners e' MAI stato promosso a `production`
-(`evaluate_line_market_signal` ritorna sempre `None` per questi mercati in
-pratica, dato che manca un `p_over` reale da passare) - da rimuovere
-quando/se il mercato corners verra' definitivamente archiviato.
+riverifica che ha concluso di NON promuovere alcun modello corners NUOVO
+(segnale troppo debole, AUC 0.53-0.57 anche sui dati puliti - vedi
+`docs/soccer_oracle_v2_detailed/PROMPT_mercato_corners.md`).
+
+CORREZIONE 2026-09-19: contrariamente a quanto scritto qui fino a questa
+data ("nessun modello corners mai promosso"), verificato sul registry
+reale (`report_verifica_corners_production_esistente.md`) che questi 4
+modelli SONO EFFETTIVAMENTE in `production` dal 2026-09-12 (stesso giorno/
+batch dei vecchi modelli cards, stesso `actor: operator_request`, 73
+feature incluse quelle quote legacy, AUC 0.51-0.54 - un segnale
+debolissimo che il gate ha comunque lasciato passare, essendo la prima
+promozione per quel mercato). L'affermazione precedente era una deduzione
+mai verificata direttamente, non un dato controllato - `evaluate_line_
+market_signal` quindi NON e' inerte su questi 4 mercati: e' attivo, con
+soglie Youden calcolate su un modello quasi-casuale e probabilmente
+contaminato dagli stessi bookmaker placeholder mai esclusi qui (creato
+prima del fix del 16/09). Decisione su come procedere (lasciare, archiviare
+la production corners, o altro) lasciata all'operatore - non presa
+unilateralmente in questa correzione.
 
 Valori cards (`cards_line_3_5..6_5`) RISCRITTI il 2026-09-19 dopo il
 training reale + verifica ROI con IC bootstrap sui champion effettivi
@@ -64,8 +76,12 @@ class LineMarketSignalThreshold:
 
 # fmt: off
 LINE_MARKET_SIGNAL_THRESHOLDS: dict[str, LineMarketSignalThreshold] = {
-    # Corners: NESSUN modello mai promosso a production - soglie storiche
-    # (pre-fix bookmaker) mantenute solo come riferimento, inerti in pratica.
+    # Corners: soglie Youden del 12/09, ATTIVE - un modello e' davvero in
+    # production per queste 4 linee dal 12/09 (verificato 19/09, vedi il
+    # commento in testa al file), AUC 0.51-0.54, probabilmente ancora
+    # contaminato dai bookmaker placeholder (fix del 16/09 mai riapplicato
+    # a questo run). Non correggerle qui in silenzio: serve una decisione
+    # esplicita (nuovo training pulito + repromozione, o disattivazione).
     "corners_line_8_5": LineMarketSignalThreshold("corners_line_8_5", 0.6140, "over", 0.5277, 0.6185, 0.5538, n_oof=8804),
     "corners_line_9_5": LineMarketSignalThreshold("corners_line_9_5", 0.4906, "over", 0.5298, 0.5182, 0.4923, n_oof=8804),
     "corners_line_10_5": LineMarketSignalThreshold("corners_line_10_5", 0.3438, "over", 0.4600, 0.3894, 0.7947, n_oof=8804),
