@@ -742,6 +742,30 @@ th {
   font-weight: 700;
 }
 
+.model-legend summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.legend-badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.legend-badge-active {
+  background: #e3f8ea;
+  color: #166a39;
+}
+
+.legend-badge-reference {
+  background: #eef1f8;
+  color: #5a6a8c;
+}
+
 .value-play {
   background: #daf6e1;
   color: #0d6630;

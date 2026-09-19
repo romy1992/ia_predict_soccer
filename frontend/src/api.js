@@ -400,6 +400,10 @@ export function getModelDiagnostics({ markets, forceRefresh = false } = {}) {
   return request(`/models/diagnostics${query ? `?${query}` : ""}`);
 }
 
+export function getModelLegend() {
+  return request("/models/legend");
+}
+
 export { API_BASE_URL };
 
 

@@ -53,6 +53,8 @@ from src.api.schemas import (
     MetricsResponse,
     ModelConsensusResponse,
     ModelDiagnosticsResponse,
+    ModelLegendEntry,
+    ModelLegendResponse,
     ModelRegistryOverviewResponse,
     MonitoringAlertsResponse,
     MonitoringOverviewResponse,
@@ -86,7 +88,12 @@ from src.oracle.betslip.betslip_service import BetslipService
 from src.oracle.betslip.official_betslip_service import OfficialBetslipService
 from src.oracle.betslip.proposal_snapshot_service import BetslipProposalSnapshotService
 from src.oracle.betting_statistics_service import BettingStatisticsService
-from src.oracle.decision_engine.decision_policy import DEFAULT_DECISION_POLICY, evaluate_decision
+from src.oracle.decision_engine.decision_policy import DEFAULT_DECISION_POLICY, DEFAULT_THRESHOLDS, evaluate_decision
+from src.oracle.decision_engine.line_market_signal_policy import (
+    LINE_MARKET_SIGNAL_POLICY_VERSION,
+    LINE_MARKET_SIGNAL_THRESHOLDS,
+)
+from src.oracle.decision_engine.over_signal_policy import OVER_SIGNAL_POLICY_VERSION, OVER_SIGNAL_THRESHOLDS
 from src.oracle.ledger.ledger_service import PredictionLedgerService
 from src.oracle.ledger.official_clv_service import OfficialClvService
 from src.oracle.ledger.official_performance_service import OFFICIAL_COHORT, OfficialPerformanceService
@@ -776,6 +783,128 @@ def metrics(market: str, limit: int = 30) -> MetricsResponse:
 @app.get("/metrics/summary")
 def metrics_summary() -> dict[str, Any]:
     return {"summary": _load_summary()}
+
+
+_MODEL_LEGEND_MARKET_LABELS: dict[str, str] = {
+    "h2h": "Vincitore partita",
+    "goal_no_goal": "Goal / No Goal",
+    "dc": "Doppia chance",
+    "under_over_1_5": "Over/Under 1.5",
+    "under_over_2_5": "Over/Under 2.5",
+    "under_over_3_5": "Over/Under 3.5",
+    "under_over_4_5": "Over/Under 4.5",
+}
+
+
+def _model_legend_market_label(market: str) -> str:
+    """Stessa mappa di `frontend/src/features/shared/formatters.js::marketLabel`
+    (duplicata per lingua, stesso principio gia' in uso nel progetto - le due
+    mappe restano piccole e statiche, un disallineamento si nota subito a
+    vista)."""
+    if market in _MODEL_LEGEND_MARKET_LABELS:
+        return _MODEL_LEGEND_MARKET_LABELS[market]
+    if market.startswith("corners_line_"):
+        return f"Corners Over/Under {market.replace('corners_line_', '').replace('_', '.')}"
+    if market.startswith("cards_line_"):
+        return f"Cards Over/Under {market.replace('cards_line_', '').replace('_', '.')}"
+    return market
+
+
+@app.get("/models/legend", response_model=ModelLegendResponse)
+def model_legend() -> ModelLegendResponse:
+    """Legenda "quale soglia, quale direzione conviene giocare" per ogni
+    mercato/modello (2026-09-19, richiesta esplicita operatore per le
+    pagine Partite e Schedine). Espone DIRETTAMENTE le tre policy di
+    decisione gia' in uso nel progetto, mai un numero ricalcolato o
+    duplicato qui:
+    - `over_signal_policy.py` (Under/Over gol 1.5-4.5): soglia orientata
+      alla precisione sulla classe "Over", specifica per mercato.
+    - `line_market_signal_policy.py` (Corners/Cards a linea): soglia +
+      direzione (Over per corners, storiche/di riferimento - nessun
+      modello corners mai promosso; Under per cards, verificata con ROI +
+      IC bootstrap il 2026-09-19).
+    - Il resto dei mercati (h2h, dc, goal_no_goal) non ha una soglia
+      dedicata: usa la `DecisionPolicy` generica (PLAY/BORDERLINE uguale
+      per ogni mercato, nessun override configurato) - un'unica riga di
+      riferimento invece di ripeterla per ciascuno.
+
+    `active_in_production` verificato ORA sul registry (mai assunto): una
+    soglia senza un modello promosso a `production` (es. corners) resta
+    visibile ma segnalata come non operativa.
+    """
+    registry = ModelRegistry()
+
+    def is_active(market: str) -> bool:
+        try:
+            return registry.get_production(market=market) is not None
+        except Exception:
+            return False
+
+    entries: list[ModelLegendEntry] = []
+
+    for market, spec in OVER_SIGNAL_THRESHOLDS.items():
+        entries.append(
+            ModelLegendEntry(
+                market=market,
+                market_label=_model_legend_market_label(market),
+                policy_family="over_signal",
+                direction="over",
+                threshold=spec.probability_threshold,
+                expected_precision=spec.expected_precision,
+                expected_recall=spec.expected_recall,
+                active_in_production=is_active(market),
+                note=f"Soglia a precisione, recall floor {spec.source_recall_floor}",
+            )
+        )
+
+    for market, line_spec in LINE_MARKET_SIGNAL_THRESHOLDS.items():
+        is_corners = market.startswith("corners_line_")
+        entries.append(
+            ModelLegendEntry(
+                market=market,
+                market_label=_model_legend_market_label(market),
+                policy_family="line_market_signal",
+                direction=line_spec.direction,
+                threshold=line_spec.probability_threshold,
+                expected_precision=line_spec.expected_precision,
+                expected_recall=line_spec.expected_recall,
+                expected_accuracy=line_spec.expected_accuracy,
+                active_in_production=is_active(market),
+                note=(
+                    "Soglia storica (Youden) di riferimento: nessun modello corners e' mai stato promosso"
+                    if is_corners
+                    else "Soglia robusta (ROI + IC bootstrap sul champion reale, 2026-09-19)"
+                ),
+            )
+        )
+
+    entries.append(
+        ModelLegendEntry(
+            market="h2h,dc,goal_no_goal",
+            market_label="Vincitore partita / Doppia chance / Goal-No Goal",
+            policy_family="generic_decision_policy",
+            direction=None,
+            threshold=DEFAULT_THRESHOLDS.play_min_probability,
+            expected_precision=None,
+            expected_recall=None,
+            active_in_production=any(is_active(m) for m in ("h2h", "dc", "goal_no_goal")),
+            note=(
+                f"Nessuna soglia dedicata: PLAY se probabilita' >= "
+                f"{DEFAULT_THRESHOLDS.play_min_probability:.0%} ed edge/EV positivi, "
+                f"BORDERLINE se >= {DEFAULT_THRESHOLDS.borderline_min_probability:.0%}"
+            ),
+        )
+    )
+
+    return ModelLegendResponse(
+        generated_at=datetime.now(timezone.utc).isoformat(),
+        policy_versions={
+            "over_signal": OVER_SIGNAL_POLICY_VERSION,
+            "line_market_signal": LINE_MARKET_SIGNAL_POLICY_VERSION,
+            "generic_decision_policy": DEFAULT_DECISION_POLICY.version,
+        },
+        entries=entries,
+    )
 
 
 @app.get("/models/diagnostics", response_model=ModelDiagnosticsResponse)

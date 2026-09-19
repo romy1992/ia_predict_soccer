@@ -532,6 +532,34 @@ class ModelDiagnosticsResponse(BaseModel):
     markets: list[MarketDiagnosticsEntry]
 
 
+class ModelLegendEntry(BaseModel):
+    """Una riga della legenda "quale soglia, quale direzione conviene
+    giocare" per un mercato (2026-09-19, richiesta esplicita operatore) -
+    espone direttamente `OVER_SIGNAL_THRESHOLDS`/`LINE_MARKET_SIGNAL_
+    THRESHOLDS` (mai duplicati/ricopiati nel frontend, unica fonte di
+    verita' i due moduli di policy) + `active_in_production` verificato al
+    momento della richiesta (`ModelRegistry.get_production`), cosi' una
+    soglia "di riferimento" su un mercato senza modello promosso (es.
+    corners) si distingue subito da una davvero operativa."""
+
+    market: str
+    market_label: str
+    policy_family: str  # "over_signal" | "line_market_signal" | "generic_decision_policy"
+    direction: Optional[str] = None  # "over" | "under" | None (generic_decision_policy non ha una direzione fissa)
+    threshold: Optional[float] = None
+    expected_precision: Optional[float] = None
+    expected_recall: Optional[float] = None
+    expected_accuracy: Optional[float] = None
+    active_in_production: bool
+    note: Optional[str] = None
+
+
+class ModelLegendResponse(BaseModel):
+    generated_at: str
+    policy_versions: dict[str, str]
+    entries: list[ModelLegendEntry]
+
+
 class PromotionEvaluationResponse(BaseModel):
     """OPS-02: verdetto del gate metriche + confronto candidate/production
     per un run, SENZA eseguire alcuna modifica (dry-run) — vedi
