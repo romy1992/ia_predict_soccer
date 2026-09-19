@@ -16,40 +16,66 @@ soglia ottimale sempre riportata nel report di classificazione).
 Il segnale e' quindi INDIPENDENTE dal pick a 0.5: puo' attivarsi (P(Over)
 >= soglia_linea) anche quando il pick mostrato resta "Under", e viceversa.
 
-Valori dal training reale (`best_models/corners_cards_from_export_summary.json`,
-`classification_report_post.optimal_threshold`, 2026-09-12 - vedi
-IMPLEMENTATION_LOG.md) - una ritaratura futura (nuovo training) richiede una
-nuova versione qui, MAI un edit silenzioso di questi valori (stesso
-principio di `DecisionPolicy`/BET-04 e di `over_signal_policy.py`)."""
+Valori corners (`corners_line_8_5..11_5`) dal training del 2026-09-12
+(`best_models/corners_cards_from_export_summary.json`,
+`classification_report_post.optimal_threshold`) - PRECEDONO il fix della
+contaminazione bookmaker (BetMGM/BetRivers/Bovada, 2026-09-16) e la
+riverifica che ha concluso di NON promuovere alcun modello corners (segnale
+troppo debole, AUC 0.53-0.57 anche sui dati puliti - vedi
+`docs/soccer_oracle_v2_detailed/PROMPT_mercato_corners.md`). Restano qui
+solo perche' nessun modello corners e' MAI stato promosso a `production`
+(`evaluate_line_market_signal` ritorna sempre `None` per questi mercati in
+pratica, dato che manca un `p_over` reale da passare) - da rimuovere
+quando/se il mercato corners verra' definitivamente archiviato.
+
+Valori cards (`cards_line_3_5..6_5`) RISCRITTI il 2026-09-19 dopo il
+training reale + verifica ROI con IC bootstrap sui champion effettivi
+(`report_cards_champion_verifica.md`): a differenza di corners, qui la
+soglia scelta e' quella con ROI positivo e intervallo di confidenza
+bootstrap (2000 resample, 95%) che NON include zero, sulla direzione
+UNDER (l'unica con edge verificato - la direzione OVER non ha mai
+superato il criterio su nessuna linea, vedi `report_cards_training_step_
+a_b.md`). Tra le soglie robuste disponibili per ciascuna linea si e'
+scelta quella col volume maggiore (piu' partite coperte), non la piu'
+aggressiva - vedi il report per le alternative.
+
+Una ritaratura futura (nuovo training) richiede una nuova versione qui,
+MAI un edit silenzioso di questi valori (stesso principio di
+`DecisionPolicy`/BET-04 e di `over_signal_policy.py`)."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
+from typing import Literal, Optional
 
-LINE_MARKET_SIGNAL_POLICY_VERSION = "line_market_signal_policy_v1"
+LINE_MARKET_SIGNAL_POLICY_VERSION = "line_market_signal_policy_v2"
 
 
 @dataclass(frozen=True)
 class LineMarketSignalThreshold:
     market: str
     probability_threshold: float
+    direction: Literal["over", "under"]
     expected_accuracy: float
-    expected_precision_over: float
-    expected_recall_over: float
+    expected_precision: float
+    expected_recall: float
     n_oof: int
 
 
 # fmt: off
 LINE_MARKET_SIGNAL_THRESHOLDS: dict[str, LineMarketSignalThreshold] = {
-    "corners_line_8_5": LineMarketSignalThreshold("corners_line_8_5", 0.6140, 0.5277, 0.6185, 0.5538, n_oof=8804),
-    "corners_line_9_5": LineMarketSignalThreshold("corners_line_9_5", 0.4906, 0.5298, 0.5182, 0.4923, n_oof=8804),
-    "corners_line_10_5": LineMarketSignalThreshold("corners_line_10_5", 0.3438, 0.4600, 0.3894, 0.7947, n_oof=8804),
-    "corners_line_11_5": LineMarketSignalThreshold("corners_line_11_5", 0.2786, 0.5209, 0.2774, 0.5034, n_oof=8804),
-    "cards_line_3_5": LineMarketSignalThreshold("cards_line_3_5", 0.6282, 0.6074, 0.6784, 0.6362, n_oof=8355),
-    "cards_line_4_5": LineMarketSignalThreshold("cards_line_4_5", 0.4827, 0.6024, 0.5217, 0.5199, n_oof=8355),
-    "cards_line_5_5": LineMarketSignalThreshold("cards_line_5_5", 0.2744, 0.5157, 0.3124, 0.7434, n_oof=8355),
-    "cards_line_6_5": LineMarketSignalThreshold("cards_line_6_5", 0.1686, 0.5308, 0.2119, 0.7477, n_oof=8355),
+    # Corners: NESSUN modello mai promosso a production - soglie storiche
+    # (pre-fix bookmaker) mantenute solo come riferimento, inerti in pratica.
+    "corners_line_8_5": LineMarketSignalThreshold("corners_line_8_5", 0.6140, "over", 0.5277, 0.6185, 0.5538, n_oof=8804),
+    "corners_line_9_5": LineMarketSignalThreshold("corners_line_9_5", 0.4906, "over", 0.5298, 0.5182, 0.4923, n_oof=8804),
+    "corners_line_10_5": LineMarketSignalThreshold("corners_line_10_5", 0.3438, "over", 0.4600, 0.3894, 0.7947, n_oof=8804),
+    "corners_line_11_5": LineMarketSignalThreshold("corners_line_11_5", 0.2786, "over", 0.5209, 0.2774, 0.5034, n_oof=8804),
+    # Cards: direzione UNDER (p_over <= soglia), soglia robusta col volume
+    # maggiore tra quelle con IC95% ROI bootstrap che non include zero.
+    "cards_line_3_5": LineMarketSignalThreshold("cards_line_3_5", 0.40, "under", 0.5930, 0.704, 0.62, n_oof=2706),
+    "cards_line_4_5": LineMarketSignalThreshold("cards_line_4_5", 0.45, "under", 0.6300, 0.706, 0.90, n_oof=3141),
+    "cards_line_5_5": LineMarketSignalThreshold("cards_line_5_5", 0.45, "under", 0.7560, 0.755, 0.99, n_oof=2843),
+    "cards_line_6_5": LineMarketSignalThreshold("cards_line_6_5", 0.25, "under", 0.8530, 0.862, 0.93, n_oof=2106),
 }
 # fmt: on
 
@@ -59,15 +85,24 @@ def evaluate_line_market_signal(market: str, p_over: Optional[float]) -> Optiona
     `p_over` non e' disponibile (mai un segnale inventato). Altrimenti un
     dict con `signal` (bool) + i valori di riferimento della soglia, cosi'
     il chiamante puo' sempre mostrare "a quale accuracy/precision/recall
-    attesi corrisponde" invece di un booleano nudo."""
+    attesi corrisponde" invece di un booleano nudo.
+
+    `direction` decide il verso del confronto: "over" (storico, corners)
+    segnala quando `p_over >= soglia`; "under" (cards, 2026-09-19) segnala
+    quando `p_over <= soglia` - l'edge verificato su cards e' scommettere
+    Under quando il modello e' CONFIDENTE che il totale resti basso, non
+    quando prevede Over."""
     spec = LINE_MARKET_SIGNAL_THRESHOLDS.get(market)
     if spec is None or p_over is None:
         return None
+    p = float(p_over)
+    signal = p >= spec.probability_threshold if spec.direction == "over" else p <= spec.probability_threshold
     return {
-        "signal": bool(float(p_over) >= spec.probability_threshold),
+        "signal": bool(signal),
+        "direction": spec.direction,
         "threshold": spec.probability_threshold,
         "expected_accuracy": spec.expected_accuracy,
-        "expected_precision_over": spec.expected_precision_over,
-        "expected_recall_over": spec.expected_recall_over,
+        "expected_precision": spec.expected_precision,
+        "expected_recall": spec.expected_recall,
         "policy_version": LINE_MARKET_SIGNAL_POLICY_VERSION,
     }

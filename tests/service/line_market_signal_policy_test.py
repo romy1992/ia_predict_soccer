@@ -23,21 +23,26 @@ class TestLineMarketSignalThresholds(unittest.TestCase):
             },
         )
 
-    def test_thresholds_decrease_as_line_rises(self):
+    def test_corners_thresholds_decrease_as_line_rises(self):
         # Linee piu' alte -> "Over" sempre piu' raro -> soglia ottimale di
         # Youden sempre piu' bassa (verificato sul training reale, non un
-        # valore arbitrario).
+        # valore arbitrario). Vale SOLO per corners: quelle soglie sono
+        # ancora quelle Youden/direzione "over" del 2026-09-12 (mai un
+        # modello corners promosso, restano di riferimento).
         corners_thresholds = [
             LINE_MARKET_SIGNAL_THRESHOLDS[f"corners_line_{label}"].probability_threshold
             for label in ["8_5", "9_5", "10_5", "11_5"]
         ]
         self.assertEqual(corners_thresholds, sorted(corners_thresholds, reverse=True))
 
-        cards_thresholds = [
-            LINE_MARKET_SIGNAL_THRESHOLDS[f"cards_line_{label}"].probability_threshold
-            for label in ["3_5", "4_5", "5_5", "6_5"]
-        ]
-        self.assertEqual(cards_thresholds, sorted(cards_thresholds, reverse=True))
+    def test_cards_thresholds_are_under_direction_with_positive_bootstrap_roi(self):
+        # Cards (riscritte 2026-09-19, vedi report_cards_champion_verifica.md):
+        # niente invariante di monotonia per linea - la soglia scelta e' quella
+        # col volume maggiore tra le soglie robuste (IC95% ROI bootstrap che
+        # non include zero), non una funzione regolare della linea.
+        for label in ["3_5", "4_5", "5_5", "6_5"]:
+            spec = LINE_MARKET_SIGNAL_THRESHOLDS[f"cards_line_{label}"]
+            self.assertEqual(spec.direction, "under")
 
 
 class TestEvaluateLineMarketSignal(unittest.TestCase):
@@ -59,13 +64,25 @@ class TestEvaluateLineMarketSignal(unittest.TestCase):
         self.assertFalse(result["signal"])
 
     def test_signal_can_be_true_below_0_5_on_a_rare_line(self):
-        # cards_line_6_5: soglia 0.1686, ben sotto 0.5 - a soglia 0.5 fissa
-        # il pick non avrebbe MAI mostrato "Over" per questa linea
-        # (verificato: 0 predizioni Over su 646 casi reali, vedi
-        # IMPLEMENTATION_LOG.md), il segnale invece si attiva correttamente.
-        result = evaluate_line_market_signal(market="cards_line_6_5", p_over=0.20)
+        # corners_line_11_5: soglia 0.2786 (direzione "over"), ben sotto 0.5 -
+        # a soglia 0.5 fissa il pick non avrebbe MAI mostrato "Over" per
+        # questa linea, il segnale invece si attiva correttamente.
+        result = evaluate_line_market_signal(market="corners_line_11_5", p_over=0.30)
         self.assertTrue(result["signal"])
         self.assertLess(result["threshold"], 0.5)
+
+    def test_cards_signal_fires_on_under_direction_not_over(self):
+        # cards_line_6_5: soglia 0.25, direzione "under" - il segnale si
+        # attiva quando il modello e' CONFIDENTE (p_over basso), non quando
+        # prevede Over (l'edge verificato e' solo lato Under, vedi
+        # report_cards_champion_verifica.md).
+        fires = evaluate_line_market_signal(market="cards_line_6_5", p_over=0.20)
+        self.assertIsNotNone(fires)
+        self.assertTrue(fires["signal"])
+        self.assertEqual(fires["direction"], "under")
+
+        no_fire = evaluate_line_market_signal(market="cards_line_6_5", p_over=0.90)
+        self.assertFalse(no_fire["signal"])
 
 
 if __name__ == "__main__":

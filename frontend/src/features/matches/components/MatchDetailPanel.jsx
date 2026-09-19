@@ -167,9 +167,9 @@ export default function MatchDetailPanel({
                 {payload.line_market_signal?.signal && (
                   <span
                     className="bet-over-badge"
-                    title={`Soglia ottimale (Youden): P(Over) >= ${formatPercent(payload.line_market_signal.threshold)} (accuracy attesa ${formatPercent(payload.line_market_signal.expected_accuracy)}). Segnale indipendente dal pick sopra.`}
+                    title={`${payload.line_market_signal.direction === "under" ? "Soglia robusta (ROI verificato)" : "Soglia ottimale (Youden)"}: P(Over) ${payload.line_market_signal.direction === "under" ? "<=" : ">="} ${formatPercent(payload.line_market_signal.threshold)} (precisione attesa ${formatPercent(payload.line_market_signal.expected_precision ?? payload.line_market_signal.expected_accuracy)}). Segnale indipendente dal pick sopra.`}
                   >
-                    OVER (soglia ottima)
+                    {payload.line_market_signal.direction === "under" ? "UNDER (soglia robusta)" : "OVER (soglia ottima)"}
                   </span>
                 )}
                 <div className="decision-metrics">
