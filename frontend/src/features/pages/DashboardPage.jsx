@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import MatchTable from "../matches/components/MatchTable";
 import PhaseTabs from "../matches/components/PhaseTabs";
 import MarketTabs from "../matches/components/MarketTabs";
+import ModelLegend from "../shared/ModelLegend";
 import { marketLabel, phaseClass, phaseLabel } from "../shared/formatters";
 
 export default function DashboardPage({
@@ -70,6 +71,8 @@ export default function DashboardPage({
           <strong>{overview?.model_markets?.length ?? 0}</strong>
         </article>
       </div>
+
+      <ModelLegend />
 
       <section className="panel">
         <div className="panel-header">

@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import ModelLegend from "../shared/ModelLegend";
 import { formatNumber, formatOdd, formatPercent, marketLabel, todayIso } from "../shared/formatters";
 
 /**
@@ -148,6 +149,8 @@ export default function BetslipPage({
 
   return (
     <section className="stack betslip-workspace">
+      <ModelLegend />
+
       <section className="panel betslip-toolbar">
         <div className="betslip-toolbar-main">
           <div>
