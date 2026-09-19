@@ -123,6 +123,16 @@ class JobRetrainRequest(BaseModel):
     async_run: bool = True
 
 
+class JobOfficialCaptureRequest(BaseModel):
+    """Bottone "Esegui ora" di Impostazioni per il job 'Cattura PLAY
+    ufficiali': stessa funzione del job schedulato omonimo
+    (`run_official_prediction_capture`). Non chiama alcun provider esterno,
+    nessun parametro di filtro (sempre l'intera finestra pre-kickoff
+    configurata)."""
+
+    async_run: bool = True
+
+
 class JobResponse(BaseModel):
     queued: bool
     message: str

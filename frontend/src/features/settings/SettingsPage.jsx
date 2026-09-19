@@ -146,6 +146,9 @@ export default function SettingsPage({
   scheduleSavingJobId,
   onSaveSchedule,
   onResetSchedule,
+  runningJobId,
+  runFeedback = {},
+  onRunJob,
   quota,
   quotaLoading,
   quotaError,
@@ -247,6 +250,11 @@ export default function SettingsPage({
                   )}
                 </strong>
                 <small className="muted">{job.description}</small>
+                {runFeedback[job.job_id] && (
+                  <small className={runFeedback[job.job_id].status === "error" ? "error-text" : "muted"}>
+                    {runFeedback[job.job_id].message}
+                  </small>
+                )}
               </div>
               {job.schedule_kind && onSaveSchedule && onResetSchedule && (
                 <JobScheduleEditor
@@ -255,6 +263,16 @@ export default function SettingsPage({
                   onSave={onSaveSchedule}
                   onReset={onResetSchedule}
                 />
+              )}
+              {onRunJob && (
+                <button
+                  className="btn-secondary"
+                  disabled={runningJobId === job.job_id}
+                  title="Esegue il job subito, senza aspettare il prossimo giro schedulato (indipendente dal toggle enabled/disabled)"
+                  onClick={() => onRunJob(job.job_id)}
+                >
+                  {runningJobId === job.job_id ? "Avvio..." : "Esegui ora"}
+                </button>
               )}
               <label className="switch">
                 <input
