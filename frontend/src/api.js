@@ -281,6 +281,34 @@ export function triggerDataQualityReport(asyncRunOrPayload = true, payload = {})
   });
 }
 
+// Mappa job_id (vedi JOB_DEFINITIONS in src/jobs/job_settings.py) -> endpoint
+// manuale corrispondente, usata dal bottone "Esegui ora" della pagina
+// Impostazioni: un unico punto invece di una funzione trigger* dedicata per
+// ogni riga, dato che tutti questi endpoint accettano un body {async_run}.
+const JOB_RUN_ENDPOINTS = {
+  data_daily_refresh: "/jobs/daily-refresh",
+  data_sync_today: "/jobs/today-update",
+  data_settlement: "/jobs/settlement",
+  data_future_sync: "/jobs/future-sync",
+  ml_training: "/jobs/retrain",
+  data_sync_live: "/jobs/live-sync",
+  data_quality_report: "/jobs/data-quality-report",
+  prediction_snapshot_refresh: "/jobs/prediction-snapshot-refresh",
+  official_prediction_capture: "/jobs/official-capture",
+};
+
+export function runJobNow(jobId) {
+  const endpoint = JOB_RUN_ENDPOINTS[jobId];
+  if (!endpoint) {
+    return Promise.reject(new Error(`Job id senza endpoint manuale: ${jobId}`));
+  }
+  return request(endpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ async_run: true }),
+  });
+}
+
 export function predict(market, fixtureId) {
   return request(`/predict/${market}`, {
     method: "POST",

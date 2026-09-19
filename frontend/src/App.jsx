@@ -24,6 +24,7 @@ import {
   recomputeMatchPredictions,
   refreshDayPredictions,
   refreshApiQuota,
+  runJobNow,
   saveBetslipGeneration,
   triggerDailyRefresh,
   triggerDataQualityReport,
@@ -98,6 +99,8 @@ export default function App() {
   const [jobSettingsError, setJobSettingsError] = useState("");
   const [jobSettingsSavingId, setJobSettingsSavingId] = useState(null);
   const [jobScheduleSavingId, setJobScheduleSavingId] = useState(null);
+  const [jobRunningId, setJobRunningId] = useState(null);
+  const [jobRunFeedback, setJobRunFeedback] = useState({});
   const [quotaPaused, setQuotaPaused] = useState(false);
   const [quotaPausedSince, setQuotaPausedSince] = useState(null);
   const [apiQuota, setApiQuota] = useState(null);
@@ -525,6 +528,22 @@ export default function App() {
       throw err;
     } finally {
       setJobScheduleSavingId(null);
+    }
+  }, []);
+  const runJobNowHandler = useCallback(async (jobId) => {
+    setJobRunningId(jobId);
+    setJobRunFeedback((prev) => ({ ...prev, [jobId]: { status: "running", message: "Job avviato..." } }));
+    try {
+      const result = await runJobNow(jobId);
+      setJobRunFeedback((prev) => ({
+        ...prev,
+        [jobId]: { status: "queued", message: result?.message || "Job accodato con successo." },
+      }));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setJobRunFeedback((prev) => ({ ...prev, [jobId]: { status: "error", message } }));
+    } finally {
+      setJobRunningId(null);
     }
   }, []);
   const loadApiQuota = useCallback(async () => {
@@ -976,6 +995,9 @@ export default function App() {
       scheduleSavingJobId: jobScheduleSavingId,
       onSaveSchedule: saveJobSchedule,
       onResetSchedule: resetJobScheduleToDefault,
+      runningJobId: jobRunningId,
+      runFeedback: jobRunFeedback,
+      onRunJob: runJobNowHandler,
       quota: apiQuota,
       quotaLoading: apiQuotaLoading,
       quotaError: apiQuotaError,

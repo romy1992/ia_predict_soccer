@@ -36,6 +36,7 @@ from src.api.schemas import (
     JobFutureSyncRequest,
     JobImportRequest,
     JobLiveSyncRequest,
+    JobOfficialCaptureRequest,
     JobPredictionSnapshotRefreshRequest,
     JobResponse,
     JobRetrainRequest,
@@ -114,6 +115,7 @@ from src.jobs.scheduler import (
     run_manual_retrain,
     run_manual_settlement,
     run_manual_today_update,
+    run_official_prediction_capture,
     run_prediction_snapshot_refresh,
 )
 from src.service_ia.config.app_config import load_app_config
@@ -930,6 +932,20 @@ def trigger_data_quality_report(payload: JobDataQualityReportRequest, background
         leagues=payload.leagues,
     )
     return JobResponse(queued=False, message="Data quality report job completed", details=report)
+
+
+@app.post("/jobs/official-capture", response_model=JobResponse)
+def trigger_official_capture(payload: JobOfficialCaptureRequest, background_tasks: BackgroundTasks) -> JobResponse:
+    """Bottone "Esegui ora" di Impostazioni per il job 'Cattura PLAY ufficiali':
+    stessa funzione del job schedulato omonimo (vedi `run_official_prediction_capture`
+    in `src/jobs/scheduler.py`). Non chiama alcun provider esterno."""
+    if payload.async_run:
+        row = JobHistory().queue_job(job_type="official_prediction_capture", params={})
+        background_tasks.add_task(run_official_prediction_capture, job_id=row["job_id"])
+        return JobResponse(queued=True, message="Official capture job queued", details={"job_id": row["job_id"]})
+
+    report = run_official_prediction_capture()
+    return JobResponse(queued=False, message="Official capture job completed", details=report)
 
 
 @app.get("/data/quality", response_model=DataQualityResponse)
