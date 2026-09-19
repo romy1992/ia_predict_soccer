@@ -1,5 +1,20 @@
 # Prompt: mercato Corners (linee 8.5/9.5/10.5/11.5) — stato, findings, prossimi passi
 
+> **CORREZIONE (2026-09-19)**: questo file affermava "nessun modello
+> corners è mai stato promosso a production" — **falso**, mai verificato
+> direttamente sul registry. Controllo reale (`report_verifica_corners_
+> production_esistente.md`): **esiste una production attiva dal 2026-09-12**
+> per tutte e 4 le linee (stesso batch dei vecchi modelli cards, 73 feature
+> incluse le quote legacy aggregate, AUC 0.51-0.54 — un segnale
+> debolissimo, probabilmente ancora contaminato dai bookmaker placeholder
+> visto che precede il fix del 16/09). Il resto di questo file — l'indagine
+> rigorosa del 16/09, la conclusione "il segnale è troppo debole per
+> giustificare un NUOVO training" — resta valido: la conclusione doveva
+> solo essere "non promuovere un modello NUOVO", non "non c'è nulla in
+> production da rivedere". La decisione su cosa fare con la production
+> esistente (lasciarla, disattivarla, retrainarla con la stessa pulizia
+> bookmaker applicata ai cards) è dell'operatore, non presa qui.
+
 > **STATO (2026-09-16): indagine completata, training NON eseguito.**
 > Conclusione: il segnale disponibile è troppo debole per giustificare
 > training + promozione in produzione su nessuna delle 4 linee. Questo file
