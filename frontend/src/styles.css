@@ -1585,6 +1585,17 @@ th {
   gap: 4px;
 }
 
+.settings-job-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: 320px;
+}
+
+.settings-job-progress .progress-bar {
+  margin-top: 4px;
+}
+
 .switch {
   position: relative;
   display: inline-block;
