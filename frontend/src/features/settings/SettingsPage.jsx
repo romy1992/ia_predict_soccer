@@ -136,6 +136,51 @@ function quotaBarClass(percentage) {
  * 2026-09-05: la vecchia versione poteva mostrare 0% con la quota reale
  * gia' al 100%, perche' non faceva mai un vero controllo).
  */
+/**
+ * Avanzamento di un job lanciato con "Esegui ora" (2026-09-21).
+ *
+ * Non tutti i job sanno dire a che punto sono: solo quelli che popolano
+ * `summary.percent` (oggi il ricalcolo previsioni) possono mostrare una
+ * barra a percentuale. Per tutti gli altri si usa la barra indeterminata,
+ * che dice "sto lavorando" senza inventare un avanzamento che il backend
+ * non ha mai comunicato.
+ */
+function JobRunProgress({ row }) {
+  if (!row || !["queued", "running"].includes(row.status)) {
+    return null;
+  }
+  const summary = row.summary || {};
+  const percent = typeof summary.percent === "number" ? summary.percent : null;
+  const dettaglio =
+    percent !== null && summary.fixtures_total
+      ? `${summary.fixtures_done ?? 0}/${summary.fixtures_total} (${Math.round(percent)}%)`
+      : row.status === "queued"
+        ? "In coda..."
+        : "In esecuzione...";
+
+  return (
+    <div className="settings-job-progress">
+      {percent !== null ? (
+        <div
+          className="progress-bar determinate"
+          role="progressbar"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={Math.round(percent)}
+          aria-label="Avanzamento job"
+        >
+          <div className="progress-bar-value" style={{ width: `${Math.max(4, percent)}%` }} />
+        </div>
+      ) : (
+        <div className="progress-bar" role="progressbar" aria-label="Job in esecuzione">
+          <div className="progress-bar-fill" />
+        </div>
+      )}
+      <small className="muted">{dettaglio}</small>
+    </div>
+  );
+}
+
 export default function SettingsPage({
   jobs = [],
   isLoading,
@@ -148,6 +193,7 @@ export default function SettingsPage({
   onResetSchedule,
   runningJobId,
   runFeedback = {},
+  runRows = {},
   onRunJob,
   quota,
   quotaLoading,
@@ -255,6 +301,7 @@ export default function SettingsPage({
                     {runFeedback[job.job_id].message}
                   </small>
                 )}
+                <JobRunProgress row={runRows[job.job_id]} />
               </div>
               {job.schedule_kind && onSaveSchedule && onResetSchedule && (
                 <JobScheduleEditor
@@ -264,16 +311,20 @@ export default function SettingsPage({
                   onReset={onResetSchedule}
                 />
               )}
-              {onRunJob && (
-                <button
-                  className="btn-secondary"
-                  disabled={runningJobId === job.job_id}
-                  title="Esegue il job subito, senza aspettare il prossimo giro schedulato (indipendente dal toggle enabled/disabled)"
-                  onClick={() => onRunJob(job.job_id)}
-                >
-                  {runningJobId === job.job_id ? "Avvio..." : "Esegui ora"}
-                </button>
-              )}
+              {onRunJob && (() => {
+                const inCorso = ["queued", "running"].includes(runRows[job.job_id]?.status);
+                const inInvio = runningJobId === job.job_id;
+                return (
+                  <button
+                    className="btn-secondary"
+                    disabled={inInvio || inCorso}
+                    title="Esegue il job subito, senza aspettare il prossimo giro schedulato (indipendente dal toggle enabled/disabled)"
+                    onClick={() => onRunJob(job.job_id)}
+                  >
+                    {inInvio ? "Avvio..." : inCorso ? "In corso..." : "Esegui ora"}
+                  </button>
+                );
+              })()}
               <label className="switch">
                 <input
                   type="checkbox"
