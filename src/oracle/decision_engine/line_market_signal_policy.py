@@ -76,12 +76,16 @@ class LineMarketSignalThreshold:
 
 # fmt: off
 LINE_MARKET_SIGNAL_THRESHOLDS: dict[str, LineMarketSignalThreshold] = {
-    # Corners: soglie Youden del 12/09, ATTIVE - un modello e' davvero in
-    # production per queste 4 linee dal 12/09 (verificato 19/09, vedi il
-    # commento in testa al file), AUC 0.51-0.54, probabilmente ancora
-    # contaminato dai bookmaker placeholder (fix del 16/09 mai riapplicato
-    # a questo run). Non correggerle qui in silenzio: serve una decisione
-    # esplicita (nuovo training pulito + repromozione, o disattivazione).
+    # Corners: soglie Youden del 12/09, ora INERTI - i 4 modelli corner
+    # sono stati retrocessi da `production` a `retired` il 2026-09-21
+    # (decisione esplicita operatore), quindi `evaluate_line_market_signal`
+    # non riceve piu' un `p_over` reale per questi mercati. Motivo della
+    # chiusura: con dati puliti e IC bootstrap il mercato corner non batte
+    # il margine del bookmaker su NESSUNA linea/soglia/direzione (ROI fra
+    # -3% e -9%, molti IC interamente sotto zero) - vedi §3-bis di
+    # `docs/soccer_oracle_v2_detailed/PROMPT_mercato_corners.md`.
+    # Restano qui come riferimento storico: non riattivarle senza rifare
+    # quella verifica.
     "corners_line_8_5": LineMarketSignalThreshold("corners_line_8_5", 0.6140, "over", 0.5277, 0.6185, 0.5538, n_oof=8804),
     "corners_line_9_5": LineMarketSignalThreshold("corners_line_9_5", 0.4906, "over", 0.5298, 0.5182, 0.4923, n_oof=8804),
     "corners_line_10_5": LineMarketSignalThreshold("corners_line_10_5", 0.3438, "over", 0.4600, 0.3894, 0.7947, n_oof=8804),
