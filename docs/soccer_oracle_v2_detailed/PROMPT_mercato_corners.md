@@ -143,6 +143,43 @@ questa stessa procedura (Under/Over 1.5/2.5/3.5, goal_no_goal) hanno tutti
 raggiunto AUC 0,59-0,61 prima di essere promossi. Nessuna linea corner ci
 si avvicina.
 
+## 3-bis. Verifica ROI sui dati puliti (2026-09-21) — CHIUDE LA QUESTIONE
+
+Prima di rifare i modelli con la pulizia bookmaker applicata (richiesta
+operatore "rifacciamoli con dati puliti"), e' stata eseguita la stessa
+verifica ROI usata per i cards: soglie + IC bootstrap 95% (2000 resample)
+su probabilita' OOF calibrate, dati post-esclusione BetMGM/BetRivers/
+Bovada, righe filtrate su quota reale, quote-only per esito. Due modelli
+(logistic e random forest), entrambe le direzioni, tutte e 4 le linee.
+Criterio: procedere al training solo con almeno una soglia n>=50 e IC
+interamente sopra lo zero.
+
+**Esito: ZERO soglie robuste. E molte robustamente NEGATIVE.**
+
+| Linea | Caso | n | ROI | IC 95% |
+|---|---|---:|---:|---|
+| 8.5 | OVER >= 0,55 | 3.846 | −7,7% | [−10,3%, −4,9%] |
+| 8.5 | OVER >= 0,60 | 2.865 | −8,7% | [−11,8%, −5,5%] |
+| 9.5 | UNDER <= 0,45 (rf) | 1.316 | −5,8% | [−10,4%, −0,8%] |
+| 10.5 | UNDER <= 0,45 | 4.155 | −2,5% | [−4,8%, −0,2%] |
+| 10.5 | UNDER <= 0,25 | 338 | −8,2% | [−15,2%, −1,4%] |
+| 11.5 | UNDER <= 0,45 | 1.825 | −6,6% | [−9,4%, −3,9%] |
+| 11.5 | UNDER <= 0,40 | 1.767 | −6,1% | [−8,8%, −3,4%] |
+
+**Il dato che spiega tutto**: i ROI si concentrano fra −3% e −9%, cioe'
+l'ordine di grandezza del MARGINE DEL BOOKMAKER. E' la firma di "nessun
+segnale reale": il modello non sbaglia le partite piu' del caso, semplicemente
+ogni scommessa lascia sul piatto il vig.
+
+**Caso istruttivo**: la linea 11.5 con logistic ha l'AUC piu' alta di tutte
+(0,5906 — superiore a diversi modelli promossi in questo progetto) e perde
+comunque su OGNI soglia, tutte con IC sotto zero. AUC e profitto sono due
+cose diverse: si puo' ordinare le partite meglio del caso e perdere lo
+stesso contro il margine.
+
+Script: `/scratchpad` della sessione (non committato); la logica e'
+identica allo Step A dei cards, vedi `report_cards_training_step_a_b.md`.
+
 ## 4. Conclusione operativa
 
 **Non procedere con training/promozione** su nessuna delle 4 linee corner
@@ -159,6 +196,21 @@ di base rate): lì il modello discrimina davvero, anche se debolmente
 sbilanciate, fanno collassare il classificatore sulla classe maggioritaria
 — un problema di soglia/bilanciamento più che di segnale puro, ma comunque
 non sufficiente a battere lo standard del progetto.
+
+**DECISIONE FINALE (2026-09-21)**: alla luce della verifica ROI del §3-bis,
+il mercato corner è chiuso. Non solo non si promuovono modelli nuovi: i 4
+modelli del 2026-09-12 sono stati **retrocessi da `production` a `retired`**
+su richiesta esplicita dell'operatore. Motivo: erano addestrati su dati
+CONTAMINATI (precedono il fix bookmaker del 16/09) con AUC 0,51-0,54, e
+ora sappiamo che nemmeno con dati puliti e modelli migliori il mercato
+batte il margine del bookmaker — quindi quei modelli stavano quasi
+certamente facendo perdere soldi a chi ne seguiva i segnali. Nessuna
+previsione è meglio di una previsione sistematicamente perdente.
+
+Conseguenza automatica: senza una production per questi mercati,
+`evaluate_line_market_signal()` non riceve più un `p_over` reale e le
+soglie corner in `line_market_signal_policy.py` diventano inerti da sole
+(restano nel file come riferimento storico, vedi il commento lì).
 
 ## 5. Cosa si può ancora provare (nessuna garantita, in ordine di costo)
 
