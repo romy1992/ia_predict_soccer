@@ -101,6 +101,11 @@ export default function App() {
   const [jobScheduleSavingId, setJobScheduleSavingId] = useState(null);
   const [jobRunningId, setJobRunningId] = useState(null);
   const [jobRunFeedback, setJobRunFeedback] = useState({});
+  // Avanzamento dei job lanciati con "Esegui ora" (2026-09-21): mappa
+  // job_id dello scheduler -> riga di `/jobs/{id}`. Piu' job possono girare
+  // insieme, quindi e' una mappa e non un singolo id come `jobRunningId`
+  // (che resta per il solo stato "sto inviando la POST").
+  const [jobRunRows, setJobRunRows] = useState({});
   const [quotaPaused, setQuotaPaused] = useState(false);
   const [quotaPausedSince, setQuotaPausedSince] = useState(null);
   const [apiQuota, setApiQuota] = useState(null);
@@ -535,10 +540,16 @@ export default function App() {
     setJobRunFeedback((prev) => ({ ...prev, [jobId]: { status: "running", message: "Job avviato..." } }));
     try {
       const result = await runJobNow(jobId);
+      const runId = result?.details?.job_id;
       setJobRunFeedback((prev) => ({
         ...prev,
         [jobId]: { status: "queued", message: result?.message || "Job accodato con successo." },
       }));
+      // Senza `job_id` il job non e' pollabile (job sincroni o risposte
+      // legacy): resta il messaggio testuale, nessuna barra inventata.
+      if (runId) {
+        setJobRunRows((prev) => ({ ...prev, [jobId]: { job_id: runId, status: "queued", summary: {} } }));
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       setJobRunFeedback((prev) => ({ ...prev, [jobId]: { status: "error", message } }));
@@ -546,6 +557,78 @@ export default function App() {
       setJobRunningId(null);
     }
   }, []);
+  // Chiave STABILE dei job da pollare: cambia solo quando un job parte o
+  // finisce, non ad ogni aggiornamento di avanzamento. Serve come dipendenza
+  // dell'effect sotto: usare direttamente `jobRunRows` creerebbe un ciclo
+  // infinito (l'effect scrive `jobRunRows`, che lo farebbe ripartire ad ogni
+  // tick, riazzerando l'intervallo e ripollando subito).
+  const jobRunActiveKey = useMemo(
+    () =>
+      Object.entries(jobRunRows)
+        .filter(([, row]) => row?.job_id && ["queued", "running"].includes(row.status))
+        .map(([jobId, row]) => `${jobId}|${row.job_id}`)
+        .sort()
+        .join(","),
+    [jobRunRows]
+  );
+  // Polling dei job "Esegui ora" ancora in corso: un solo timer per tutti,
+  // si spegne da solo quando nessun job e' piu' queued/running.
+  useEffect(() => {
+    const attivi = jobRunActiveKey
+      ? jobRunActiveKey.split(",").map((voce) => {
+        const [jobId, runId] = voce.split("|");
+        return [jobId, { job_id: runId }];
+      })
+      : [];
+    if (attivi.length === 0) {
+      return undefined;
+    }
+    let cancelled = false;
+    const tick = async () => {
+      const esiti = await Promise.all(
+        attivi.map(async ([jobId, row]) => {
+          try {
+            return [jobId, await getJob(row.job_id)];
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            return [jobId, { ...row, status: "failed", error: { message } }];
+          }
+        })
+      );
+      if (cancelled) {
+        return;
+      }
+      setJobRunRows((prev) => {
+        const next = { ...prev };
+        for (const [jobId, riga] of esiti) {
+          if (riga) {
+            next[jobId] = riga;
+          }
+        }
+        return next;
+      });
+      setJobRunFeedback((prev) => {
+        const next = { ...prev };
+        for (const [jobId, riga] of esiti) {
+          if (riga?.status === "success") {
+            next[jobId] = { status: "success", message: "Job completato." };
+          } else if (riga?.status === "failed") {
+            next[jobId] = {
+              status: "error",
+              message: riga.error?.message || "Job fallito.",
+            };
+          }
+        }
+        return next;
+      });
+    };
+    tick();
+    const timer = setInterval(tick, 1500);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [jobRunActiveKey]);
   const loadApiQuota = useCallback(async () => {
     setApiQuotaLoading(true);
     setApiQuotaError("");
@@ -997,6 +1080,7 @@ export default function App() {
       onResetSchedule: resetJobScheduleToDefault,
       runningJobId: jobRunningId,
       runFeedback: jobRunFeedback,
+      runRows: jobRunRows,
       onRunJob: runJobNowHandler,
       quota: apiQuota,
       quotaLoading: apiQuotaLoading,
