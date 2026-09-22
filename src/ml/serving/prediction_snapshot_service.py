@@ -122,7 +122,19 @@ class PredictionSnapshotService:
         # caricamento del modello, e deve riflettere una promozione nuova
         # immediatamente (mai un'istanza "congelata" sulla production di
         # ieri).
-        return self.registry.get_production(market=market) or self.registry.get_latest(market=market) or None
+        production = self.registry.get_production(market=market)
+        if production is not None:
+            return production
+        latest = self.registry.get_latest(market=market)
+        if latest is not None and latest.get("current_stage") == "retired":
+            # Un ritiro esplicito (2026-09-21, caso corners: dati
+            # contaminati + ROI negativo verificato con IC bootstrap) NON
+            # deve mai ripiegare sull'ultimo run come se fosse un
+            # candidate in attesa di promozione - sono due situazioni
+            # opposte che il fallback storico confondeva, servendo
+            # comunque il modello che si era deciso di smettere di usare.
+            return None
+        return latest
 
     @staticmethod
     def _extract_probability(model: Any, X: pd.DataFrame) -> tuple[int, float]:
