@@ -479,6 +479,27 @@ class TestListActiveMarkets(unittest.TestCase):
 
             self.assertIn("h2h", registry.list_active_markets())
 
+    def test_mercato_ritirato_senza_produzione_esce_dagli_attivi(self):
+        # Caso reale 2026-09-21 (corners): un mercato SENZA alcuna
+        # production, il cui ultimo run e' stato esplicitamente portato a
+        # `retired` (dati contaminati + ROI negativo verificato), deve
+        # sparire da Dashboard esattamente come un mercato archiviato -
+        # non e' un candidate in attesa, e' un ritiro deciso.
+        with tempfile.TemporaryDirectory() as tmp:
+            registry = ModelRegistry(registry_dir=tmp)
+            run = registry.register(
+                model_path=os.path.join(tmp, "best_models", "corners", "corners_line_8_5", "champion.pkl"),
+                market="corners_line_8_5",
+                model_name="calibrated_random_forest",
+            )
+            registry.promote(run_id=run["run_id"], to_stage="production", actor="test")
+            registry.promote(run_id=run["run_id"], to_stage="retired", actor="operator_request",
+                             reason="dati contaminati, ROI negativo verificato con IC bootstrap")
+
+            self.assertIn("corners_line_8_5", registry.list_markets())
+            self.assertNotIn("corners_line_8_5", registry.list_active_markets())
+            self.assertIsNone(registry.get_production(market="corners_line_8_5"))
+
 
 if __name__ == "__main__":
     unittest.main()

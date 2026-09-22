@@ -328,22 +328,36 @@ class ModelRegistry:
         return sorted(markets)
 
     def list_active_markets(self) -> list[str]:
-        """Come `list_markets()` ma esclude i mercati il cui modello in
-        produzione e' stato lasciato in `archivio/` dalla riorganizzazione
-        di `best_models/` del 2026-09-15 (es. under_over_4_5, mai rifatto
-        con la procedura nuova a 33 feature separate per esito) - quel
-        modello resta caricabile e nel registry per lo storico
-        (`list_markets()`/diagnostics lo vedono ancora), ma un operatore ha
-        chiesto esplicitamente di non offrirlo piu' come mercato attivo in
-        Dashboard finche' non torna con un modello nuovo. Un mercato senza
-        ALCUN modello in produzione (candidate ancora in corso) resta
-        incluso: e' un caso diverso, gia' gestito a parte in Dashboard col
-        badge "In coda"."""
+        """Come `list_markets()` ma esclude due categorie di mercati che
+        un operatore ha chiesto esplicitamente di non offrire piu' come
+        mercato attivo in Dashboard, pur restando entrambe caricabili e
+        visibili nello storico (`list_markets()`/diagnostics le vedono
+        ancora):
+
+        1. Il modello in produzione e' stato lasciato in `archivio/` dalla
+           riorganizzazione di `best_models/` del 2026-09-15 (es.
+           under_over_4_5, mai rifatto con la procedura nuova a 33
+           feature separate per esito) - il mercato ha ANCORA una
+           `production` formale, solo la sua cartella e' quella vecchia.
+
+        2. NESSUN modello in produzione E l'ultimo run registrato e'
+           esplicitamente `retired` (2026-09-21, caso corners: 4 modelli
+           ritirati perche' addestrati su dati contaminati e con ROI
+           negativo verificato - vedi
+           `docs/soccer_oracle_v2_detailed/PROMPT_mercato_corners.md`).
+           Un mercato senza production e con l'ultimo run ancora
+           `candidate` (mai stato promosso, non un ritiro esplicito)
+           resta invece incluso: e' un caso diverso, gia' gestito a
+           parte in Dashboard col badge "In coda"."""
         active = []
         for market in self.list_markets():
             production = self.get_production(market=market)
             if production is not None and is_archived_model_path(production.get("model_path")):
                 continue
+            if production is None:
+                latest = self.get_latest(market=market)
+                if latest is not None and latest.get("current_stage") == "retired":
+                    continue
             active.append(market)
         return active
 

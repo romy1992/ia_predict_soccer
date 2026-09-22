@@ -1,3 +1,4 @@
+import os
 import tempfile
 import unittest
 from unittest import mock
@@ -10,6 +11,7 @@ from sqlalchemy.pool import StaticPool
 from src.ml.serving.prediction_snapshot_service import PredictionSnapshotService, compute_feature_fingerprint
 from src.repository.match_prediction_snapshot_repository import MatchPredictionSnapshotRepository
 from src.service_ia.model.match import Base, MatchPredictionSnapshot
+from src.service_ia.training.model_registry import ModelRegistry
 
 
 def _make_session_factory():
@@ -482,6 +484,94 @@ class TestPredictionSnapshotServiceResolvePredictions(unittest.TestCase):
         service2.resolve_predictions(fixture_id=2, markets=["h2h"], status="NS")
 
         self.assertEqual(mock_joblib_load.call_count, 1)
+
+
+class TestLatestModelForMarket(unittest.TestCase):
+    """Copertura diretta di `_latest_model_for_market` (2026-09-21, caso
+    corners): e' la funzione che decide COSA viene davvero calcolato e
+    servito, quindi merita un test che usi un `ModelRegistry` vero invece
+    di un mock - `model_registry_test.py` copre solo `list_active_markets`,
+    che e' un filtro a valle (dashboard/job), non questo punto d'ingresso."""
+
+    def setUp(self):
+        self.session_factory = _make_session_factory()
+        self._patch = mock.patch(
+            "src.repository.match_prediction_snapshot_repository.SessionLocal", new=self.session_factory
+        )
+        self._patch.start()
+        self.addCleanup(self._patch.stop)
+
+    def _registry_with_run(self, tmp, market, stage):
+        registry = ModelRegistry(registry_dir=tmp)
+        run = registry.register(
+            model_path=os.path.join(tmp, "best_models", market, "champion.pkl"),
+            market=market,
+            model_name="calibrated_random_forest",
+        )
+        if stage == "production":
+            registry.promote(run_id=run["run_id"], to_stage="production", actor="test")
+        elif stage == "retired":
+            registry.promote(run_id=run["run_id"], to_stage="production", actor="test")
+            registry.promote(
+                run_id=run["run_id"],
+                to_stage="retired",
+                actor="operator_request",
+                reason="dati contaminati, ROI negativo verificato con IC bootstrap",
+            )
+        return registry, run
+
+    def test_restituisce_la_produzione_quando_esiste(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            registry, run = self._registry_with_run(tmp, "h2h", stage="production")
+            service = PredictionSnapshotService()
+            service.registry = registry
+
+            model_meta = service._latest_model_for_market("h2h")
+
+            self.assertIsNotNone(model_meta)
+            self.assertEqual(model_meta["run_id"], run["run_id"])
+
+    def test_restituisce_il_candidate_quando_non_ce_produzione(self):
+        """Un mercato appena registrato e non ancora promosso (es. i
+        cards durante la loro fase candidate) deve continuare a servire
+        l'ultimo run - il fix riguarda SOLO il caso `retired`."""
+        with tempfile.TemporaryDirectory() as tmp:
+            registry, run = self._registry_with_run(tmp, "cards", stage="candidate")
+            service = PredictionSnapshotService()
+            service.registry = registry
+
+            model_meta = service._latest_model_for_market("cards")
+
+            self.assertIsNotNone(model_meta)
+            self.assertEqual(model_meta["run_id"], run["run_id"])
+
+    def test_nessun_fallback_quando_lultimo_run_e_ritirato(self):
+        """Caso reale 2026-09-21 (corners): produzione rimossa e ultimo
+        run esplicitamente ritirato -> non deve MAI tornare quel run come
+        se fosse un candidate in attesa di promozione."""
+        with tempfile.TemporaryDirectory() as tmp:
+            registry, _run = self._registry_with_run(tmp, "corners_line_8_5", stage="retired")
+            service = PredictionSnapshotService()
+            service.registry = registry
+
+            model_meta = service._latest_model_for_market("corners_line_8_5")
+
+            self.assertIsNone(model_meta)
+
+    def test_resolve_predictions_salta_il_mercato_ritirato(self):
+        """Verifica end-to-end (non solo la funzione isolata): un mercato
+        ritirato senza produzione deve uscire dal payload di
+        `resolve_predictions`, non solo dalla funzione interna."""
+        with tempfile.TemporaryDirectory() as tmp:
+            registry, _run = self._registry_with_run(tmp, "corners_line_8_5", stage="retired")
+            frame = _frame_for(1, "corners_line_8_5", odds_avg=1.8)
+            service = PredictionSnapshotService()
+            service.registry = registry
+            service.filter_service = _FakeFilterService({"corners_line_8_5": frame})
+
+            payload = service.resolve_predictions(fixture_id=1, markets=["corners_line_8_5"], status="NS")
+
+            self.assertEqual(payload, {})
 
 
 if __name__ == "__main__":
