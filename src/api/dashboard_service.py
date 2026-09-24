@@ -95,6 +95,13 @@ class DashboardDayData:
 class DashboardService:
     _api_cache: dict[str, tuple[datetime, Any]] = {}
     _api_cache_ttl_seconds = 60
+    # TTL usato SOLO per dati di una partita GIA' CONCLUSA (oggi: gli eventi,
+    # unico pezzo di `get_match_detail` senza fallback DB - vedi
+    # `_fetch_api_events`): una partita finita non produce piu' nuovi eventi,
+    # quindi non ha senso ricontattare l'API ogni 60s per lo stesso identico
+    # risultato - 24h e' comunque finito (mai una cache "per sempre" che
+    # richiederebbe un restart per essere invalidata).
+    _FINISHED_MATCH_CACHE_TTL_SECONDS = 24 * 3600
     _api_cache_locks: dict[str, threading.Lock] = {}
     _api_cache_locks_guard = threading.Lock()
     # Fix performance (2026-09-09): _fetch_api_day_fixtures interrogava i
@@ -161,14 +168,14 @@ class DashboardService:
         return [m for m in normalized if m in allowed]
 
     @classmethod
-    def _cache_get(cls, key: str) -> Optional[Any]:
+    def _cache_get(cls, key: str, ttl_seconds: Optional[int] = None) -> Optional[Any]:
         item = cls._api_cache.get(key)
         if not item:
             return None
 
         ts, payload = item
         age = (datetime.now(timezone.utc) - ts).total_seconds()
-        if age > cls._api_cache_ttl_seconds:
+        if age > (ttl_seconds if ttl_seconds is not None else cls._api_cache_ttl_seconds):
             return None
         return payload
 
@@ -354,9 +361,10 @@ class DashboardService:
         self._cache_set(cache_key, item)
         return item
 
-    def _fetch_api_events(self, fixture_id: int) -> list[dict[str, Any]]:
+    def _fetch_api_events(self, fixture_id: int, long_ttl: bool = False) -> list[dict[str, Any]]:
         cache_key = f"events:{fixture_id}"
-        cached = self._cache_get(cache_key)
+        ttl_seconds = self._FINISHED_MATCH_CACHE_TTL_SECONDS if long_ttl else None
+        cached = self._cache_get(cache_key, ttl_seconds=ttl_seconds)
         if cached is not None:
             return cached
         if is_quota_exhausted_today():
@@ -1840,8 +1848,20 @@ class DashboardService:
     ) -> dict[str, Any]:
         model_markets = self._normalize_market_request(markets) or self.registry.list_active_markets()
 
-        api_fixture = self._fetch_api_fixture_detail(fixture_id)
         db_match = self._fetch_db_match_by_fixture(fixture_id)
+        phase_hint = (
+            self._classify_phase(db_match.status, self._parse_datetime(db_match.date_match))
+            if db_match is not None
+            else None
+        )
+        # Il DB locale e' gia' alimentato dai job schedulati (scheduler.py) e
+        # per una partita finita o non ancora iniziata i dati non possono
+        # essere cambiati dall'ultimo refresh - chiamare comunque l'API
+        # esterna ad ogni apertura del dettaglio sprecava latenza di rete e
+        # quota per nulla. La API resta l'unica fonte per fixture mai viste
+        # dal DB o per partite LIVE (punteggio/minuto cambiano in tempo reale).
+        needs_live_fixture = db_match is None or phase_hint == "live"
+        api_fixture = self._fetch_api_fixture_detail(fixture_id) if needs_live_fixture else None
 
         if api_fixture:
             fixture_row = self._serialize_api_fixture(api_fixture, with_predictions=False, markets=[])
@@ -1858,9 +1878,19 @@ class DashboardService:
                 "model_markets": model_markets,
             }
 
+        # Carica in blocco (UNA query) gli snapshot gia' salvati per tutti i
+        # mercati di questa fixture, invece di lasciare che `_predict_fixture`
+        # -> `resolve_predictions` interroghi il DB mercato per mercato (12
+        # query sequenziali per il dettaglio, misurato ~14s sul DB remoto -
+        # stessa ottimizzazione gia' in uso da `get_day_matches`).
+        preloaded_snapshots = self._load_snapshot_map([fixture_id], markets=model_markets) if with_predictions else {}
         predictions = (
             self._predict_fixture(
-                fixture_id=fixture_id, markets=model_markets, db_match=db_match, status=fixture_row.get("status")
+                fixture_id=fixture_id,
+                markets=model_markets,
+                db_match=db_match,
+                status=fixture_row.get("status"),
+                preloaded_snapshots=preloaded_snapshots,
             )
             if with_predictions
             else {}
@@ -1870,13 +1900,20 @@ class DashboardService:
             self._annotate_prediction_correctness(predictions, stat_home, stat_away, has_full_stats)
         fixture_row["predictions"] = predictions
 
-        events = self._fetch_api_events(fixture_id)
+        events = self._fetch_api_events(fixture_id, long_ttl=fixture_row.get("phase") == "finished")
         timeline = self._serialize_events(events)
 
-        odds_payload = self._fetch_api_odds(fixture_id)
-        odds_summary = self._aggregate_odds_from_api(odds_payload)
-        if not odds_summary:
-            odds_summary = self._aggregate_odds_from_db(db_match)
+        # Stesso principio "DB-first" delle righe sopra: per una partita non
+        # live le quote gia' salvate dai job schedulati sono sufficienti,
+        # l'API viene interpellata solo se serve un dato live o se il DB non
+        # ne ha ancora salvate.
+        odds_summary = {} if needs_live_fixture else self._aggregate_odds_from_db(db_match)
+        odds_payload = None
+        if needs_live_fixture or not odds_summary:
+            odds_payload = self._fetch_api_odds(fixture_id)
+            api_odds_summary = self._aggregate_odds_from_api(odds_payload)
+            if api_odds_summary:
+                odds_summary = api_odds_summary
 
         bookmaker_baseline = build_fixture_baseline(odds_summary)
 

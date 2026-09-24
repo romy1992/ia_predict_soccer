@@ -132,6 +132,37 @@ JOB_DEFINITIONS: dict[str, dict[str, Any]] = {
         "job_history_type": "prediction_snapshot_refresh",
         "cfg_fields": {"interval_minutes": "prediction_snapshot_interval_minutes"},
     },
+    "team_rating_refresh": {
+        "label": "Aggiorna rating squadre",
+        "description": (
+            "Ricalcola in background lo stato corrente (attacco/difesa/forma) di OGNI squadra "
+            "(EXP-01), popolando la tabella 'team_rating' PRIMA che qualcuno apra l'Oracle Match "
+            "Detail, cosi' quella vista legge sempre una riga gia' calcolata invece di rifare "
+            "query+ricalcolo sull'intero storico squadra ad ogni apertura. Lavora solo su dati "
+            "gia' a DB: non chiama API-Sports."
+        ),
+        "default_enabled": True,
+        "calls_api_sports": False,
+        "schedule_kind": "interval_minutes",
+        "job_history_type": "team_rating_refresh",
+        "cfg_fields": {"interval_minutes": "team_rating_refresh_interval_minutes"},
+    },
+    "model_consensus_refresh": {
+        "label": "Aggiorna Model Consensus",
+        "description": (
+            "Ricalcola in background il Model Consensus (Direct Expert + Market/Odds Expert + "
+            "eventuale meta-model) per le partite non ancora disputate nella finestra configurata "
+            "E chiude il buco di copertura per le partite appena concluse, popolando la tabella "
+            "'model_consensus_snapshot' PRIMA che qualcuno apra l'Oracle Match Detail, cosi' quella "
+            "vista legge sempre una riga gia' calcolata invece di ricaricare il modello da disco per "
+            "OGNI mercato ad ogni apertura. Lavora solo su dati gia' a DB: non chiama API-Sports."
+        ),
+        "default_enabled": True,
+        "calls_api_sports": False,
+        "schedule_kind": "interval_minutes",
+        "job_history_type": "model_consensus_refresh",
+        "cfg_fields": {"interval_minutes": "model_consensus_refresh_interval_minutes"},
+    },
     "official_prediction_capture": {
         "label": "Cattura PLAY ufficiali",
         "description": (

@@ -17,6 +17,9 @@ from src.data.live.live_sync_job import run_manual_live_sync
 from src.data.quality_report_service import DataQualityService
 from src.jobs.job_history import JobHistory
 from src.jobs.job_settings import JOB_DEFINITIONS, is_job_enabled, resolve_job_schedule
+from src.ml.datasets.point_in_time_builder import FINAL_STATUSES
+from src.ml.ensemble.model_consensus import build_model_consensus_for_fixture
+from src.ml.experts.team_strength.team_strength_expert import TeamStrengthExpert
 from src.ml.serving.prediction_snapshot_service import PredictionSnapshotService
 from src.oracle.betslip.betslip_service import BetslipService
 from src.oracle.betslip.official_betslip_service import OfficialBetslipService
@@ -24,8 +27,10 @@ from src.oracle.betslip.proposal_snapshot_service import BetslipProposalSnapshot
 from src.oracle.ledger.ledger_service import PredictionLedgerService
 from src.oracle.ledger.official_capture_service import OfficialPredictionCaptureService
 from src.repository.base.repository_db import SessionLocal
+from src.repository.model_consensus_snapshot_repository import ModelConsensusSnapshotRepository
+from src.repository.team_rating_repository import TeamRatingRepository
 from src.service_ia.config.app_config import AppConfig, load_app_config
-from src.service_ia.model.match import Match
+from src.service_ia.model.match import Match, Statistics
 from src.service_ia.pre_processing.download_match_service import calculate_mean, download_import_matches
 from src.service_ia.pre_processing.settlement_service import SettlementService
 from src.service_ia.training.model_registry import ModelRegistry
@@ -440,6 +445,103 @@ def run_data_quality_report(
         raise
 
 
+def _fetch_final_matches_for_ratings() -> list[dict]:
+    """Storico partite concluse nella forma minima richiesta da
+    `TeamStrengthExpert.current_ratings` (id_fixture/date_match/status/
+    id_team_*/statistics[team_id,score_ft]).
+
+    NON usa `MatchRepository.search_filter` + `convert_orm_match_to_dict`
+    (il pattern usato altrove nel progetto): quella strada carica oggetti
+    ORM `Match` completi, e `Match.statistics`/`Match.odds`/`Match.odds_snapshots`
+    sono TUTTE `lazy="selectin"` di default (vedi `service_ia/model/match.py`)
+    - su 47k+ partite concluse l'eager-load di odds/odds_snapshots (mai letti
+    da questo job) ha mandato il processo in `MemoryError` (osservato
+    2026-09-24). Query a colonne dirette (niente identity map/relazioni
+    ORM): solo i 7 campi scalari che servono, un ordine di grandezza piu'
+    leggera."""
+    with SessionLocal() as session:
+        rows = (
+            session.query(
+                Match.id_fixture,
+                Match.date_match,
+                Match.status,
+                Match.id_team_home,
+                Match.id_team_away,
+                Statistics.statistics_team_id,
+                Statistics.score_ft,
+            )
+            .join(Statistics, Statistics.id_match == Match.id_match_fk)
+            .filter(Match.status.in_(list(FINAL_STATUSES)))
+            .filter(Match.id_fixture.is_not(None))
+            .all()
+        )
+
+    matches: dict[int, dict] = {}
+    for id_fixture, date_match, status, id_team_home, id_team_away, stat_team_id, score_ft in rows:
+        entry = matches.setdefault(
+            id_fixture,
+            {
+                "id_fixture": id_fixture,
+                "date_match": date_match,
+                "status": status,
+                "id_team_home": id_team_home,
+                "id_team_away": id_team_away,
+                "statistics": [],
+            },
+        )
+        entry["statistics"].append({"statistics_team_id": stat_team_id, "score_ft": score_ft})
+
+    return list(matches.values())
+
+
+def run_team_rating_refresh(job_id: Optional[str] = None) -> dict:
+    """Ricalcola in BACKGROUND i rating correnti per squadra (EXP-01,
+    tabella `team_rating`) rileggendo l'INTERO storico partite concluse UNA
+    SOLA VOLTA per tutte le squadre insieme (`TeamStrengthExpert.current_ratings`
+    e' gia' un pass unico stateful, indipendente da quante squadre/partite
+    contiene la lista in ingresso).
+
+    Popola `team_rating` PRIMA che un utente apra l'"Oracle Match Detail",
+    cosi' quel percorso di serving resta una pura lettura da DB (mai un
+    ricalcolo dell'intero storico squadra nel path della richiesta - la
+    causa principale, insieme al Model Consensus, della lentezza del
+    bottone "Oracle", diagnosticata il 2026-09-24). Stesso principio gia'
+    applicato a `run_prediction_snapshot_refresh` per le predizioni.
+
+    Non chiama alcun provider esterno (solo dati gia' a DB): mai coinvolto
+    dall'auto-pausa per quota API-Sports esaurita."""
+    history = JobHistory()
+    params: dict = {}
+    if job_id:
+        history.mark_running(job_id=job_id, params=params)
+    else:
+        started = history.create_job(
+            job_type="team_rating_refresh", status="running", params=params, started_at=JobHistory._now_iso()
+        )
+        job_id = started["job_id"]
+
+    start = time.perf_counter()
+    try:
+        matches = _fetch_final_matches_for_ratings()
+        ratings = TeamStrengthExpert().current_ratings(matches)
+        updated = TeamRatingRepository().upsert_many(ratings, rating_version=TeamStrengthExpert.VERSION)
+
+        summary = {
+            "teams_updated": updated,
+            "matches_considered": len(matches),
+            "duration_seconds": time.perf_counter() - start,
+        }
+        history.mark_success(job_id=job_id, summary=summary)
+        summary["job_id"] = job_id
+        return summary
+    except Exception as exc:
+        history.mark_failed(
+            job_id=job_id,
+            error={"message": str(exc), "duration_seconds": time.perf_counter() - start, "params": params},
+        )
+        raise
+
+
 # Stesso insieme di `PredictionSnapshotService._FINAL_STATUSES` - duplicato
 # qui per lo stesso motivo li' documentato (niente dipendenza a ritroso tra
 # package, e scelta esplicita gia' presa in questa sessione di NON
@@ -667,6 +769,166 @@ def run_prediction_snapshot_refresh(
             "fixtures_recently_finished": len(finished_matches_needing_snapshot),
             "predictions_resolved": predictions_resolved,
             "betslip_proposals": proposal_report,
+            "errors": errors,
+            "duration_seconds": time.perf_counter() - start,
+        }
+        history.mark_success(job_id=job_id, summary=summary)
+        return {"job_id": job_id, **summary}
+    except Exception as exc:
+        history.mark_failed(
+            job_id=job_id,
+            error={
+                "message": str(exc),
+                "duration_seconds": time.perf_counter() - start,
+                "params": params,
+            },
+        )
+        raise
+
+
+def run_model_consensus_refresh(
+    days_ahead: Optional[int] = None,
+    recently_finished_days: Optional[int] = None,
+    job_id: Optional[str] = None,
+) -> dict:
+    """Ricalcola/popola in BACKGROUND la banca dati Model Consensus
+    (`model_consensus_snapshot`, ORACLE-04) per due categorie di fixture,
+    STESSA struttura di `run_prediction_snapshot_refresh` (qui senza lo
+    step "proposte betslip", fuori scope per questo consensus):
+
+    1. **NON ANCORA disputate** (status NS) nella finestra oggi ->
+       oggi+`days_ahead` giorni - RICALCOLATA/sovrascritta ad ogni giro per
+       OGNI mercato attivo: le quote/feature possono cambiare prima del
+       calcio d'inizio.
+    2. **APPENA concluse** (status finale) negli ultimi
+       `recently_finished_days` giorni, SOLO per le coppie (fixture, market)
+       che non hanno ancora nessuna riga - una volta scritta, la riga di
+       una fixture conclusa resta congelata per sempre (stesso principio
+       gia' applicato a `MatchPredictionSnapshot`): rappresenta "cosa
+       diceva il consensus quando e' stato calcolato", mai ricalcolata
+       nemmeno se in futuro viene promosso un modello nuovo.
+
+    Popola `model_consensus_snapshot` PRIMA che un utente apra l'"Oracle
+    Match Detail", cosi' quel percorso di serving resta una pura lettura da
+    DB invece di ricaricare il Direct Expert da disco (joblib) + ricostruire
+    prediction frame/segnale quote per OGNI mercato ad OGNI richiesta - il
+    secondo collo di bottiglia di "Oracle" insieme al Team Strength
+    (diagnosticato il 2026-09-24).
+
+    Un fallimento su una SINGOLA coppia (fixture, market) non blocca le
+    altre - finisce in `errors`, mai un'eccezione che interrompe l'intero
+    giro (stesso principio "provider errors isolati" gia' applicato in
+    LIVE-01/`run_prediction_snapshot_refresh`)."""
+    cfg = load_app_config()
+    days_ahead = days_ahead if days_ahead is not None else cfg.daily_refresh_days_ahead
+    recently_finished_days = (
+        recently_finished_days if recently_finished_days is not None else _RECENTLY_FINISHED_WINDOW_DAYS
+    )
+
+    history = JobHistory()
+    params = {"days_ahead": days_ahead, "recently_finished_days": recently_finished_days}
+    if job_id:
+        history.mark_running(job_id=job_id, params=params)
+    else:
+        started = history.create_job(
+            job_type="model_consensus_refresh", status="running", params=params, started_at=JobHistory._now_iso()
+        )
+        job_id = started["job_id"]
+
+    start = time.perf_counter()
+    try:
+        today = datetime.now(timezone.utc).date()
+        window_start_iso = today.isoformat()
+        window_end_iso = (today + timedelta(days=days_ahead + 1)).isoformat()
+        finished_window_start_iso = (today - timedelta(days=recently_finished_days)).isoformat()
+        finished_window_end_iso = (today + timedelta(days=1)).isoformat()
+
+        try:
+            with SessionLocal() as session:
+                upcoming_fixture_ids = [
+                    row[0]
+                    for row in session.query(Match.id_fixture)
+                    .filter(Match.id_fixture.is_not(None))
+                    .filter(Match.status == "NS")
+                    .filter(Match.date_match >= window_start_iso)
+                    .filter(Match.date_match < window_end_iso)
+                    .all()
+                ]
+                finished_fixture_ids = [
+                    row[0]
+                    for row in session.query(Match.id_fixture)
+                    .filter(Match.id_fixture.is_not(None))
+                    .filter(Match.status.in_(FINAL_STATUSES))
+                    .filter(Match.date_match >= finished_window_start_iso)
+                    .filter(Match.date_match < finished_window_end_iso)
+                    .all()
+                ]
+        except (OperationalError, ProgrammingError):
+            upcoming_fixture_ids = []
+            finished_fixture_ids = []
+
+        markets = ModelRegistry().list_active_markets()
+        repo = ModelConsensusSnapshotRepository()
+        already_covered = repo.get_latest_bulk(finished_fixture_ids, markets=markets)
+
+        work: list[tuple[int, str]] = [(fid, market) for fid in upcoming_fixture_ids for market in markets]
+        work += [
+            (fid, market)
+            for fid in finished_fixture_ids
+            for market in markets
+            if (fid, market) not in already_covered
+        ]
+
+        pairs_total = len(work)
+        pairs_done = 0
+        computed = 0
+        errors: list[dict] = []
+        reports: dict[tuple[int, str], dict] = {}
+
+        def _publish_progress() -> None:
+            percent = 100.0 if pairs_total <= 0 else round(100.0 * pairs_done / pairs_total, 1)
+            history.update_job(
+                job_id,
+                summary={
+                    "pairs_total": pairs_total,
+                    "pairs_done": pairs_done,
+                    "percent": percent,
+                    "computed": computed,
+                    "errors_count": len(errors),
+                },
+            )
+
+        _publish_progress()
+        for fixture_id, market in work:
+            pairs_done += 1
+            try:
+                report = build_model_consensus_for_fixture(market=market, fixture_id=fixture_id)
+                reports[(fixture_id, market)] = {
+                    "experts": report.experts,
+                    "oracle_final": report.oracle_final,
+                    "consensus": report.consensus,
+                    "warnings": report.warnings,
+                }
+                computed += 1
+            except Exception as exc:
+                errors.append({"fixture_id": fixture_id, "market": market, "message": str(exc)})
+            # Progresso pubblicato ogni 25 coppie (non ad ogni singola, per
+            # non spammare `JobHistory` su una finestra che puo' contenere
+            # centinaia di coppie fixture/mercato).
+            if pairs_done % 25 == 0 or pairs_done == pairs_total:
+                _publish_progress()
+
+        repo.upsert_many(reports)
+
+        summary = {
+            "days_ahead": days_ahead,
+            "recently_finished_days": recently_finished_days,
+            "pairs_total": pairs_total,
+            "pairs_done": pairs_done,
+            "percent": 100.0,
+            "fixtures_upcoming": len(upcoming_fixture_ids),
+            "fixtures_recently_finished": len(finished_fixture_ids),
+            "computed": computed,
             "errors": errors,
             "duration_seconds": time.perf_counter() - start,
         }
@@ -961,6 +1223,20 @@ def build_scheduler(cfg: Optional[AppConfig] = None) -> BlockingScheduler:
         functools.partial(_run_if_due, "official_prediction_capture", run_official_prediction_capture, cfg=cfg),
         trigger=heartbeat,
         job_id="official_prediction_capture",
+        misfire_grace_time=_MISFIRE_GRACE_SECONDS,
+    )
+    _add_job(
+        scheduler,
+        functools.partial(_run_if_due, "team_rating_refresh", run_team_rating_refresh, cfg=cfg),
+        trigger=heartbeat,
+        job_id="team_rating_refresh",
+        misfire_grace_time=_MISFIRE_GRACE_SECONDS,
+    )
+    _add_job(
+        scheduler,
+        functools.partial(_run_if_due, "model_consensus_refresh", run_model_consensus_refresh, cfg=cfg),
+        trigger=heartbeat,
+        job_id="model_consensus_refresh",
         misfire_grace_time=_MISFIRE_GRACE_SECONDS,
     )
 
