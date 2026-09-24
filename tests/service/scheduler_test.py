@@ -83,12 +83,14 @@ class TestBuildSchedulerJobsSeparation(unittest.TestCase):
                 "data_sync_live",
                 "prediction_snapshot_refresh",
                 "official_prediction_capture",
+                "team_rating_refresh",
+                "model_consensus_refresh",
             },
         )
 
     def test_build_scheduler_uses_default_config_when_none_given(self):
         sched = scheduler_module.build_scheduler()
-        self.assertEqual(len(sched.get_jobs()), 9)
+        self.assertEqual(len(sched.get_jobs()), 11)
 
 
 class TestMaxInstancesAndCoalesce(unittest.TestCase):
@@ -98,7 +100,7 @@ class TestMaxInstancesAndCoalesce(unittest.TestCase):
     def test_every_job_has_max_instances_one_and_coalesce_true(self):
         sched = scheduler_module.build_scheduler(cfg=_cfg())
         jobs = sched.get_jobs()
-        self.assertEqual(len(jobs), 9)
+        self.assertEqual(len(jobs), 11)
         for job in jobs:
             self.assertEqual(job.max_instances, 1, f"{job.id} deve avere max_instances=1")
             self.assertTrue(job.coalesce, f"{job.id} deve avere coalesce=True")
