@@ -219,7 +219,7 @@ export default function OracleMatchDetailPage({ fixtureId, onBack }) {
     <section className="stack">
       <div className="panel-header">
         <h3>Oracle Match Detail</h3>
-        <button className="btn-secondary" onClick={onBack}>&larr; Torna al Match Center</button>
+        <button className="btn-secondary" onClick={onBack}>Chiudi</button>
       </div>
 
       {loading && <div className="info-box">Caricamento dettaglio Oracle...</div>}

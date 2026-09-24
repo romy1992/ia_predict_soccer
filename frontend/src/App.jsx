@@ -48,6 +48,8 @@ import {
   writeDayPredictionsJob,
 } from "./features/dashboard/dayPredictionsJobStorage";
 import MatchDetailPanel from "./features/matches/components/MatchDetailPanel";
+import OracleMatchDetailPage from "./features/oracle/OracleMatchDetailPage";
+import Modal from "./features/shared/Modal";
 import { filterRowByMarket, todayIso } from "./features/shared/formatters";
 export default function App() {
   const [activePage, setActivePage] = useState("dashboard");
@@ -123,7 +125,6 @@ export default function App() {
   const [dayPredictionsJob, setDayPredictionsJob] = useState(() => jobSnapshotFromStorage(readDayPredictionsJob()));
   const handledDayPredictionsJobRef = useRef(null);
   const [oracleFixtureId, setOracleFixtureId] = useState(null);
-  const [previousPage, setPreviousPage] = useState("dashboard");
   const marketsQuery = useMemo(() => {
     if (selectedMarket === "all") {
       return undefined;
@@ -697,6 +698,10 @@ export default function App() {
     },
     [loadMatchDetail]
   );
+  const closeMatchDetail = useCallback(() => {
+    setSelectedFixtureId(null);
+    setMatchDetail(null);
+  }, []);
   const recomputePredictions = useCallback(
     async (fixtureId) => {
       if (!fixtureId) {
@@ -802,17 +807,12 @@ export default function App() {
     loadDashboardData("full", { forceRefresh: true }).catch(() => {});
     setDayPredictionsJobId(null);
   }, [dayPredictionsJob, loadDashboardData]);
-  const openOracleDetail = useCallback(
-    (fixtureId) => {
-      setPreviousPage((current) => (activePage === "oracle-detail" ? current : activePage));
-      setOracleFixtureId(fixtureId);
-      setActivePage("oracle-detail");
-    },
-    [activePage]
-  );
+  const openOracleDetail = useCallback((fixtureId) => {
+    setOracleFixtureId(fixtureId);
+  }, []);
   const closeOracleDetail = useCallback(() => {
-    setActivePage(previousPage || "dashboard");
-  }, [previousPage]);
+    setOracleFixtureId(null);
+  }, []);
   useEffect(() => {
     if (initialLoadStartedRef.current) {
       return;
@@ -989,10 +989,6 @@ export default function App() {
       onChangeSelectedMarket: setSelectedMarket,
       isFilterLoading,
     },
-    oracleDetail: {
-      fixtureId: oracleFixtureId,
-      onBack: closeOracleDetail,
-    },
     predictions: {
       markets,
       manualFixtureId,
@@ -1127,21 +1123,23 @@ export default function App() {
         {(isInitialLoading || isLoading) && <div className="info-box">Caricamento dashboard...</div>}
         <AppRouter activePage={activePage} props={pageProps} />
         {showMatchFilters && (
-          <MatchDetailPanel
-            selectedFixtureId={selectedFixtureId}
-            matchDetail={matchDetail}
-            matchDetailLoading={matchDetailLoading}
-            matchDetailError={matchDetailError}
-            onOpenOracleDetail={openOracleDetail}
-            onClose={() => {
-              setSelectedFixtureId(null);
-              setMatchDetail(null);
-            }}
-            onRecomputePredictions={recomputePredictions}
-            recomputingPredictions={recomputingPredictions}
-            recomputePredictionsError={recomputePredictionsError}
-          />
+          <Modal isOpen={!!selectedFixtureId} onClose={closeMatchDetail}>
+            <MatchDetailPanel
+              selectedFixtureId={selectedFixtureId}
+              matchDetail={matchDetail}
+              matchDetailLoading={matchDetailLoading}
+              matchDetailError={matchDetailError}
+              onOpenOracleDetail={openOracleDetail}
+              onClose={closeMatchDetail}
+              onRecomputePredictions={recomputePredictions}
+              recomputingPredictions={recomputingPredictions}
+              recomputePredictionsError={recomputePredictionsError}
+            />
+          </Modal>
         )}
+        <Modal isOpen={!!oracleFixtureId} onClose={closeOracleDetail}>
+          <OracleMatchDetailPage fixtureId={oracleFixtureId} onBack={closeOracleDetail} />
+        </Modal>
       </main>
     </div>
   );
