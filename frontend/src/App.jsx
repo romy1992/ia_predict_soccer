@@ -51,8 +51,34 @@ import MatchDetailPanel from "./features/matches/components/MatchDetailPanel";
 import OracleMatchDetailPage from "./features/oracle/OracleMatchDetailPage";
 import Modal from "./features/shared/Modal";
 import { filterRowByMarket, todayIso } from "./features/shared/formatters";
+import { MENU_ITEMS } from "./features/shared/menu";
+
+const VALID_PAGES = new Set(MENU_ITEMS.map((item) => item.id));
+
+function _pageFromUrl() {
+  const page = new URLSearchParams(window.location.search).get("page");
+  return page && VALID_PAGES.has(page) ? page : "dashboard";
+}
+
 export default function App() {
-  const [activePage, setActivePage] = useState("dashboard");
+  // Letto dalla query string (`?page=...`) invece di un fisso "dashboard":
+  // senza, un refresh (F5) su qualunque pagina diversa dalla Dashboard
+  // riportava sempre li', perche' `activePage` era un puro stato React
+  // (nessun routing/URL), azzerato ad ogni remount della SPA.
+  const [activePage, setActivePage] = useState(_pageFromUrl);
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("page") === activePage || (!params.get("page") && activePage === "dashboard")) {
+      return;
+    }
+    if (activePage === "dashboard") {
+      params.delete("page");
+    } else {
+      params.set("page", activePage);
+    }
+    const query = params.toString();
+    window.history.replaceState(null, "", query ? `?${query}` : window.location.pathname);
+  }, [activePage]);
   const [selectedDate, setSelectedDate] = useState(todayIso());
   const [availableDates, setAvailableDates] = useState([todayIso()]);
   const [searchInput, setSearchInput] = useState("");
