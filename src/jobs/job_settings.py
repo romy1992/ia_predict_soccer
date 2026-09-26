@@ -51,6 +51,8 @@ JOB_DEFINITIONS: dict[str, dict[str, Any]] = {
         "schedule_kind": "daily",
         "job_history_type": "daily_refresh",
         "cfg_fields": {"hour": "daily_refresh_hour", "minute": "daily_refresh_minute"},
+        "run_all_priority": 10,
+        "run_all_included": True,
     },
     "data_sync_today": {
         "label": "Sync partite di oggi",
@@ -60,6 +62,8 @@ JOB_DEFINITIONS: dict[str, dict[str, Any]] = {
         "schedule_kind": "interval_minutes",
         "job_history_type": "today_update",
         "cfg_fields": {"interval_minutes": "data_sync_interval_minutes"},
+        "run_all_priority": 10,
+        "run_all_included": True,
     },
     "data_settlement": {
         "label": "Settlement partite concluse",
@@ -69,6 +73,8 @@ JOB_DEFINITIONS: dict[str, dict[str, Any]] = {
         "schedule_kind": "interval_minutes",
         "job_history_type": "settlement",
         "cfg_fields": {"interval_minutes": "settlement_interval_minutes"},
+        "run_all_priority": 20,
+        "run_all_included": True,
     },
     "data_future_sync": {
         "label": "Sync calendario prossimo",
@@ -78,6 +84,8 @@ JOB_DEFINITIONS: dict[str, dict[str, Any]] = {
         "schedule_kind": "daily",
         "job_history_type": "future_sync",
         "cfg_fields": {"hour": "future_sync_hour", "minute": "future_sync_minute"},
+        "run_all_priority": 10,
+        "run_all_included": True,
     },
     "ml_training": {
         "label": "Retrain modelli ML",
@@ -87,6 +95,12 @@ JOB_DEFINITIONS: dict[str, dict[str, Any]] = {
         "schedule_kind": "daily",
         "job_history_type": "retrain",
         "cfg_fields": {"hour": "training_hour", "minute": "training_minute"},
+        # Escluso da "Aggiorna tutto manualmente" (2026-09-26): e' l'unico
+        # job davvero lento (GridSearchCV multi-mercato, minuti), farebbe
+        # sembrare il giro bloccato. Resta eseguibile singolarmente con
+        # "Esegui ora" come sempre.
+        "run_all_priority": 999,
+        "run_all_included": False,
     },
     "data_sync_live": {
         "label": "Sync live (polling ogni pochi secondi)",
@@ -100,6 +114,11 @@ JOB_DEFINITIONS: dict[str, dict[str, Any]] = {
         "schedule_kind": "interval_seconds",
         "job_history_type": "live_sync",
         "cfg_fields": {"interval_seconds": "live_sync_interval_seconds"},
+        # Escluso (2026-09-26): e' un polling continuo pensato per girare
+        # schedulato, non un "refresh singolo" - fuori posto in una
+        # sequenza "aggiorna tutto una volta".
+        "run_all_priority": 999,
+        "run_all_included": False,
     },
     "data_quality_report": {
         "label": "Aggiorna report Data Quality",
@@ -114,6 +133,8 @@ JOB_DEFINITIONS: dict[str, dict[str, Any]] = {
         "schedule_kind": "interval_minutes",
         "job_history_type": "data_quality_report",
         "cfg_fields": {"interval_minutes": "data_quality_interval_minutes"},
+        "run_all_priority": 70,
+        "run_all_included": True,
     },
     "prediction_snapshot_refresh": {
         "label": "Aggiorna predizioni salvate",
@@ -131,6 +152,8 @@ JOB_DEFINITIONS: dict[str, dict[str, Any]] = {
         "schedule_kind": "interval_minutes",
         "job_history_type": "prediction_snapshot_refresh",
         "cfg_fields": {"interval_minutes": "prediction_snapshot_interval_minutes"},
+        "run_all_priority": 50,
+        "run_all_included": True,
     },
     "team_rating_refresh": {
         "label": "Aggiorna rating squadre",
@@ -146,6 +169,8 @@ JOB_DEFINITIONS: dict[str, dict[str, Any]] = {
         "schedule_kind": "interval_minutes",
         "job_history_type": "team_rating_refresh",
         "cfg_fields": {"interval_minutes": "team_rating_refresh_interval_minutes"},
+        "run_all_priority": 30,
+        "run_all_included": True,
     },
     "model_consensus_refresh": {
         "label": "Aggiorna Model Consensus",
@@ -162,6 +187,8 @@ JOB_DEFINITIONS: dict[str, dict[str, Any]] = {
         "schedule_kind": "interval_minutes",
         "job_history_type": "model_consensus_refresh",
         "cfg_fields": {"interval_minutes": "model_consensus_refresh_interval_minutes"},
+        "run_all_priority": 40,
+        "run_all_included": True,
     },
     "official_prediction_capture": {
         "label": "Cattura PLAY ufficiali",
@@ -174,6 +201,8 @@ JOB_DEFINITIONS: dict[str, dict[str, Any]] = {
         "schedule_kind": "interval_minutes",
         "job_history_type": "official_prediction_capture",
         "cfg_fields": {"interval_minutes": "official_capture_interval_minutes"},
+        "run_all_priority": 60,
+        "run_all_included": True,
     },
 }
 
@@ -284,6 +313,12 @@ def list_job_definitions(cfg: Optional[AppConfig] = None) -> list[dict[str, Any]
                 "schedule_kind": definition["schedule_kind"],
                 "schedule": resolve_job_schedule(job_id, cfg=cfg),
                 "schedule_is_default": job_id not in get_job_schedule_overrides(),
+                # Usati da "Aggiorna tutto manualmente" (Impostazioni, 2026-09-26)
+                # per decidere ORDINE e SOTTOINSIEME dei job da lanciare in
+                # sequenza - single source of truth qui, mai duplicati lato
+                # frontend (stesso principio di `calls_api_sports`).
+                "run_all_priority": definition.get("run_all_priority", 999),
+                "run_all_included": bool(definition.get("run_all_included", True)),
             }
         )
     return rows

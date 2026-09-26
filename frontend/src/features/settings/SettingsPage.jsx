@@ -181,6 +181,46 @@ function JobRunProgress({ row }) {
   );
 }
 
+/**
+ * Avanzamento complessivo di "Aggiorna tutto manualmente" (2026-09-26):
+ * conteggio job completati/totali, MAI una percentuale ricavata dai
+ * `summary.percent` per-job - solo 1-2 job li comunicano davvero, gli
+ * altri sono spinner indeterminati, quindi una media sarebbe un numero
+ * inventato. Il job "corrente" mostra comunque la sua barra individuale
+ * (vedi `JobRunProgress`) esattamente come nel caso singolo.
+ */
+function BatchRunProgress({ batchRun, currentJobLabel, onStop }) {
+  if (!batchRun.active) {
+    return null;
+  }
+  const percent = batchRun.total > 0 ? Math.round((batchRun.completed / batchRun.total) * 100) : 0;
+  return (
+    <div className="settings-batch-progress">
+      <div className="panel-header">
+        <strong>
+          Aggiorna tutto manualmente: {batchRun.completed}/{batchRun.total} completati
+          {currentJobLabel ? ` — in corso: ${currentJobLabel}` : ""}
+        </strong>
+        {onStop && (
+          <button className="btn-secondary" onClick={onStop} title="Non lancia i job successivi in coda; quello in corso in questo momento finisce comunque">
+            Ferma
+          </button>
+        )}
+      </div>
+      <div
+        className="progress-bar determinate"
+        role="progressbar"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={percent}
+        aria-label="Avanzamento Aggiorna tutto manualmente"
+      >
+        <div className="progress-bar-value" style={{ width: `${Math.max(4, percent)}%` }} />
+      </div>
+    </div>
+  );
+}
+
 export default function SettingsPage({
   jobs = [],
   isLoading,
@@ -195,6 +235,9 @@ export default function SettingsPage({
   runFeedback = {},
   runRows = {},
   onRunJob,
+  batchRun = { active: false, total: 0, completed: 0, currentJobId: null },
+  onRunAllJobs,
+  onStopBatch,
   quota,
   quotaLoading,
   quotaError,
@@ -261,10 +304,27 @@ export default function SettingsPage({
       <section className="panel">
         <div className="panel-header">
           <h3>Job automatici (scheduler)</h3>
-          <button className="btn-secondary" onClick={onRefreshJobs} disabled={isLoading}>
-            {isLoading ? "Aggiornamento..." : "Aggiorna"}
-          </button>
+          <div className="panel-header-actions">
+            {onRunAllJobs && (
+              <button
+                className="btn-secondary"
+                onClick={onRunAllJobs}
+                disabled={batchRun.active}
+                title="Lancia in sequenza, in ordine di priorita', tutti i job attivi che si prestano a un giro manuale (esclusi Retrain ML e Sync live)"
+              >
+                {batchRun.active ? "Aggiornamento in corso..." : "Aggiorna tutto manualmente"}
+              </button>
+            )}
+            <button className="btn-secondary" onClick={onRefreshJobs} disabled={isLoading}>
+              {isLoading ? "Aggiornamento..." : "Aggiorna"}
+            </button>
+          </div>
         </div>
+        <BatchRunProgress
+          batchRun={batchRun}
+          currentJobLabel={jobs.find((job) => job.job_id === batchRun.currentJobId)?.label}
+          onStop={onStopBatch}
+        />
         <p className="muted">
           Attiva/disattiva i job che girano in background sul server. Un job disattivato NON viene eseguito finche' non
           lo riattivi: nessun restart di nessun servizio necessario, il cambiamento ha effetto dal prossimo giro dello
