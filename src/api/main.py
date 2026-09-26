@@ -36,6 +36,7 @@ from src.api.schemas import (
     JobFutureSyncRequest,
     JobImportRequest,
     JobLiveSyncRequest,
+    JobModelConsensusRefreshRequest,
     JobOfficialCaptureRequest,
     JobPredictionSnapshotRefreshRequest,
     JobResponse,
@@ -46,6 +47,7 @@ from src.api.schemas import (
     JobSettingsUpdateRequest,
     JobSettlementRequest,
     JobStatusResponse,
+    JobTeamRatingRefreshRequest,
     JobTodayUpdateRequest,
     JobsHistoryResponse,
     LiveFixtureEventsResponse,
@@ -122,8 +124,10 @@ from src.jobs.scheduler import (
     run_manual_retrain,
     run_manual_settlement,
     run_manual_today_update,
+    run_model_consensus_refresh,
     run_official_prediction_capture,
     run_prediction_snapshot_refresh,
+    run_team_rating_refresh,
 )
 from src.service_ia.config.app_config import load_app_config
 from src.service_ia.pre_processing.api_sports_provider import ApiSportsProvider
@@ -171,6 +175,24 @@ def _run_prediction_snapshot_refresh_job(target_date: Optional[str], job_id: str
         run_prediction_snapshot_refresh(target_date=target_date, job_id=job_id)
     except Exception:
         logging.exception("prediction_snapshot_refresh job %s failed", job_id)
+
+
+def _run_team_rating_refresh_job(job_id: str) -> None:
+    try:
+        run_team_rating_refresh(job_id=job_id)
+    except Exception:
+        logging.exception("team_rating_refresh job %s failed", job_id)
+
+
+def _run_model_consensus_refresh_job(
+    days_ahead: Optional[int], recently_finished_days: Optional[int], job_id: str
+) -> None:
+    try:
+        run_model_consensus_refresh(
+            days_ahead=days_ahead, recently_finished_days=recently_finished_days, job_id=job_id
+        )
+    except Exception:
+        logging.exception("model_consensus_refresh job %s failed", job_id)
 
 
 def _load_summary() -> list[dict[str, Any]]:
@@ -1075,6 +1097,63 @@ def trigger_official_capture(payload: JobOfficialCaptureRequest, background_task
 
     report = run_official_prediction_capture()
     return JobResponse(queued=False, message="Official capture job completed", details=report)
+
+
+@app.post("/jobs/team-rating-refresh", response_model=JobResponse)
+def trigger_team_rating_refresh(payload: JobTeamRatingRefreshRequest) -> JobResponse:
+    """Bottone "Esegui ora" di Impostazioni per il job 'Aggiorna rating
+    squadre': stessa funzione del job schedulato omonimo (vedi
+    `run_team_rating_refresh` in `src/jobs/scheduler.py`). Thread dedicato
+    (non `BackgroundTasks`): rilegge l'intero storico partite concluse, un
+    lavoro lungo che bloccherebbe lo stesso worker che deve servire il
+    polling di avanzamento - stesso principio gia' applicato a
+    `/jobs/prediction-snapshot-refresh`. Non chiama alcun provider esterno."""
+    if payload.async_run:
+        row = JobHistory().queue_job(job_type="team_rating_refresh", params={})
+        thread = threading.Thread(
+            target=_run_team_rating_refresh_job,
+            kwargs={"job_id": row["job_id"]},
+            daemon=True,
+            name=f"team-rating-refresh-{str(row['job_id'])[:8]}",
+        )
+        thread.start()
+        return JobResponse(queued=True, message="Team rating refresh job queued", details={"job_id": row["job_id"]})
+
+    report = run_team_rating_refresh()
+    return JobResponse(queued=False, message="Team rating refresh job completed", details=report)
+
+
+@app.post("/jobs/model-consensus-refresh", response_model=JobResponse)
+def trigger_model_consensus_refresh(payload: JobModelConsensusRefreshRequest) -> JobResponse:
+    """Bottone "Esegui ora" di Impostazioni per il job 'Aggiorna Model
+    Consensus': stessa funzione del job schedulato omonimo (vedi
+    `run_model_consensus_refresh` in `src/jobs/scheduler.py`). Thread
+    dedicato (non `BackgroundTasks`), stesso principio di
+    `/jobs/team-rating-refresh`/`/jobs/prediction-snapshot-refresh`: puo'
+    coprire centinaia di coppie fixture/mercato, non deve bloccare il
+    polling di avanzamento. Non chiama alcun provider esterno."""
+    if payload.async_run:
+        params = {"days_ahead": payload.days_ahead, "recently_finished_days": payload.recently_finished_days}
+        row = JobHistory().queue_job(job_type="model_consensus_refresh", params=params)
+        thread = threading.Thread(
+            target=_run_model_consensus_refresh_job,
+            kwargs={
+                "days_ahead": payload.days_ahead,
+                "recently_finished_days": payload.recently_finished_days,
+                "job_id": row["job_id"],
+            },
+            daemon=True,
+            name=f"model-consensus-refresh-{str(row['job_id'])[:8]}",
+        )
+        thread.start()
+        return JobResponse(
+            queued=True, message="Model consensus refresh job queued", details={"job_id": row["job_id"]}
+        )
+
+    report = run_model_consensus_refresh(
+        days_ahead=payload.days_ahead, recently_finished_days=payload.recently_finished_days
+    )
+    return JobResponse(queued=False, message="Model consensus refresh job completed", details=report)
 
 
 @app.get("/data/quality", response_model=DataQualityResponse)
