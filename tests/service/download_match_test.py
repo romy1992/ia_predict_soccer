@@ -2,7 +2,10 @@ import unittest
 from unittest.mock import patch
 
 from src.service_ia.model.match import Match, Statistics
-from src.service_ia.pre_processing.api_sports_provider import ApiSportsQuotaExceededError
+from src.service_ia.pre_processing.api_sports_provider import (
+    ApiSportsQuotaExceededError,
+    ApiSportsUnavailableError,
+)
 from src.service_ia.pre_processing.download_match_service import (
     calculate_mean,
     download_import_matches,
@@ -98,16 +101,24 @@ class TestDownloadMatch(unittest.TestCase):
     @patch("src.service_ia.pre_processing.download_match_service.repo_snapshot.save_many")
     @patch("src.service_ia.pre_processing.download_match_service.repo_match.save_all")
     @patch("src.service_ia.pre_processing.download_match_service.repo_match.save")
+    @patch("src.service_ia.pre_processing.download_match_service.repo_match.upsert_base_by_fixture")
     @patch("src.service_ia.pre_processing.download_match_service.repo_match.filter_by")
     def test_download_import_matches_insert_report(
         self,
         mock_filter_by,
+        mock_upsert,
         mock_save,
         mock_save_all,
         mock_snapshot_save,
         _mock_form,
     ):
+        """Bug fix 2026-09-15: una fixture NUOVA non viene piu' accodata in una
+        lista scritta con `save_all` a fine job (invisibile per minuti a un
+        import concorrente, da cui le righe duplicate) ma persistita subito
+        con `upsert_base_by_fixture`. Il conteggio `inserted` arriva ora dal
+        flag restituito dall'upsert, non da `match is None`."""
         mock_filter_by.return_value.first.return_value = None
+        mock_upsert.return_value = ("nuovo-id", True)
         provider = FakeProvider(
             fixtures=[_sample_fixture()],
             statistics=_sample_statistics(),
@@ -126,19 +137,59 @@ class TestDownloadMatch(unittest.TestCase):
         self.assertEqual(report["inserted"], 1)
         self.assertEqual(report["updated"], 0)
         self.assertEqual(report["failed"], 0)
-        mock_save.assert_not_called()
-        mock_save_all.assert_called_once()
+        mock_upsert.assert_called_once()
+        # `save` (merge) serve alle relazioni statistics/odds e viene ora
+        # chiamato per OGNI fixture, non solo per quelle gia' esistenti.
+        mock_save.assert_called_once()
+        # La vecchia scrittura massiva finale non deve piu' esistere.
+        mock_save_all.assert_not_called()
         mock_snapshot_save.assert_called_once()
+
+    @patch("src.service_ia.pre_processing.download_match_service.BET_BOOKMAKERS", [{"id": 1}])
+    @patch("src.service_ia.pre_processing.download_match_service.form_last_5_tot", return_value=None)
+    @patch("src.service_ia.pre_processing.download_match_service.repo_snapshot.save_many")
+    @patch("src.service_ia.pre_processing.download_match_service.repo_match.save")
+    @patch("src.service_ia.pre_processing.download_match_service.repo_match.upsert_base_by_fixture")
+    @patch("src.service_ia.pre_processing.download_match_service.repo_match.filter_by")
+    def test_snapshot_agganciati_all_id_restituito_dall_upsert(
+        self, mock_filter_by, mock_upsert, _mock_save, mock_snapshot_save, _mock_form,
+    ):
+        """Il cuore del fix sulle righe duplicate: quando un ALTRO processo ha
+        vinto la corsa sull'insert, l'upsert restituisce l'`id_match_fk` DI
+        QUELLO (via `RETURNING`), diverso dall'uuid generato localmente. Gli
+        `odds_snapshot` devono agganciarsi a quell'id: legati all'uuid locale
+        punterebbero a una riga `match` che non esiste (violazione FK)."""
+        mock_filter_by.return_value.first.return_value = None
+        mock_upsert.return_value = ("id-del-vincitore", False)
+        provider = FakeProvider(
+            fixtures=[_sample_fixture()],
+            statistics=_sample_statistics(),
+            odds=_sample_odds_payload(),
+        )
+
+        report = download_import_matches(
+            seasons=[2026], leagues=[135], fixture_date="2026-09-01", statuses="FT", provider=provider,
+        )
+
+        # Chi ha perso la corsa conta come "aggiornata", non come "inserita".
+        self.assertEqual(report["inserted"], 0)
+        self.assertEqual(report["updated"], 1)
+        snapshots = mock_snapshot_save.call_args[0][0]
+        self.assertGreater(len(snapshots), 0)
+        self.assertEqual({s.id_match for s in snapshots}, {"id-del-vincitore"})
 
     @patch("src.service_ia.pre_processing.download_match_service.BET_BOOKMAKERS", [{"id": 1}])
     @patch("src.service_ia.pre_processing.download_match_service.form_last_5_tot", return_value=None)
     @patch("src.service_ia.pre_processing.download_match_service.repo_snapshot.save_many")
     @patch("src.service_ia.pre_processing.download_match_service.repo_match.save_all")
     @patch("src.service_ia.pre_processing.download_match_service.repo_match.save")
+    @patch("src.service_ia.pre_processing.download_match_service.repo_match.upsert_base_by_fixture",
+           return_value=("existing-id", False))
     @patch("src.service_ia.pre_processing.download_match_service.repo_match.filter_by")
     def test_download_import_matches_update_report(
         self,
         mock_filter_by,
+        _mock_upsert,
         mock_save,
         _mock_save_all,
         _mock_snapshot_save,
@@ -184,10 +235,13 @@ class TestDownloadMatch(unittest.TestCase):
     @patch("src.service_ia.pre_processing.download_match_service.repo_snapshot.save_many")
     @patch("src.service_ia.pre_processing.download_match_service.repo_match.save_all")
     @patch("src.service_ia.pre_processing.download_match_service.repo_match.save")
+    @patch("src.service_ia.pre_processing.download_match_service.repo_match.upsert_base_by_fixture",
+           return_value=("nuovo-id", True))
     @patch("src.service_ia.pre_processing.download_match_service.repo_match.filter_by")
     def test_download_import_matches_continue_on_fixture_error(
         self,
         mock_filter_by,
+        _mock_upsert,
         _mock_save,
         _mock_save_all,
         _mock_snapshot_save,
@@ -464,10 +518,12 @@ class TestDownloadImportMatchesScoreWithoutStatistics(unittest.TestCase):
     @patch("src.service_ia.pre_processing.download_match_service.BET_BOOKMAKERS", [{"id": 1}])
     @patch("src.service_ia.pre_processing.download_match_service.form_last_5_tot", return_value=None)
     @patch("src.service_ia.pre_processing.download_match_service.repo_snapshot.save_many")
-    @patch("src.service_ia.pre_processing.download_match_service.repo_match.save_all")
+    @patch("src.service_ia.pre_processing.download_match_service.repo_match.save")
+    @patch("src.service_ia.pre_processing.download_match_service.repo_match.upsert_base_by_fixture",
+           return_value=("nuovo-id", True))
     @patch("src.service_ia.pre_processing.download_match_service.repo_match.filter_by")
     def test_score_saved_even_when_statistics_endpoint_returns_nothing(
-        self, mock_filter_by, mock_save_all, _mock_snapshot_save, _mock_form,
+        self, mock_filter_by, mock_upsert, mock_save, _mock_snapshot_save, _mock_form,
     ):
         mock_filter_by.return_value.first.return_value = None
         provider = FakeProvider(
@@ -481,11 +537,67 @@ class TestDownloadImportMatchesScoreWithoutStatistics(unittest.TestCase):
         )
 
         self.assertEqual(report["inserted"], 1)
-        saved_matches = mock_save_all.call_args[0][0]
-        self.assertEqual(len(saved_matches), 1)
-        self.assertEqual(saved_matches[0].score_home, 2)
-        self.assertEqual(saved_matches[0].score_away, 1)
-        self.assertEqual(saved_matches[0].statistics, [])
+        # 2026-09-15: il punteggio non passa piu' da `save_all` (rimosso) ma
+        # dalle colonne base dell'upsert; `save` porta comunque l'oggetto
+        # completo per le relazioni, quindi il controllo vale su entrambi.
+        colonne_upsert = mock_upsert.call_args[0][0]
+        self.assertEqual(colonne_upsert["score_home"], 2)
+        self.assertEqual(colonne_upsert["score_away"], 1)
+        salvato = mock_save.call_args[0][0]
+        self.assertEqual(salvato.score_home, 2)
+        self.assertEqual(salvato.score_away, 1)
+        self.assertEqual(salvato.statistics, [])
+
+
+class TestDownloadImportMatchesLegaNonDisponibile(unittest.TestCase):
+    """Bug fix 2026-09-15. Quando il provider non risponde per una lega (retry
+    esauriti), `request()` ora solleva `ApiSportsUnavailableError` invece di
+    restituire `[]` - vedi `api_sports_provider_test.py`. Qui si verifica il
+    lato chiamante: il fallimento deve essere REGISTRATO (`failed_leagues` +
+    `errors`) ma NON interrompere il giro sulle leghe successive, a differenza
+    della quota giornaliera esaurita che invece ferma tutto perche'
+    riguardera' identicamente ogni chiamata seguente."""
+
+    @patch("src.service_ia.pre_processing.download_match_service.BET_BOOKMAKERS", [{"id": 1}])
+    @patch("src.service_ia.pre_processing.download_match_service.form_last_5_tot", return_value=None)
+    @patch("src.service_ia.pre_processing.download_match_service.repo_snapshot.save_many")
+    @patch("src.service_ia.pre_processing.download_match_service.repo_match.save")
+    @patch("src.service_ia.pre_processing.download_match_service.repo_match.upsert_base_by_fixture",
+           return_value=("nuovo-id", True))
+    @patch("src.service_ia.pre_processing.download_match_service.repo_match.filter_by")
+    def test_lega_non_disponibile_registrata_e_giro_continua(
+        self, mock_filter_by, _mock_upsert, _mock_save, _mock_snapshot_save, _mock_form,
+    ):
+        mock_filter_by.return_value.first.return_value = None
+
+        class ProviderConLegaRotta(FakeProvider):
+            def get_fixtures(self, **params):
+                if params.get("league") == 135:
+                    raise ApiSportsUnavailableError("503 per 3 tentativi")
+                return super().get_fixtures(**params)
+
+        provider = ProviderConLegaRotta(
+            fixtures=[_sample_fixture()],
+            statistics=_sample_statistics(),
+            odds=_sample_odds_payload(),
+        )
+
+        report = download_import_matches(
+            seasons=[2026],
+            leagues=[135, 140],
+            fixture_date="2026-09-01",
+            statuses="FT",
+            provider=provider,
+        )
+
+        # La lega rotta e' contata a parte e lascia traccia...
+        self.assertEqual(report["failed_leagues"], 1)
+        self.assertTrue(any("non disponibile" in e["error"] for e in report["errors"]))
+        # ...e NON e' una quota esaurita, quindi il giro non si ferma:
+        self.assertFalse(report["quota_exceeded"])
+        # la seconda lega e' stata importata regolarmente.
+        self.assertEqual(report["fixtures_seen"], 1)
+        self.assertEqual(report["inserted"], 1)
 
 
 if __name__ == "__main__":
