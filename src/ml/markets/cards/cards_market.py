@@ -45,6 +45,7 @@ le feature "team/style" richieste dal task, gia' disponibili in
 from __future__ import annotations
 
 import os
+import threading
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -282,6 +283,14 @@ def current_referee_state(
 
 _REFEREE_INDEX_CACHE: dict[str, Any] = {"index": None, "computed_at": None}
 _REFEREE_INDEX_CACHE_TTL_SECONDS = 900.0
+# Serializza la (ri)costruzione dell'indice: senza, due chiamate concorrenti
+# a cache fredda o scaduta (es. il prewarm di avvio di `main.py` e il primo
+# utente reale che clicca nella stessa finestra) lanciavano ENTRAMBE la
+# stessa query+replay costosi in parallelo, quasi raddoppiando il carico
+# DB/memoria - causa osservata di un riavvio del container (mem_limit 4g)
+# durante un test manuale. Con il lock la seconda chiamata aspetta il
+# risultato della prima invece di duplicare il lavoro.
+_REFEREE_INDEX_LOCK = threading.Lock()
 
 
 def get_cached_referee_index(ttl_seconds: float = _REFEREE_INDEX_CACHE_TTL_SECONDS) -> _RefereeIndex:
@@ -294,18 +303,33 @@ def get_cached_referee_index(ttl_seconds: float = _REFEREE_INDEX_CACHE_TTL_SECON
     `FilterMarketService.build_prediction_frames`). Query LEGGERA: servono
     solo referee/current_league/date_match/statistics, MAI odds/
     mean_statistics (non usati dal replay arbitro)."""
-    now = datetime.now(timezone.utc)
-    cached_index = _REFEREE_INDEX_CACHE.get("index")
-    computed_at = _REFEREE_INDEX_CACHE.get("computed_at")
-    if cached_index is not None and computed_at is not None and (now - computed_at).total_seconds() < ttl_seconds:
+
+    def _fresh_cached_index() -> Optional[_RefereeIndex]:
+        cached_index = _REFEREE_INDEX_CACHE.get("index")
+        computed_at = _REFEREE_INDEX_CACHE.get("computed_at")
+        if cached_index is None or computed_at is None:
+            return None
+        if (datetime.now(timezone.utc) - computed_at).total_seconds() >= ttl_seconds:
+            return None
         return cached_index
 
-    match_repo = MatchRepository()
-    matches = convert_orm_match_to_dict(match_repo.search_filter(filters={"statistics": "not None", "status": ["FT"]}))
-    index = build_current_referee_index(matches)
-    _REFEREE_INDEX_CACHE["index"] = index
-    _REFEREE_INDEX_CACHE["computed_at"] = now
-    return index
+    fresh = _fresh_cached_index()
+    if fresh is not None:
+        return fresh
+
+    with _REFEREE_INDEX_LOCK:
+        # Ricontrolla DENTRO il lock: un altro thread potrebbe aver gia'
+        # ricalcolato mentre eravamo in attesa.
+        fresh = _fresh_cached_index()
+        if fresh is not None:
+            return fresh
+
+        match_repo = MatchRepository()
+        matches = convert_orm_match_to_dict(match_repo.search_filter(filters={"statistics": "not None", "status": ["FT"]}))
+        index = build_current_referee_index(matches)
+        _REFEREE_INDEX_CACHE["index"] = index
+        _REFEREE_INDEX_CACHE["computed_at"] = datetime.now(timezone.utc)
+        return index
 
 
 def current_referee_features_cached(

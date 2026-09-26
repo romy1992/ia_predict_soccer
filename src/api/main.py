@@ -195,6 +195,35 @@ def _run_model_consensus_refresh_job(
         logging.exception("model_consensus_refresh job %s failed", job_id)
 
 
+def _warm_serving_caches() -> None:
+    """Pre-scalda le cache in-memory di processo (indice arbitro,
+    registry modelli) ad ogni avvio del container, invece di lasciare che
+    sia il primo click reale su Oracle Match Detail/Dashboard a pagarne il
+    costo - misurato ~100s+ a freddo per il solo indice arbitro (query +
+    replay sull'intero storico), osservato dall'operatore come "il primo
+    click ci mette un casino, dal secondo in poi e' veloce". Import locale
+    (lazy) per lo stesso motivo di `filter_market_service.py`: evitare un
+    ciclo d'importazione a livello di modulo con `cards_market.py`."""
+    from src.ml.markets.cards.cards_market import get_cached_referee_index
+
+    try:
+        get_cached_referee_index()
+    except Exception:
+        logging.exception("Prewarm indice arbitro fallito (non bloccante, si ricalcolera' al primo uso)")
+    try:
+        ModelRegistry().list_active_markets()
+    except Exception:
+        logging.exception("Prewarm registry modelli fallito (non bloccante, si ricalcolera' al primo uso)")
+
+
+@app.on_event("startup")
+def _on_startup_warm_caches() -> None:
+    # Thread separato, MAI sull'event loop di avvio: l'healthcheck
+    # (`start_period: 15s` in docker-compose.yml) e la prima richiesta
+    # reale non devono aspettare fino a 100s+ per il prewarm.
+    threading.Thread(target=_warm_serving_caches, daemon=True, name="cache-warmup").start()
+
+
 def _load_summary() -> list[dict[str, Any]]:
     path = _summary_path()
     if not os.path.exists(path):
