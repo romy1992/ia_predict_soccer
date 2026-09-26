@@ -134,6 +134,21 @@ export default function App() {
   // insieme, quindi e' una mappa e non un singolo id come `jobRunningId`
   // (che resta per il solo stato "sto inviando la POST").
   const [jobRunRows, setJobRunRows] = useState({});
+  // "Aggiorna tutto manualmente" (Impostazioni, 2026-09-26): lancia in
+  // SEQUENZA (non in parallelo) i job con `run_all_included=True`,
+  // nell'ordine di `run_all_priority` (single source of truth lato
+  // backend, vedi `src/jobs/job_settings.py`), riusando ESATTAMENTE lo
+  // stesso meccanismo per-job di "Esegui ora" (nessun endpoint nuovo).
+  // Orchestrato SOLO dal browser (scelta esplicita dell'operatore): se la
+  // pagina viene chiusa/ricaricata a meta' giro, il job in corso in quel
+  // momento finisce comunque sul server, ma i successivi in coda NON
+  // partono piu' - nessuno stato persistito lato server per riprenderli.
+  const [batchRun, setBatchRun] = useState({ active: false, total: 0, completed: 0, currentJobId: null });
+  const jobRunRowsRef = useRef(jobRunRows);
+  useEffect(() => {
+    jobRunRowsRef.current = jobRunRows;
+  }, [jobRunRows]);
+  const batchCancelRef = useRef(false);
   const [quotaPaused, setQuotaPaused] = useState(false);
   const [quotaPausedSince, setQuotaPausedSince] = useState(null);
   const [apiQuota, setApiQuota] = useState(null);
@@ -583,6 +598,53 @@ export default function App() {
     } finally {
       setJobRunningId(null);
     }
+  }, []);
+  const runAllJobsManuallyHandler = useCallback(async () => {
+    if (batchRun.active) {
+      return;
+    }
+    const queue = jobSettingsRows
+      .filter((job) => job.enabled && job.run_all_included)
+      .sort((a, b) => (a.run_all_priority ?? 999) - (b.run_all_priority ?? 999));
+    if (queue.length === 0) {
+      return;
+    }
+    batchCancelRef.current = false;
+    setBatchRun({ active: true, total: queue.length, completed: 0, currentJobId: null });
+    for (const job of queue) {
+      if (batchCancelRef.current) {
+        break;
+      }
+      setBatchRun((prev) => ({ ...prev, currentJobId: job.job_id }));
+      const already = jobRunRowsRef.current[job.job_id];
+      if (already && ["queued", "running"].includes(already.status)) {
+        // Gia' avviato altrove (es. un click manuale su "Esegui ora"
+        // fatto prima di questo giro): non lo rilancia ne' lo aspetta,
+        // passa oltre subito - evita di duplicare lo stesso job.
+        setBatchRun((prev) => ({ ...prev, completed: prev.completed + 1 }));
+        continue;
+      }
+      await runJobNowHandler(job.job_id);
+      // Aspetta che QUESTO job raggiunga uno stato finale prima di
+      // lanciare il successivo (sequenza, MAI in parallelo) - legge lo
+      // stesso `jobRunRows` gia' aggiornato dal polling unico esistente,
+      // nessuna seconda chiamata /jobs/{id} duplicata qui.
+      while (!batchCancelRef.current) {
+        const row = jobRunRowsRef.current[job.job_id];
+        if (!row || ["success", "failed", "error"].includes(row.status)) {
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+      }
+      setBatchRun((prev) => ({ ...prev, completed: prev.completed + 1 }));
+    }
+    setBatchRun((prev) => ({ ...prev, active: false, currentJobId: null }));
+  }, [jobSettingsRows, runJobNowHandler, batchRun.active]);
+  const stopBatchHandler = useCallback(() => {
+    // Ferma solo la CODA (i job non ancora lanciati non partiranno piu'):
+    // il job eventualmente gia' in corso in questo momento e' stato
+    // dispatchato al server e finisce comunque, non e' cancellabile da qui.
+    batchCancelRef.current = true;
   }, []);
   // Chiave STABILE dei job da pollare: cambia solo quando un job parte o
   // finisce, non ad ogni aggiornamento di avanzamento. Serve come dipendenza
@@ -1104,6 +1166,9 @@ export default function App() {
       runFeedback: jobRunFeedback,
       runRows: jobRunRows,
       onRunJob: runJobNowHandler,
+      batchRun,
+      onRunAllJobs: runAllJobsManuallyHandler,
+      onStopBatch: stopBatchHandler,
       quota: apiQuota,
       quotaLoading: apiQuotaLoading,
       quotaError: apiQuotaError,

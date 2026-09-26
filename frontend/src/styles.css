@@ -1601,6 +1601,21 @@ th {
   margin-top: 10px;
 }
 
+.settings-batch-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px;
+  margin-top: 8px;
+  border-radius: 10px;
+  background: #f0f4ff;
+  border: 1px solid #dbe4fb;
+}
+
+.settings-batch-progress .panel-header {
+  margin: 0;
+}
+
 .settings-job-row {
   display: flex;
   align-items: center;

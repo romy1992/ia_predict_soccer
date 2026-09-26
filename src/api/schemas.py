@@ -193,6 +193,10 @@ class JobSettingRow(BaseModel):
     schedule_kind: str
     schedule: dict[str, int]
     schedule_is_default: bool = True
+    # Ordine/inclusione per "Aggiorna tutto manualmente" (Impostazioni):
+    # vedi `src/jobs/job_settings.py::JOB_DEFINITIONS` per il significato.
+    run_all_priority: int = 999
+    run_all_included: bool = True
 
 
 class JobSettingsResponse(BaseModel):
