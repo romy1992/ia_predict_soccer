@@ -190,8 +190,30 @@ class LiveDataService:
     def fetch_live_fixtures(
         self, leagues: Optional[list[int]] = None
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-        """Ritorna (fixtures, errors). Una lega che fallisce NON blocca le
-        altre (acceptance criteria "Provider errors isolati")."""
+        """Ritorna (fixtures, errors). Un fallimento del provider finisce in
+        `errors` senza propagarsi (acceptance criteria "Provider errors
+        isolati"): dal 2026-09-15 la chiamata e' una sola, quindi non c'e'
+        piu' un "resto del batch" da salvare come quando il giro era per
+        lega, ma il job live non deve comunque fallire in blocco.
+
+        Fix consumo quota 2026-09-15: PRIMA faceva una chiamata
+        `fixtures?live=all&league=X` PER OGNI lega censita - 18 chiamate a
+        ogni singolo poll, anche quando non si stava giocando NIENTE. Con
+        `live_sync_interval_seconds=90` sono ~720 chiamate/ora a stadi vuoti,
+        cioe' oltre 17.000 al giorno su un piano da 7.500: il job da solo
+        bruciava la quota giornaliera, e a quota esaurita `request()`
+        restituisce `[]` in silenzio, quindi TUTTI gli altri import (partite
+        di ieri, calendario, quote) tornavano vuoti senza segnalare nulla.
+        Misurato in diretta durante la diagnosi: 20 chiamate consumate in 3
+        minuti con zero partite live.
+
+        Ora si fa UNA sola chiamata `fixtures?live=all` (l'endpoint
+        restituisce tutte le partite in corso nel mondo) e si filtra per lega
+        IN MEMORIA: 1 chiamata per poll invece di 18, ~40/ora, con lo stesso
+        risultato esatto. Il filtro resta perche' i campionati fuori da
+        `cfg.leagues` non ci interessano e non devono finire nelle tabelle
+        `live_*`.
+        """
         leagues = leagues if leagues is not None else list(self.cfg.leagues or [])
         cache_key = "live_fixtures:" + ",".join(str(item) for item in leagues)
         cached = self._cache.get(cache_key)
@@ -200,14 +222,20 @@ class LiveDataService:
 
         fixtures: list[dict[str, Any]] = []
         errors: list[dict[str, Any]] = []
-        for league in leagues:
-            try:
-                payload = self.provider.get_fixtures(live="all", league=league)
-            except Exception as exc:  # provider isolato per lega
-                errors.append({"scope": "league_fixtures", "league": league, "error": str(exc)})
+        try:
+            payload = self.provider.get_fixtures(live="all")
+        except Exception as exc:
+            # Nessun isolamento "per lega" da preservare: e' una chiamata
+            # sola, quindi se cade non c'e' un resto del batch da salvare.
+            errors.append({"scope": "live_fixtures", "league": None, "error": str(exc)})
+            payload = []
+
+        ammesse = {int(item) for item in leagues}
+        for fixture in payload or []:
+            league_id = _safe_int((fixture.get("league") or {}).get("id"))
+            if ammesse and league_id not in ammesse:
                 continue
-            if payload:
-                fixtures.extend(payload)
+            fixtures.append(fixture)
 
         result = (dedupe_fixtures(fixtures), errors)
         self._cache.set(cache_key, result)

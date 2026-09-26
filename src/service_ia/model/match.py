@@ -13,7 +13,21 @@ class Match(Base):
     id_events = Column(String(32))#, unique=True)  # Id proveniente da odds.api (per quote)
     # id_alternate_events: Id proveniente da odds.api (per quote) - In caso di mach rinviato o spostato
     id_alternate_events = Column(String(32))
-    id_fixture = Column(Integer)#, unique=True)  # Id proveniente da api.sports (per statistiche ed eventuali nuove quote)
+    # Id proveniente da api.sports (per statistiche ed eventuali nuove quote).
+    # UNICO (migration f1a2b3c4d5e6): il vincolo era commentato e senza di
+    # esso due esecuzioni sovrapposte di `download_import_matches` (es. il
+    # job `data_daily_refresh` e il bottone "Aggiorna tutto", processi
+    # `scheduler`/`api` distinti) inserivano due righe per la stessa
+    # partita - ne sono nate 116. Gli update successivi passano da
+    # `filter_by(...).first()` e ne aggiornavano una sola: l'altra restava
+    # a `NS` per sempre e la Dashboard mostrava la partita "In diretta" a
+    # giorni di distanza (vedi `_classify_phase` e lo script
+    # `scripts/maintenance/dedup_match_id_fixture.py`). L'indice unico e'
+    # anche il presupposto dell'upsert `ON CONFLICT (id_fixture)` usato ora
+    # da `download_import_matches` al posto di select-poi-insert.
+    # Resta NULLABLE: in Postgres un unique index ammette piu' NULL, quindi
+    # le righe legacy senza fixture (import storici da odds-api) restano valide.
+    id_fixture = Column(Integer, unique=True)
     name_home = Column(String)  # Nome team casa
     id_team_home = Column(Integer)  # Id team casa
     name_away = Column(String)  # Nome tema ospite
@@ -49,11 +63,28 @@ class Match(Base):
     odds = relationship("Odds",
                         back_populates="match",  # back_populates crea la relazione # 👈 One-to-Many
                         cascade="all, delete-orphan", lazy="selectin")
+    # `lazy="select"` e NON `selectin` come le due relazioni sopra: e' la
+    # tabella piu' grande del DB (311.779 righe / 113 MB, media 693 snapshot
+    # per match, massimo 3.060) e con l'eager load OGNI query su Match la
+    # trascinava dietro. Misurato prima della modifica: caricare UNA fixture
+    # con `filter_by({'id_fixture': ...}).first()` costava 1,54 s e 2.174
+    # righe snapshot trasferite da Railway, che su 193 fixture spiega i 456 s
+    # di un `future_sync`; `SettlementService` (44.983 match finali, nessun
+    # filtro data) e `FilterMarketService._search_matches` ne soffrivano
+    # ancora di piu' (1.331 s e fino a 8.708 s per esecuzione).
+    # Nessun chiamante perde dati: l'UNICO punto che legge davvero questa
+    # collezione e' `OfficialPredictionCaptureService`, che la chiede gia'
+    # esplicitamente con `selectinload(Match.odds_snapshots)`; Dashboard e
+    # `phase0_under_over_data_quality` usano `noload`; tutto il resto
+    # (`Match.to_dict`, `convert_orm_match_to_dict`) non la tocca mai.
+    # Non `lazy="raise"`: trasformerebbe un problema di prestazioni in un
+    # errore a runtime su un percorso utente, e non serve - chi la vuole la
+    # chiede con `selectinload`.
     odds_snapshots = relationship(
         "OddsSnapshot",
         back_populates="match",
         cascade="all, delete-orphan",
-        lazy="selectin",
+        lazy="select",
     )
 
     # Medie stagionali alla giornata corrente (cioè PRIMA CHE INIZIASSE LA PARTITA CORRENTE)
