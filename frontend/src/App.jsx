@@ -143,7 +143,7 @@ export default function App() {
   // pagina viene chiusa/ricaricata a meta' giro, il job in corso in quel
   // momento finisce comunque sul server, ma i successivi in coda NON
   // partono piu' - nessuno stato persistito lato server per riprenderli.
-  const [batchRun, setBatchRun] = useState({ active: false, total: 0, completed: 0, currentJobId: null });
+  const [batchRun, setBatchRun] = useState({ active: false, total: 0, completed: 0, currentJobId: null, message: "" });
   const jobRunRowsRef = useRef(jobRunRows);
   useEffect(() => {
     jobRunRowsRef.current = jobRunRows;
@@ -607,10 +607,20 @@ export default function App() {
       .filter((job) => job.enabled && job.run_all_included)
       .sort((a, b) => (a.run_all_priority ?? 999) - (b.run_all_priority ?? 999));
     if (queue.length === 0) {
+      // Senza questo, un click con TUTTI i job disattivati non dava alcun
+      // segnale - sembrava che il bottone non facesse nulla invece di
+      // "non c'e' nulla da eseguire" (bug segnalato dall'operatore).
+      setBatchRun({
+        active: false,
+        total: 0,
+        completed: 0,
+        currentJobId: null,
+        message: "Nessun job attivo da eseguire: abilita almeno un job qui sotto (interruttore a destra di ogni riga).",
+      });
       return;
     }
     batchCancelRef.current = false;
-    setBatchRun({ active: true, total: queue.length, completed: 0, currentJobId: null });
+    setBatchRun({ active: true, total: queue.length, completed: 0, currentJobId: null, message: "" });
     for (const job of queue) {
       if (batchCancelRef.current) {
         break;
