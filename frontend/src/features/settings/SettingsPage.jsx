@@ -310,7 +310,7 @@ export default function SettingsPage({
                 className="btn-secondary"
                 onClick={onRunAllJobs}
                 disabled={batchRun.active}
-                title="Lancia in sequenza, in ordine di priorita', tutti i job attivi che si prestano a un giro manuale (esclusi Retrain ML e Sync live)"
+                title="Lancia in sequenza, in ordine di priorita', tutti i job che si prestano a un giro manuale (esclusi Retrain ML e Sync live) - indipendentemente dall'interruttore acceso/spento, che riguarda solo l'esecuzione automatica dello scheduler"
               >
                 {batchRun.active ? "Aggiornamento in corso..." : "Aggiorna tutto manualmente"}
               </button>
