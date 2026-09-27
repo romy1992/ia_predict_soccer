@@ -191,7 +191,7 @@ function JobRunProgress({ row }) {
  */
 function BatchRunProgress({ batchRun, currentJobLabel, onStop }) {
   if (!batchRun.active) {
-    return null;
+    return batchRun.message ? <div className="info-box">{batchRun.message}</div> : null;
   }
   const percent = batchRun.total > 0 ? Math.round((batchRun.completed / batchRun.total) * 100) : 0;
   return (
