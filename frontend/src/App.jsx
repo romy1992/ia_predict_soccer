@@ -603,19 +603,24 @@ export default function App() {
     if (batchRun.active) {
       return;
     }
+    // L'interruttore acceso/spento di ogni riga decide SOLO se lo
+    // scheduler lo esegue in automatico in background - non filtra qui,
+    // stesso principio gia' in vigore per "Esegui ora" sul singolo job
+    // (bottone sempre presente/cliccabile, indipendente dall'interruttore).
+    // Un'azione manuale non deve dipendere da un'impostazione pensata per
+    // l'automatico: altrimenti con tutti i job disattivati (es. per
+    // risparmiare quota mentre non si e' operativi) "Aggiorna tutto
+    // manualmente" risulterebbe silenziosamente inutilizzabile.
     const queue = jobSettingsRows
-      .filter((job) => job.enabled && job.run_all_included)
+      .filter((job) => job.run_all_included)
       .sort((a, b) => (a.run_all_priority ?? 999) - (b.run_all_priority ?? 999));
     if (queue.length === 0) {
-      // Senza questo, un click con TUTTI i job disattivati non dava alcun
-      // segnale - sembrava che il bottone non facesse nulla invece di
-      // "non c'e' nulla da eseguire" (bug segnalato dall'operatore).
       setBatchRun({
         active: false,
         total: 0,
         completed: 0,
         currentJobId: null,
-        message: "Nessun job attivo da eseguire: abilita almeno un job qui sotto (interruttore a destra di ogni riga).",
+        message: "Nessun job disponibile per questo giro.",
       });
       return;
     }
