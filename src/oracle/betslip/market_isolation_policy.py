@@ -43,10 +43,19 @@ logger = logging.getLogger(__name__)
 _LOCK = threading.Lock()
 
 # Default deliberatamente prudente (mai un edit silenzioso: una nuova
-# esclusione/rimozione passa da `set_isolated_markets`, mai da qui):
-# "cards" isolato dal 2026-09-28 per la promozione forzata di 3/4 linee
-# (vedi docstring di modulo).
-DEFAULT_ISOLATED_MARKETS: frozenset[str] = frozenset({"cards"})
+# esclusione/rimozione passa da `set_isolated_markets`, mai da qui). Cards
+# isolato dal 2026-09-28 per la promozione forzata di 3/4 linee (vedi
+# docstring di modulo) - le 4 linee, non la stringa "cards" (che NON e' mai
+# il valore di `market`/`ModelRegistry.list_active_markets()`: il mercato
+# e' sempre registrato per linea, `cards_line_3_5`/`_4_5`/`_5_5`/`_6_5`,
+# vedi `cards_market.py::_line_label` e
+# `filter_market_service.py::LINE_MARKETS`). Isolate tutte e 4 le linee,
+# non solo le 3 forzate: `cards_line_3_5` (promossa senza forzare) fa
+# comunque parte della stessa "vita a parte" Cards decisa dall'operatore,
+# mai mescolata al mix multi-mercato di fiducia.
+DEFAULT_ISOLATED_MARKETS: frozenset[str] = frozenset(
+    {"cards_line_3_5", "cards_line_4_5", "cards_line_5_5", "cards_line_6_5"}
+)
 
 
 def _isolated_markets_path() -> str:

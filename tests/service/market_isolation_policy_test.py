@@ -5,6 +5,8 @@ from unittest import mock
 
 from src.oracle.betslip import market_isolation_policy
 
+_DEFAULT_CARDS_LINES = frozenset({"cards_line_3_5", "cards_line_4_5", "cards_line_5_5", "cards_line_6_5"})
+
 
 class _IsolatedMarketsPath(unittest.TestCase):
     """Isola `isolated_markets.json` in una directory temporanea per ogni
@@ -22,21 +24,21 @@ class _IsolatedMarketsPath(unittest.TestCase):
 
 class TestGetIsolatedMarkets(_IsolatedMarketsPath):
     def test_returns_default_when_no_file(self):
-        self.assertEqual(market_isolation_policy.get_isolated_markets(), frozenset({"cards"}))
+        self.assertEqual(market_isolation_policy.get_isolated_markets(), _DEFAULT_CARDS_LINES)
 
     def test_returns_default_on_corrupt_file(self):
         path = market_isolation_policy._isolated_markets_path()
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
             f.write("{not valid json")
-        self.assertEqual(market_isolation_policy.get_isolated_markets(), frozenset({"cards"}))
+        self.assertEqual(market_isolation_policy.get_isolated_markets(), _DEFAULT_CARDS_LINES)
 
     def test_returns_default_when_file_is_not_a_list(self):
         path = market_isolation_policy._isolated_markets_path()
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
             f.write('{"cards": true}')
-        self.assertEqual(market_isolation_policy.get_isolated_markets(), frozenset({"cards"}))
+        self.assertEqual(market_isolation_policy.get_isolated_markets(), _DEFAULT_CARDS_LINES)
 
     def test_normalizes_case_and_whitespace(self):
         market_isolation_policy.set_isolated_markets([" Cards ", "CORNERS", ""])
