@@ -34,7 +34,9 @@ from src.ml.ensemble.model_consensus import build_model_consensus_for_fixture
 from src.ml.experts.goal_distribution.goal_distribution_expert import GoalDistributionExpert
 from src.ml.experts.team_strength.team_strength_expert import TeamStrengthExpert
 from src.repository.match_repository import MatchRepository
+from src.repository.model_consensus_snapshot_repository import ModelConsensusSnapshotRepository
 from src.repository.odds_snapshot_repository import OddsSnapshotRepository
+from src.repository.team_rating_repository import TeamRatingRepository
 from src.service_ia.utility.utils import convert_orm_match_to_dict
 
 # Value Bets (acceptance criteria "Value Bets"): sottoinsieme delle
@@ -51,24 +53,71 @@ class OracleMatchDetailService:
         team_strength_expert: Optional[TeamStrengthExpert] = None,
         goal_distribution_expert: Optional[GoalDistributionExpert] = None,
         odds_snapshot_repo: Optional[OddsSnapshotRepository] = None,
+        team_rating_repo: Optional[TeamRatingRepository] = None,
+        model_consensus_repo: Optional[ModelConsensusSnapshotRepository] = None,
     ):
         self.dashboard_service = dashboard_service or DashboardService()
         self.match_repo = match_repo or MatchRepository()
         self.team_strength_expert = team_strength_expert or TeamStrengthExpert()
         self.goal_distribution_expert = goal_distribution_expert or GoalDistributionExpert()
         self.odds_snapshot_repo = odds_snapshot_repo or OddsSnapshotRepository()
+        self.team_rating_repo = team_rating_repo or TeamRatingRepository()
+        self.model_consensus_repo = model_consensus_repo or ModelConsensusSnapshotRepository()
 
     # ------------------------------------------------------------------
     # Team Strength (EXP-01): rating PRE-match delle due squadre
     # ------------------------------------------------------------------
+    def _cached_team_strength(
+        self, home_team_id: int, away_team_id: int
+    ) -> Optional[dict[str, Any]]:
+        """Legge i rating gia' calcolati dal job schedulato
+        `run_team_rating_refresh` invece di rifare la query+ricalcolo
+        sull'INTERO storico ad ogni richiesta (era il collo di bottiglia
+        principale di "Oracle Match Detail", insieme al Model Consensus).
+
+        Valida SOLO per fixture NON concluse: la riga cache rappresenta lo
+        stato "corrente" (post ultima partita finale nota), che coincide
+        col rating point-in-time SOLO quando la fixture in questione deve
+        ancora giocarsi (nessuna partita successiva da escludere). Per una
+        fixture gia' conclusa il chiamante usa ancora il ricalcolo live
+        con `before=kickoff`, per non introdurre leakage temporale
+        rivedendo partite vecchie con i rating di OGGI."""
+        try:
+            rows = self.team_rating_repo.get_for_teams([home_team_id, away_team_id])
+        except Exception:
+            return None
+
+        home_row = rows.get(home_team_id)
+        away_row = rows.get(away_team_id)
+        if (
+            home_row is None
+            or away_row is None
+            or home_row.rating_version != TeamStrengthExpert.VERSION
+            or away_row.rating_version != TeamStrengthExpert.VERSION
+        ):
+            return None
+
+        return {
+            "rating_version": TeamStrengthExpert.VERSION,
+            "sample_matches": home_row.matches_played + away_row.matches_played,
+            "home": home_row.to_rating_dict(),
+            "away": away_row.to_rating_dict(),
+        }
+
     def _team_strength_for_teams(
         self,
         home_team_id: Optional[int],
         away_team_id: Optional[int],
         before: Optional[str],
+        is_finished: bool = False,
     ) -> Optional[dict[str, Any]]:
         if home_team_id is None or away_team_id is None:
             return None
+
+        if not is_finished:
+            cached = self._cached_team_strength(int(home_team_id), int(away_team_id))
+            if cached is not None:
+                return cached
 
         try:
             orm_matches = self.match_repo.search_filter(
@@ -149,8 +198,34 @@ class OracleMatchDetailService:
     # Model Consensus (ORACLE-04) per ciascun mercato con modello disponibile
     # ------------------------------------------------------------------
     def _model_consensus_by_market(self, fixture_id: int, model_markets: list[str]) -> dict[str, Any]:
+        if not model_markets:
+            return {}
+
+        # Legge prima la cache popolata dal job schedulato
+        # `run_model_consensus_refresh` (evita di ricaricare il Direct
+        # Expert da disco + ricostruire prediction frame/segnale quote per
+        # OGNI mercato ad OGNI apertura - era il secondo collo di bottiglia
+        # di "Oracle Match Detail" insieme al Team Strength). Un mercato
+        # senza riga (job non ancora passato, mercato appena promosso)
+        # ricade sul calcolo live: mai un dato mancante al posto del
+        # ricalcolo, stesso principio "nessuna eccezione blocca l'intero
+        # dettaglio" gia' applicato al resto di questo servizio.
+        try:
+            cached = self.model_consensus_repo.get_for_fixture(fixture_id, markets=model_markets)
+        except Exception:
+            cached = {}
+
         consensus_by_market: dict[str, Any] = {}
         for market in model_markets:
+            row = cached.get(market)
+            if row is not None:
+                consensus_by_market[market] = {
+                    "experts": row.experts,
+                    "oracle_final": row.oracle_final,
+                    "consensus": row.consensus,
+                    "warnings": row.warnings,
+                }
+                continue
             try:
                 report = build_model_consensus_for_fixture(market=market, fixture_id=fixture_id)
             except Exception:
@@ -194,7 +269,10 @@ class OracleMatchDetailService:
             away_team_id = match_row.id_team_away
             kickoff_at = match_row.date_match
 
-        team_strength = self._team_strength_for_teams(home_team_id, away_team_id, before=kickoff_at)
+        is_finished = bool(fixture_row) and fixture_row.get("phase") == "finished"
+        team_strength = self._team_strength_for_teams(
+            home_team_id, away_team_id, before=kickoff_at, is_finished=is_finished
+        )
         if team_strength is None:
             warnings.append("team_strength_not_available")
 

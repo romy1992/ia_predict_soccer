@@ -13,7 +13,21 @@ class Match(Base):
     id_events = Column(String(32))#, unique=True)  # Id proveniente da odds.api (per quote)
     # id_alternate_events: Id proveniente da odds.api (per quote) - In caso di mach rinviato o spostato
     id_alternate_events = Column(String(32))
-    id_fixture = Column(Integer)#, unique=True)  # Id proveniente da api.sports (per statistiche ed eventuali nuove quote)
+    # Id proveniente da api.sports (per statistiche ed eventuali nuove quote).
+    # UNICO (migration f1a2b3c4d5e6): il vincolo era commentato e senza di
+    # esso due esecuzioni sovrapposte di `download_import_matches` (es. il
+    # job `data_daily_refresh` e il bottone "Aggiorna tutto", processi
+    # `scheduler`/`api` distinti) inserivano due righe per la stessa
+    # partita - ne sono nate 116. Gli update successivi passano da
+    # `filter_by(...).first()` e ne aggiornavano una sola: l'altra restava
+    # a `NS` per sempre e la Dashboard mostrava la partita "In diretta" a
+    # giorni di distanza (vedi `_classify_phase` e lo script
+    # `scripts/maintenance/dedup_match_id_fixture.py`). L'indice unico e'
+    # anche il presupposto dell'upsert `ON CONFLICT (id_fixture)` usato ora
+    # da `download_import_matches` al posto di select-poi-insert.
+    # Resta NULLABLE: in Postgres un unique index ammette piu' NULL, quindi
+    # le righe legacy senza fixture (import storici da odds-api) restano valide.
+    id_fixture = Column(Integer, unique=True)
     name_home = Column(String)  # Nome team casa
     id_team_home = Column(Integer)  # Id team casa
     name_away = Column(String)  # Nome tema ospite
@@ -49,11 +63,28 @@ class Match(Base):
     odds = relationship("Odds",
                         back_populates="match",  # back_populates crea la relazione # 👈 One-to-Many
                         cascade="all, delete-orphan", lazy="selectin")
+    # `lazy="select"` e NON `selectin` come le due relazioni sopra: e' la
+    # tabella piu' grande del DB (311.779 righe / 113 MB, media 693 snapshot
+    # per match, massimo 3.060) e con l'eager load OGNI query su Match la
+    # trascinava dietro. Misurato prima della modifica: caricare UNA fixture
+    # con `filter_by({'id_fixture': ...}).first()` costava 1,54 s e 2.174
+    # righe snapshot trasferite da Railway, che su 193 fixture spiega i 456 s
+    # di un `future_sync`; `SettlementService` (44.983 match finali, nessun
+    # filtro data) e `FilterMarketService._search_matches` ne soffrivano
+    # ancora di piu' (1.331 s e fino a 8.708 s per esecuzione).
+    # Nessun chiamante perde dati: l'UNICO punto che legge davvero questa
+    # collezione e' `OfficialPredictionCaptureService`, che la chiede gia'
+    # esplicitamente con `selectinload(Match.odds_snapshots)`; Dashboard e
+    # `phase0_under_over_data_quality` usano `noload`; tutto il resto
+    # (`Match.to_dict`, `convert_orm_match_to_dict`) non la tocca mai.
+    # Non `lazy="raise"`: trasformerebbe un problema di prestazioni in un
+    # errore a runtime su un percorso utente, e non serve - chi la vuole la
+    # chiede con `selectinload`.
     odds_snapshots = relationship(
         "OddsSnapshot",
         back_populates="match",
         cascade="all, delete-orphan",
-        lazy="selectin",
+        lazy="select",
     )
 
     # Medie stagionali alla giornata corrente (cioè PRIMA CHE INIZIASSE LA PARTITA CORRENTE)
@@ -445,5 +476,99 @@ class MatchPredictionSnapshot(Base):
         if payload.get("computed_at") is not None:
             payload["computed_at"] = payload["computed_at"].isoformat()
         return payload
+
+
+class TeamRating(Base):
+    """Rating point-in-time CORRENTE per squadra (EXP-01, cache di serving
+    per Oracle Match Detail).
+
+    Una riga per squadra (UPSERT), aggiornata dal job schedulato
+    `run_team_rating_refresh` (src/jobs/scheduler.py) che rilegge l'INTERO
+    storico partite concluse UNA VOLTA SOLA per tutte le squadre e scrive
+    lo stato risultante - mai calcolata dentro il path di una richiesta
+    HTTP. Prima di questa tabella, `OracleMatchDetailService._team_strength_for_teams`
+    rifaceva la query + il ricalcolo completo di `TeamStrengthExpert.current_ratings`
+    ad OGNI apertura del dettaglio Oracle (misurato: query pesante sul DB
+    remoto ripetuta ad ogni richiesta), la causa principale della lentezza
+    del bottone "Oracle" insieme al Model Consensus.
+
+    `rating_version` == `TeamStrengthExpert.VERSION`: se la formula del
+    rating cambia (nuova config), le righe vecchie diventano riconoscibili
+    come stale e il letture le ignora finche' il job non le ricalcola.
+    """
+
+    __tablename__ = 'team_rating'
+
+    team_id = Column(Integer, primary_key=True)
+    rating_version = Column(String, nullable=False)
+    matches_played = Column(Integer, nullable=False, default=0)
+    attack_rating = Column(Float, nullable=False, default=0.0)
+    defense_rating = Column(Float, nullable=False, default=0.0)
+    home_attack_rating = Column(Float, nullable=False, default=0.0)
+    home_defense_rating = Column(Float, nullable=False, default=0.0)
+    away_attack_rating = Column(Float, nullable=False, default=0.0)
+    away_defense_rating = Column(Float, nullable=False, default=0.0)
+    home_advantage = Column(Float, nullable=False, default=0.0)
+    rolling_form = Column(Float, nullable=False, default=0.5)
+    rolling_goal_diff = Column(Float, nullable=False, default=0.0)
+    computed_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+
+    def to_rating_dict(self) -> dict:
+        """Stessa forma del dict per-squadra ritornato da
+        `TeamStrengthExpert.current_ratings` (prefisso `team_`), cosi'
+        `OracleMatchDetailService` puo' consumare indifferentemente la riga
+        cache o il ricalcolo live senza cambiare schema di risposta."""
+        return {
+            "team_attack_rating": self.attack_rating,
+            "team_defense_rating": self.defense_rating,
+            "team_home_attack_rating": self.home_attack_rating,
+            "team_home_defense_rating": self.home_defense_rating,
+            "team_away_attack_rating": self.away_attack_rating,
+            "team_away_defense_rating": self.away_defense_rating,
+            "team_home_advantage": self.home_advantage,
+            "team_rolling_form": self.rolling_form,
+            "team_rolling_goal_diff": self.rolling_goal_diff,
+            "team_matches_played": float(self.matches_played),
+            "rating_version": self.rating_version,
+        }
+
+
+class ModelConsensusSnapshot(Base):
+    """Cache di serving per il Model Consensus (ORACLE-04, `model_consensus.py`),
+    una riga per (fixture_id, market) - UPSERT dal job schedulato
+    `run_model_consensus_refresh`.
+
+    Prima di questa tabella, `build_model_consensus_for_fixture` veniva
+    richiamata dal vivo per OGNI mercato ad OGNI apertura di "Oracle Match
+    Detail": ricaricava il Direct Expert da disco (joblib), ricostruiva la
+    prediction frame e il segnale Market/Odds ad ogni singola richiesta -
+    la causa principale, insieme al Team Strength, della lentezza del
+    bottone "Oracle" (diagnosticata il 2026-09-24).
+
+    Stessa filosofia gia' in uso per `MatchPredictionSnapshot`: per una
+    fixture CONCLUSA la riga resta congelata (scritta una sola volta dal
+    job, mai sovrascritta) - rappresenta "cosa diceva il consensus quando
+    e' stato calcolato", coerente con come gia' si comporta la predizione
+    "diretta" per le partite finite. Per una fixture NON ancora disputata
+    il job la ricalcola/sovrascrive ad ogni giro (le quote/feature possono
+    cambiare prima del calcio d'inizio).
+
+    `experts`/`oracle_final`/`consensus`/`warnings` sono la STESSA forma
+    (nomi di campo inclusi) del payload gia' esposto da
+    `OracleMatchDetailService._model_consensus_by_market` - colonne JSON
+    perche' la struttura e' nidificata e a lunghezza variabile (numero di
+    esperti disponibili, vettore di probabilita' diverso per mercato),
+    stesso tipo di colonna (`JSON`) gia' in uso altrove in questo file
+    (es. `Match.mean_statistics`, `Statistics.shots`)."""
+
+    __tablename__ = 'model_consensus_snapshot'
+
+    fixture_id = Column(Integer, primary_key=True)
+    market = Column(String, primary_key=True)
+    experts = Column(JSON, nullable=False)
+    oracle_final = Column(JSON, nullable=True)
+    consensus = Column(JSON, nullable=False)
+    warnings = Column(JSON, nullable=False)
+    computed_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
 
 

@@ -35,10 +35,34 @@ class ModelRegistry:
             raise ValueError(f"Stage non valido: {stage}")
         return value
 
+    # Cache in-memory per file (mtime+size come chiave di invalidazione,
+    # non un TTL fisso): `index.jsonl`/`promotion_history.jsonl` sono letti
+    # e ri-parsati ad ogni chiamata di `get_production`/`get_latest`/
+    # `list_active_markets` - una volta per mercato, quindi decine di volte
+    # per una singola richiesta Oracle Match Detail/Dashboard. Erano stati
+    # lasciati deliberatamente senza cache ("file piccolo, costo
+    # trascurabile", vedi `PredictionSnapshotService._latest_model_for_market`)
+    # quando il registry era nuovo; con `index.jsonl` cresciuto a ~3 MB
+    # (il campo `extra` di ogni run puo' arrivare a ~380 KB, report di
+    # classificazione completi per l'analisi/debug) questo era diventato
+    # il collo di bottiglia dominante di "Oracle Match Detail" (~20s),
+    # misurato con cProfile: 70 letture dello stesso file in una sola
+    # richiesta. mtime+size invece di un TTL: una promozione/registrazione
+    # nuova (che scrive su uno di questi due file) deve riflettersi
+    # SUBITO, mai restare congelata per una finestra di tempo.
+    _JSONL_CACHE: dict[str, tuple[tuple[float, int], list[Dict[str, Any]]]] = {}
+
     @staticmethod
     def _safe_jsonl_rows(path: str) -> list[Dict[str, Any]]:
         if not os.path.exists(path):
+            ModelRegistry._JSONL_CACHE.pop(path, None)
             return []
+
+        stat = os.stat(path)
+        cache_key = (stat.st_mtime, stat.st_size)
+        cached = ModelRegistry._JSONL_CACHE.get(path)
+        if cached is not None and cached[0] == cache_key:
+            return cached[1]
 
         rows: list[Dict[str, Any]] = []
         with open(path, "r", encoding="utf-8") as f:
@@ -50,6 +74,7 @@ class ModelRegistry:
                     rows.append(json.loads(line))
                 except json.JSONDecodeError:
                     continue
+        ModelRegistry._JSONL_CACHE[path] = (cache_key, rows)
         return rows
 
     @staticmethod

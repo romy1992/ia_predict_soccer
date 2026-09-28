@@ -120,7 +120,7 @@ class TestDashboardService(unittest.TestCase):
             away="Roma",
         )
         service._fetch_db_match_by_fixture = lambda fixture_id: None
-        service._fetch_api_events = lambda fixture_id: [
+        service._fetch_api_events = lambda fixture_id, long_ttl=False: [
             {
                 "time": {"elapsed": 22, "extra": None},
                 "team": {"name": "Inter"},
@@ -155,7 +155,7 @@ class TestDashboardService(unittest.TestCase):
                 }
             ],
         }
-        service._predict_fixture = lambda fixture_id, markets, db_match=None, status=None, allow_compute=True: {
+        service._predict_fixture = lambda fixture_id, markets, db_match=None, status=None, allow_compute=True, preloaded_snapshots=None: {
             "under_over_2_5": {
                 "prediction": 1,
                 "probability": 0.72,
@@ -205,9 +205,9 @@ class TestDashboardService(unittest.TestCase):
             Statistics(id_statistics_fk=str(uuid.uuid4()), statistics_team_id=20, score_ft=0),
         ]
         service._fetch_db_match_by_fixture = lambda fixture_id: db_match
-        service._fetch_api_events = lambda fixture_id: []
+        service._fetch_api_events = lambda fixture_id, long_ttl=False: []
         service._fetch_api_odds = lambda fixture_id: None
-        service._predict_fixture = lambda fixture_id, markets, db_match=None, status=None, allow_compute=True: {
+        service._predict_fixture = lambda fixture_id, markets, db_match=None, status=None, allow_compute=True, preloaded_snapshots=None: {
             "h2h": {"prediction": 1, "probability": 0.72, "model_name": "logistic", "run_id": "run-1"}
         }
 

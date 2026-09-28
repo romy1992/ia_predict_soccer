@@ -48,9 +48,37 @@ import {
   writeDayPredictionsJob,
 } from "./features/dashboard/dayPredictionsJobStorage";
 import MatchDetailPanel from "./features/matches/components/MatchDetailPanel";
+import OracleMatchDetailPage from "./features/oracle/OracleMatchDetailPage";
+import Modal from "./features/shared/Modal";
 import { filterRowByMarket, todayIso } from "./features/shared/formatters";
+import { MENU_ITEMS } from "./features/shared/menu";
+
+const VALID_PAGES = new Set(MENU_ITEMS.map((item) => item.id));
+
+function _pageFromUrl() {
+  const page = new URLSearchParams(window.location.search).get("page");
+  return page && VALID_PAGES.has(page) ? page : "dashboard";
+}
+
 export default function App() {
-  const [activePage, setActivePage] = useState("dashboard");
+  // Letto dalla query string (`?page=...`) invece di un fisso "dashboard":
+  // senza, un refresh (F5) su qualunque pagina diversa dalla Dashboard
+  // riportava sempre li', perche' `activePage` era un puro stato React
+  // (nessun routing/URL), azzerato ad ogni remount della SPA.
+  const [activePage, setActivePage] = useState(_pageFromUrl);
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("page") === activePage || (!params.get("page") && activePage === "dashboard")) {
+      return;
+    }
+    if (activePage === "dashboard") {
+      params.delete("page");
+    } else {
+      params.set("page", activePage);
+    }
+    const query = params.toString();
+    window.history.replaceState(null, "", query ? `?${query}` : window.location.pathname);
+  }, [activePage]);
   const [selectedDate, setSelectedDate] = useState(todayIso());
   const [availableDates, setAvailableDates] = useState([todayIso()]);
   const [searchInput, setSearchInput] = useState("");
@@ -106,6 +134,21 @@ export default function App() {
   // insieme, quindi e' una mappa e non un singolo id come `jobRunningId`
   // (che resta per il solo stato "sto inviando la POST").
   const [jobRunRows, setJobRunRows] = useState({});
+  // "Aggiorna tutto manualmente" (Impostazioni, 2026-09-26): lancia in
+  // SEQUENZA (non in parallelo) i job con `run_all_included=True`,
+  // nell'ordine di `run_all_priority` (single source of truth lato
+  // backend, vedi `src/jobs/job_settings.py`), riusando ESATTAMENTE lo
+  // stesso meccanismo per-job di "Esegui ora" (nessun endpoint nuovo).
+  // Orchestrato SOLO dal browser (scelta esplicita dell'operatore): se la
+  // pagina viene chiusa/ricaricata a meta' giro, il job in corso in quel
+  // momento finisce comunque sul server, ma i successivi in coda NON
+  // partono piu' - nessuno stato persistito lato server per riprenderli.
+  const [batchRun, setBatchRun] = useState({ active: false, total: 0, completed: 0, currentJobId: null, message: "" });
+  const jobRunRowsRef = useRef(jobRunRows);
+  useEffect(() => {
+    jobRunRowsRef.current = jobRunRows;
+  }, [jobRunRows]);
+  const batchCancelRef = useRef(false);
   const [quotaPaused, setQuotaPaused] = useState(false);
   const [quotaPausedSince, setQuotaPausedSince] = useState(null);
   const [apiQuota, setApiQuota] = useState(null);
@@ -123,7 +166,6 @@ export default function App() {
   const [dayPredictionsJob, setDayPredictionsJob] = useState(() => jobSnapshotFromStorage(readDayPredictionsJob()));
   const handledDayPredictionsJobRef = useRef(null);
   const [oracleFixtureId, setOracleFixtureId] = useState(null);
-  const [previousPage, setPreviousPage] = useState("dashboard");
   const marketsQuery = useMemo(() => {
     if (selectedMarket === "all") {
       return undefined;
@@ -557,6 +599,68 @@ export default function App() {
       setJobRunningId(null);
     }
   }, []);
+  const runAllJobsManuallyHandler = useCallback(async () => {
+    if (batchRun.active) {
+      return;
+    }
+    // L'interruttore acceso/spento di ogni riga decide SOLO se lo
+    // scheduler lo esegue in automatico in background - non filtra qui,
+    // stesso principio gia' in vigore per "Esegui ora" sul singolo job
+    // (bottone sempre presente/cliccabile, indipendente dall'interruttore).
+    // Un'azione manuale non deve dipendere da un'impostazione pensata per
+    // l'automatico: altrimenti con tutti i job disattivati (es. per
+    // risparmiare quota mentre non si e' operativi) "Aggiorna tutto
+    // manualmente" risulterebbe silenziosamente inutilizzabile.
+    const queue = jobSettingsRows
+      .filter((job) => job.run_all_included)
+      .sort((a, b) => (a.run_all_priority ?? 999) - (b.run_all_priority ?? 999));
+    if (queue.length === 0) {
+      setBatchRun({
+        active: false,
+        total: 0,
+        completed: 0,
+        currentJobId: null,
+        message: "Nessun job disponibile per questo giro.",
+      });
+      return;
+    }
+    batchCancelRef.current = false;
+    setBatchRun({ active: true, total: queue.length, completed: 0, currentJobId: null, message: "" });
+    for (const job of queue) {
+      if (batchCancelRef.current) {
+        break;
+      }
+      setBatchRun((prev) => ({ ...prev, currentJobId: job.job_id }));
+      const already = jobRunRowsRef.current[job.job_id];
+      if (already && ["queued", "running"].includes(already.status)) {
+        // Gia' avviato altrove (es. un click manuale su "Esegui ora"
+        // fatto prima di questo giro): non lo rilancia ne' lo aspetta,
+        // passa oltre subito - evita di duplicare lo stesso job.
+        setBatchRun((prev) => ({ ...prev, completed: prev.completed + 1 }));
+        continue;
+      }
+      await runJobNowHandler(job.job_id);
+      // Aspetta che QUESTO job raggiunga uno stato finale prima di
+      // lanciare il successivo (sequenza, MAI in parallelo) - legge lo
+      // stesso `jobRunRows` gia' aggiornato dal polling unico esistente,
+      // nessuna seconda chiamata /jobs/{id} duplicata qui.
+      while (!batchCancelRef.current) {
+        const row = jobRunRowsRef.current[job.job_id];
+        if (!row || ["success", "failed", "error"].includes(row.status)) {
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+      }
+      setBatchRun((prev) => ({ ...prev, completed: prev.completed + 1 }));
+    }
+    setBatchRun((prev) => ({ ...prev, active: false, currentJobId: null }));
+  }, [jobSettingsRows, runJobNowHandler, batchRun.active]);
+  const stopBatchHandler = useCallback(() => {
+    // Ferma solo la CODA (i job non ancora lanciati non partiranno piu'):
+    // il job eventualmente gia' in corso in questo momento e' stato
+    // dispatchato al server e finisce comunque, non e' cancellabile da qui.
+    batchCancelRef.current = true;
+  }, []);
   // Chiave STABILE dei job da pollare: cambia solo quando un job parte o
   // finisce, non ad ogni aggiornamento di avanzamento. Serve come dipendenza
   // dell'effect sotto: usare direttamente `jobRunRows` creerebbe un ciclo
@@ -697,6 +801,10 @@ export default function App() {
     },
     [loadMatchDetail]
   );
+  const closeMatchDetail = useCallback(() => {
+    setSelectedFixtureId(null);
+    setMatchDetail(null);
+  }, []);
   const recomputePredictions = useCallback(
     async (fixtureId) => {
       if (!fixtureId) {
@@ -802,17 +910,12 @@ export default function App() {
     loadDashboardData("full", { forceRefresh: true }).catch(() => {});
     setDayPredictionsJobId(null);
   }, [dayPredictionsJob, loadDashboardData]);
-  const openOracleDetail = useCallback(
-    (fixtureId) => {
-      setPreviousPage((current) => (activePage === "oracle-detail" ? current : activePage));
-      setOracleFixtureId(fixtureId);
-      setActivePage("oracle-detail");
-    },
-    [activePage]
-  );
+  const openOracleDetail = useCallback((fixtureId) => {
+    setOracleFixtureId(fixtureId);
+  }, []);
   const closeOracleDetail = useCallback(() => {
-    setActivePage(previousPage || "dashboard");
-  }, [previousPage]);
+    setOracleFixtureId(null);
+  }, []);
   useEffect(() => {
     if (initialLoadStartedRef.current) {
       return;
@@ -989,10 +1092,6 @@ export default function App() {
       onChangeSelectedMarket: setSelectedMarket,
       isFilterLoading,
     },
-    oracleDetail: {
-      fixtureId: oracleFixtureId,
-      onBack: closeOracleDetail,
-    },
     predictions: {
       markets,
       manualFixtureId,
@@ -1082,6 +1181,9 @@ export default function App() {
       runFeedback: jobRunFeedback,
       runRows: jobRunRows,
       onRunJob: runJobNowHandler,
+      batchRun,
+      onRunAllJobs: runAllJobsManuallyHandler,
+      onStopBatch: stopBatchHandler,
       quota: apiQuota,
       quotaLoading: apiQuotaLoading,
       quotaError: apiQuotaError,
@@ -1127,21 +1229,23 @@ export default function App() {
         {(isInitialLoading || isLoading) && <div className="info-box">Caricamento dashboard...</div>}
         <AppRouter activePage={activePage} props={pageProps} />
         {showMatchFilters && (
-          <MatchDetailPanel
-            selectedFixtureId={selectedFixtureId}
-            matchDetail={matchDetail}
-            matchDetailLoading={matchDetailLoading}
-            matchDetailError={matchDetailError}
-            onOpenOracleDetail={openOracleDetail}
-            onClose={() => {
-              setSelectedFixtureId(null);
-              setMatchDetail(null);
-            }}
-            onRecomputePredictions={recomputePredictions}
-            recomputingPredictions={recomputingPredictions}
-            recomputePredictionsError={recomputePredictionsError}
-          />
+          <Modal isOpen={!!selectedFixtureId} onClose={closeMatchDetail}>
+            <MatchDetailPanel
+              selectedFixtureId={selectedFixtureId}
+              matchDetail={matchDetail}
+              matchDetailLoading={matchDetailLoading}
+              matchDetailError={matchDetailError}
+              onOpenOracleDetail={openOracleDetail}
+              onClose={closeMatchDetail}
+              onRecomputePredictions={recomputePredictions}
+              recomputingPredictions={recomputingPredictions}
+              recomputePredictionsError={recomputePredictionsError}
+            />
+          </Modal>
         )}
+        <Modal isOpen={!!oracleFixtureId} onClose={closeOracleDetail}>
+          <OracleMatchDetailPage fixtureId={oracleFixtureId} onBack={closeOracleDetail} />
+        </Modal>
       </main>
     </div>
   );

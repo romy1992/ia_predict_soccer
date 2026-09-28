@@ -41,6 +41,14 @@ from src.service_ia.utility.request_api import base_api_statistics
 FINAL_STATUSES = {"FT", "AET", "PEN", "ABD", "CANC", "PST", "WO"}
 LIVE_STATUSES = {"1H", "HT", "2H", "ET", "BT", "P", "LIVE", "INT"}
 
+# Quanto a lungo, dopo il calcio d'inizio, una partita con stato ancora non
+# finale puo' ancora essere considerata "in corso" per DEDUZIONE dall'orario
+# (vedi `_classify_phase`). 90' + intervallo + recuperi + eventuali
+# supplementari e rigori stanno dentro ~3h; 4h lasciano margine per un
+# ritardo del fischio d'inizio o una lunga interruzione. Oltre, una riga non
+# aggiornata e' un dato vecchio, non una partita che sta giocando.
+_MAX_LIVE_WINDOW = timedelta(hours=4)
+
 # MATCH-01: priorita' per scegliere la decision card "migliore" da mostrare
 # come badge sintetico in tabella (Match Center) tra quelle gia' calcolate
 # da `_build_decision_cards` — nessuna nuova logica di decisione, solo una
@@ -95,6 +103,13 @@ class DashboardDayData:
 class DashboardService:
     _api_cache: dict[str, tuple[datetime, Any]] = {}
     _api_cache_ttl_seconds = 60
+    # TTL usato SOLO per dati di una partita GIA' CONCLUSA (oggi: gli eventi,
+    # unico pezzo di `get_match_detail` senza fallback DB - vedi
+    # `_fetch_api_events`): una partita finita non produce piu' nuovi eventi,
+    # quindi non ha senso ricontattare l'API ogni 60s per lo stesso identico
+    # risultato - 24h e' comunque finito (mai una cache "per sempre" che
+    # richiederebbe un restart per essere invalidata).
+    _FINISHED_MATCH_CACHE_TTL_SECONDS = 24 * 3600
     _api_cache_locks: dict[str, threading.Lock] = {}
     _api_cache_locks_guard = threading.Lock()
     # Fix performance (2026-09-09): _fetch_api_day_fixtures interrogava i
@@ -137,18 +152,46 @@ class DashboardService:
 
     @staticmethod
     def _classify_phase(status: Optional[str], dt_value: Optional[datetime]) -> str:
+        """Fase mostrata in Dashboard: `finished` / `live` / `to_play` /
+        `unknown`.
+
+        Bug fix 2026-09-15: prima, uno stato NON finale e NON live con calcio
+        d'inizio nel passato ricadeva su `return "live"` a qualunque distanza
+        di tempo - una riga rimasta a `NS` risultava quindi "In diretta" per
+        sempre. E' esattamente quello che si vedeva sulle righe duplicate
+        lasciate indietro da `download_import_matches` (fixture 1550118
+        Como-Parma del 2026-09-14, mostrata "In diretta" il giorno dopo):
+        la fase veniva DEDOTTA dall'orario invece di ammettere che il dato
+        non era aggiornato.
+
+        Ora "live" per deduzione vale solo entro `_MAX_LIVE_WINDOW` dal
+        calcio d'inizio, perche' quel caso e' reale e frequente: il job di
+        sync gira ogni 30 minuti, quindi una partita appena iniziata puo'
+        legittimamente essere ancora `NS` a DB. Oltre quella finestra la
+        partita non puo' essere in corso: la riga e' semplicemente vecchia,
+        e la fase diventa `unknown` (etichetta "Da aggiornare" lato
+        frontend) invece di mentire in un senso o nell'altro - non e' "in
+        diretta", ma non e' nemmeno "finita" perche' il risultato non ce
+        l'abbiamo.
+        """
         status = (status or "").upper()
         if status in FINAL_STATUSES:
             return "finished"
         if status in LIVE_STATUSES:
             return "live"
 
+        if not dt_value or not dt_value.tzinfo:
+            # Senza un orario confrontabile non c'e' nulla da dedurre.
+            # `date_match` e' sempre una ISO con offset "+00:00", quindi qui
+            # si arriva solo con dati anomali.
+            return "to_play" if status == "NS" else "unknown"
+
         now_utc = datetime.now(timezone.utc)
-        if dt_value and dt_value.tzinfo:
-            return "to_play" if dt_value > now_utc else "live"
-        if status == "NS":
+        if dt_value > now_utc:
             return "to_play"
-        return "live"
+        if dt_value > now_utc - _MAX_LIVE_WINDOW:
+            return "live"
+        return "unknown"
 
     @staticmethod
     def _normalize_market_request(markets: Optional[list[str]]) -> Optional[list[str]]:
@@ -160,15 +203,51 @@ class DashboardService:
         allowed = FilterMarketService.SUPPORTED_MARKETS | FilterMarketService.LINE_MARKETS
         return [m for m in normalized if m in allowed]
 
+    # Colonna Odds richiesta per calcolare ciascun mercato a linea
+    # configurabile: e' quella del mercato "genitore" (stessa convenzione
+    # di `ODDS_MARKET` in cards_market.py/corners_market.py, ridichiarata
+    # qui per evitare l'import circolare gia' documentato li'). Per i
+    # mercati "base" (SUPPORTED_MARKETS) la colonna Odds coincide col nome
+    # del mercato stesso (vedi gia' `_aggregate_odds_from_db`).
+    _LINE_MARKET_ODDS_COLUMN = {
+        "corners_line_8_5": "corners",
+        "corners_line_9_5": "corners",
+        "corners_line_10_5": "corners",
+        "corners_line_11_5": "corners",
+        "cards_line_3_5": "cards",
+        "cards_line_4_5": "cards",
+        "cards_line_5_5": "cards",
+        "cards_line_6_5": "cards",
+    }
+
+    def _markets_without_odds(
+        self, db_match: Optional[Match], markets: list[str], predictions: dict[str, Any]
+    ) -> list[str]:
+        """Mercati SENZA quote disponibili per questa fixture (2026-09-28,
+        segnalato dall'operatore: badge "In coda" per Cards su campionati
+        minori che il provider quote non copre affatto per quel mercato -
+        MAI diventera' calcolabile, non e' un "non ancora" ma un "mai").
+        Copre solo l'assenza di ODDS (la causa confermata): un mercato
+        senza previsione per altri motivi (es. statistiche mancanti)
+        resta "in coda" come prima - nessuna generalizzazione oltre il
+        caso verificato."""
+        if not db_match or not db_match.odds:
+            return []
+        missing = [m for m in markets if m not in predictions]
+        if not missing:
+            return []
+        odds_obj = db_match.odds[0].to_dict()
+        return [m for m in missing if not odds_obj.get(self._LINE_MARKET_ODDS_COLUMN.get(m, m))]
+
     @classmethod
-    def _cache_get(cls, key: str) -> Optional[Any]:
+    def _cache_get(cls, key: str, ttl_seconds: Optional[int] = None) -> Optional[Any]:
         item = cls._api_cache.get(key)
         if not item:
             return None
 
         ts, payload = item
         age = (datetime.now(timezone.utc) - ts).total_seconds()
-        if age > cls._api_cache_ttl_seconds:
+        if age > (ttl_seconds if ttl_seconds is not None else cls._api_cache_ttl_seconds):
             return None
         return payload
 
@@ -318,20 +397,33 @@ class DashboardService:
         if not self._is_within_dashboard_api_window():
             return []
 
-        leagues = self.cfg.leagues or []
+        # Fix consumo quota 2026-09-15 (stesso difetto corretto in
+        # `LiveDataService.fetch_live_fixtures`): qui si facevano
+        # `len(cfg.leagues)` chiamate - 18 - a OGNI refresh della preview
+        # live, per ottenere esattamente lo stesso risultato di UNA chiamata
+        # `fixtures?live=all`, che ritorna tutte le partite in corso e si
+        # filtra per lega in memoria. Il parallelismo con ThreadPoolExecutor
+        # rendeva il giro veloce, ma la quota consumata e' per CHIAMATA, non
+        # per secondo: con il polling del frontend erano centinaia di
+        # chiamate/ora buttate, e a quota esaurita tutti gli altri import
+        # tornano vuoti in silenzio.
+        leagues = {int(item) for item in (self.cfg.leagues or [])}
 
-        def _fetch_one_league(league: int) -> list[dict[str, Any]]:
-            try:
-                return base_api_statistics(path="fixtures", params={"live": "all", "league": league}) or []
-            except Exception:
-                return []
+        try:
+            payload = base_api_statistics(path="fixtures", params={"live": "all"}) or []
+        except Exception:
+            payload = []
 
         fixtures: list[dict[str, Any]] = []
-        if leagues:
-            with ThreadPoolExecutor(max_workers=min(self._LEAGUE_FETCH_MAX_WORKERS, len(leagues))) as executor:
-                for payload in executor.map(_fetch_one_league, leagues):
-                    if payload:
-                        fixtures.extend(payload)
+        for fixture in payload:
+            league_id = (fixture.get("league") or {}).get("id")
+            try:
+                league_id = int(league_id)
+            except (TypeError, ValueError):
+                continue
+            if leagues and league_id not in leagues:
+                continue
+            fixtures.append(fixture)
 
         deduped = self._dedupe_api_fixtures(fixtures)
         self._cache_set(cache_key, deduped)
@@ -354,9 +446,10 @@ class DashboardService:
         self._cache_set(cache_key, item)
         return item
 
-    def _fetch_api_events(self, fixture_id: int) -> list[dict[str, Any]]:
+    def _fetch_api_events(self, fixture_id: int, long_ttl: bool = False) -> list[dict[str, Any]]:
         cache_key = f"events:{fixture_id}"
-        cached = self._cache_get(cache_key)
+        ttl_seconds = self._FINISHED_MATCH_CACHE_TTL_SECONDS if long_ttl else None
+        cached = self._cache_get(cache_key, ttl_seconds=ttl_seconds)
         if cached is not None:
             return cached
         if is_quota_exhausted_today():
@@ -1261,6 +1354,11 @@ class DashboardService:
             "score": self._score_from_api(fixture),
             "actual_totals": self._extract_actual_totals(db_match),
             "predictions": {},
+            # Mercati registrati ma SENZA quote per questa fixture (2026-09-28):
+            # mai calcolabili, il frontend li esclude dal badge "In coda"
+            # (vedi `_markets_without_odds`) - default vuoto finche' non
+            # calcolato, stesso pattern di `predictions`.
+            "markets_unavailable": [],
             # MATCH-01: badge decision/edge/EV per la vista lista, vedi
             # `_decisions_for_row` - default vuoto finche' non calcolato.
             "decision_cards": [],
@@ -1280,6 +1378,7 @@ class DashboardService:
                 stat_home, stat_away, has_full_stats = self._resolve_final_stat_dicts(db_match)
                 self._annotate_prediction_correctness(predictions, stat_home, stat_away, has_full_stats)
             row["predictions"] = predictions
+            row["markets_unavailable"] = self._markets_without_odds(db_match, markets, predictions)
             row["decision_cards"], row["best_decision"] = self._decisions_for_row(
                 row=row, predictions=predictions, db_match=db_match
             )
@@ -1435,6 +1534,11 @@ class DashboardService:
             "score": self._extract_scores(match),
             "actual_totals": self._extract_actual_totals(match),
             "predictions": {},
+            # Mercati registrati ma SENZA quote per questa fixture (2026-09-28):
+            # mai calcolabili, il frontend li esclude dal badge "In coda"
+            # (vedi `_markets_without_odds`) - default vuoto finche' non
+            # calcolato, stesso pattern di `predictions`.
+            "markets_unavailable": [],
             # MATCH-01: badge decision/edge/EV per la vista lista, vedi
             # `_decisions_for_row` - default vuoto finche' non calcolato.
             "decision_cards": [],
@@ -1454,6 +1558,7 @@ class DashboardService:
                 stat_home, stat_away, has_full_stats = self._resolve_final_stat_dicts(match)
                 self._annotate_prediction_correctness(predictions, stat_home, stat_away, has_full_stats)
             row["predictions"] = predictions
+            row["markets_unavailable"] = self._markets_without_odds(match, markets, predictions)
             # Riga gia' dal DB locale: `match.odds` e' gia' caricato via
             # `selectinload` dalla query unica di `_fetch_matches` (nessuna
             # nuova query/fetch per calcolare il badge decision).
@@ -1696,16 +1801,23 @@ class DashboardService:
         live_count = 0
         to_play_count = 0
         finished_count = 0
+        unknown_count = 0
         with_prediction_count = 0
 
         model_markets = day.model_markets
         for row in day.rows:
+            # `unknown` ha un ramo esplicito (2026-09-15, vedi
+            # `_classify_phase`): con il vecchio `else` catch-all una riga
+            # non aggiornata veniva conteggiata tra le "finite", cioe' il
+            # contatore affermava che avevamo un risultato che non abbiamo.
             if row["phase"] == "live":
                 live_count += 1
             elif row["phase"] == "to_play":
                 to_play_count += 1
-            else:
+            elif row["phase"] == "finished":
                 finished_count += 1
+            else:
+                unknown_count += 1
 
             if row.get("predictions"):
                 with_prediction_count += 1
@@ -1721,6 +1833,7 @@ class DashboardService:
                 "live": live_count,
                 "to_play": to_play_count,
                 "finished": finished_count,
+                "unknown": unknown_count,
                 "with_prediction": with_prediction_count,
             },
             "model_markets": model_markets,
@@ -1840,8 +1953,20 @@ class DashboardService:
     ) -> dict[str, Any]:
         model_markets = self._normalize_market_request(markets) or self.registry.list_active_markets()
 
-        api_fixture = self._fetch_api_fixture_detail(fixture_id)
         db_match = self._fetch_db_match_by_fixture(fixture_id)
+        phase_hint = (
+            self._classify_phase(db_match.status, self._parse_datetime(db_match.date_match))
+            if db_match is not None
+            else None
+        )
+        # Il DB locale e' gia' alimentato dai job schedulati (scheduler.py) e
+        # per una partita finita o non ancora iniziata i dati non possono
+        # essere cambiati dall'ultimo refresh - chiamare comunque l'API
+        # esterna ad ogni apertura del dettaglio sprecava latenza di rete e
+        # quota per nulla. La API resta l'unica fonte per fixture mai viste
+        # dal DB o per partite LIVE (punteggio/minuto cambiano in tempo reale).
+        needs_live_fixture = db_match is None or phase_hint == "live"
+        api_fixture = self._fetch_api_fixture_detail(fixture_id) if needs_live_fixture else None
 
         if api_fixture:
             fixture_row = self._serialize_api_fixture(api_fixture, with_predictions=False, markets=[])
@@ -1855,12 +1980,23 @@ class DashboardService:
                 "bookmaker_baseline": {"markets": {}, "generated": False},
                 "decision_cards": [],
                 "predictions": {},
+                "markets_unavailable": [],
                 "model_markets": model_markets,
             }
 
+        # Carica in blocco (UNA query) gli snapshot gia' salvati per tutti i
+        # mercati di questa fixture, invece di lasciare che `_predict_fixture`
+        # -> `resolve_predictions` interroghi il DB mercato per mercato (12
+        # query sequenziali per il dettaglio, misurato ~14s sul DB remoto -
+        # stessa ottimizzazione gia' in uso da `get_day_matches`).
+        preloaded_snapshots = self._load_snapshot_map([fixture_id], markets=model_markets) if with_predictions else {}
         predictions = (
             self._predict_fixture(
-                fixture_id=fixture_id, markets=model_markets, db_match=db_match, status=fixture_row.get("status")
+                fixture_id=fixture_id,
+                markets=model_markets,
+                db_match=db_match,
+                status=fixture_row.get("status"),
+                preloaded_snapshots=preloaded_snapshots,
             )
             if with_predictions
             else {}
@@ -1869,14 +2005,22 @@ class DashboardService:
             stat_home, stat_away, has_full_stats = self._resolve_final_stat_dicts(db_match)
             self._annotate_prediction_correctness(predictions, stat_home, stat_away, has_full_stats)
         fixture_row["predictions"] = predictions
+        fixture_row["markets_unavailable"] = self._markets_without_odds(db_match, model_markets, predictions)
 
-        events = self._fetch_api_events(fixture_id)
+        events = self._fetch_api_events(fixture_id, long_ttl=fixture_row.get("phase") == "finished")
         timeline = self._serialize_events(events)
 
-        odds_payload = self._fetch_api_odds(fixture_id)
-        odds_summary = self._aggregate_odds_from_api(odds_payload)
-        if not odds_summary:
-            odds_summary = self._aggregate_odds_from_db(db_match)
+        # Stesso principio "DB-first" delle righe sopra: per una partita non
+        # live le quote gia' salvate dai job schedulati sono sufficienti,
+        # l'API viene interpellata solo se serve un dato live o se il DB non
+        # ne ha ancora salvate.
+        odds_summary = {} if needs_live_fixture else self._aggregate_odds_from_db(db_match)
+        odds_payload = None
+        if needs_live_fixture or not odds_summary:
+            odds_payload = self._fetch_api_odds(fixture_id)
+            api_odds_summary = self._aggregate_odds_from_api(odds_payload)
+            if api_odds_summary:
+                odds_summary = api_odds_summary
 
         bookmaker_baseline = build_fixture_baseline(odds_summary)
 
