@@ -1354,6 +1354,11 @@ class DashboardService:
             "score": self._score_from_api(fixture),
             "actual_totals": self._extract_actual_totals(db_match),
             "predictions": {},
+            # Mercati registrati ma SENZA quote per questa fixture (2026-09-28):
+            # mai calcolabili, il frontend li esclude dal badge "In coda"
+            # (vedi `_markets_without_odds`) - default vuoto finche' non
+            # calcolato, stesso pattern di `predictions`.
+            "markets_unavailable": [],
             # MATCH-01: badge decision/edge/EV per la vista lista, vedi
             # `_decisions_for_row` - default vuoto finche' non calcolato.
             "decision_cards": [],
@@ -1373,6 +1378,7 @@ class DashboardService:
                 stat_home, stat_away, has_full_stats = self._resolve_final_stat_dicts(db_match)
                 self._annotate_prediction_correctness(predictions, stat_home, stat_away, has_full_stats)
             row["predictions"] = predictions
+            row["markets_unavailable"] = self._markets_without_odds(db_match, markets, predictions)
             row["decision_cards"], row["best_decision"] = self._decisions_for_row(
                 row=row, predictions=predictions, db_match=db_match
             )
@@ -1528,6 +1534,11 @@ class DashboardService:
             "score": self._extract_scores(match),
             "actual_totals": self._extract_actual_totals(match),
             "predictions": {},
+            # Mercati registrati ma SENZA quote per questa fixture (2026-09-28):
+            # mai calcolabili, il frontend li esclude dal badge "In coda"
+            # (vedi `_markets_without_odds`) - default vuoto finche' non
+            # calcolato, stesso pattern di `predictions`.
+            "markets_unavailable": [],
             # MATCH-01: badge decision/edge/EV per la vista lista, vedi
             # `_decisions_for_row` - default vuoto finche' non calcolato.
             "decision_cards": [],
@@ -1547,6 +1558,7 @@ class DashboardService:
                 stat_home, stat_away, has_full_stats = self._resolve_final_stat_dicts(match)
                 self._annotate_prediction_correctness(predictions, stat_home, stat_away, has_full_stats)
             row["predictions"] = predictions
+            row["markets_unavailable"] = self._markets_without_odds(match, markets, predictions)
             # Riga gia' dal DB locale: `match.odds` e' gia' caricato via
             # `selectinload` dalla query unica di `_fetch_matches` (nessuna
             # nuova query/fetch per calcolare il badge decision).
@@ -1968,6 +1980,7 @@ class DashboardService:
                 "bookmaker_baseline": {"markets": {}, "generated": False},
                 "decision_cards": [],
                 "predictions": {},
+                "markets_unavailable": [],
                 "model_markets": model_markets,
             }
 
@@ -1992,6 +2005,7 @@ class DashboardService:
             stat_home, stat_away, has_full_stats = self._resolve_final_stat_dicts(db_match)
             self._annotate_prediction_correctness(predictions, stat_home, stat_away, has_full_stats)
         fixture_row["predictions"] = predictions
+        fixture_row["markets_unavailable"] = self._markets_without_odds(db_match, model_markets, predictions)
 
         events = self._fetch_api_events(fixture_id, long_ttl=fixture_row.get("phase") == "finished")
         timeline = self._serialize_events(events)

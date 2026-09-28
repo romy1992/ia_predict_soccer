@@ -12,7 +12,15 @@ export default function PredictionBadges({ row, modelMarkets }) {
   // supportato? errore? in coda?) - qui rendiamo visibile la differenza
   // tra "nessun mercato disponibile per questa fixture" e "mercato X non
   // ancora coperto dalla banca dati".
-  const pendingMarkets = (modelMarkets || []).filter((marketKey) => !(marketKey in predictions));
+  // Mercati SENZA quote per questa fixture (2026-09-28, es. Cards su
+  // campionati minori che il provider non copre per quel mercato): mai
+  // calcolabili, quindi esclusi anche dal badge "In coda" - restare li'
+  // per sempre sarebbe un "in coda" bugiardo (non e' in coda, non
+  // partira' mai). Vedi `DashboardService._markets_without_odds`.
+  const unavailableMarkets = new Set(row?.markets_unavailable || []);
+  const pendingMarkets = (modelMarkets || []).filter(
+    (marketKey) => !(marketKey in predictions) && !unavailableMarkets.has(marketKey)
+  );
 
   if (entries.length === 0 && pendingMarkets.length === 0) {
     return <span className="empty-state">Nessuna previsione</span>;
