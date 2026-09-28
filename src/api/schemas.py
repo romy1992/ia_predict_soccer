@@ -191,6 +191,20 @@ class JobSettingsUpdateRequest(BaseModel):
     updates: dict[str, bool] = Field(..., description="Mappa job_id -> enabled (aggiornamento parziale).")
 
 
+class IsolatedMarketsResponse(BaseModel):
+    """Mercati esclusi dal default del MIX multi-mercato delle schedine
+    (`market_isolation_policy.get_isolated_markets`) e mercati attivi
+    disponibili (`ModelRegistry.list_active_markets`), cosi' il frontend
+    puo' offrire un multi-select senza una seconda chiamata."""
+
+    isolated_markets: list[str]
+    active_markets: list[str]
+
+
+class IsolatedMarketsUpdateRequest(BaseModel):
+    markets: list[str] = Field(..., description="Sostituisce INTERAMENTE la lista dei mercati isolati (mai un merge parziale).")
+
+
 class JobScheduleUpdateRequest(BaseModel):
     """Body di `PUT /settings/jobs/{job_id}/schedule`: le chiavi accettate
     dipendono dallo `schedule_kind` del job (vedi `JobSettingRow`) - un job

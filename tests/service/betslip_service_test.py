@@ -168,6 +168,31 @@ class TestBetslipService(unittest.TestCase):
             self.assertTrue(rows, label)
             self.assertTrue(all(slip.situation == label for slip in rows))
 
+    def test_exploration_excludes_isolated_markets_by_default(self):
+        service, pick_pool_service = self._service_with_pool([])
+        with mock.patch(
+            "src.oracle.betslip.betslip_service.ModelRegistry"
+        ) as registry_cls, mock.patch(
+            "src.oracle.betslip.betslip_service.get_isolated_markets",
+            return_value=frozenset({"cards"}),
+        ):
+            registry_cls.return_value.list_active_markets.return_value = ["h2h", "cards", "goal_no_goal"]
+            service.generate_exploration_for_day(date(2026, 9, 28))
+
+        _, kwargs = pick_pool_service.candidates_for_day.call_args
+        self.assertEqual(sorted(kwargs["markets"]), ["goal_no_goal", "h2h"])
+
+    def test_exploration_respects_explicit_markets_even_if_isolated(self):
+        service, pick_pool_service = self._service_with_pool([])
+        with mock.patch(
+            "src.oracle.betslip.betslip_service.get_isolated_markets",
+            return_value=frozenset({"cards"}),
+        ):
+            service.generate_exploration_for_day(date(2026, 9, 28), markets=["cards"])
+
+        _, kwargs = pick_pool_service.candidates_for_day.call_args
+        self.assertEqual(kwargs["markets"], ["cards"])
+
     def test_exploration_caps_total_and_keeps_single_family_fallback(self):
         picks = [
             _pool_pick(

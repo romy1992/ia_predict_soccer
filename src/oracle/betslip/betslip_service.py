@@ -18,6 +18,7 @@ from src.oracle.betslip.betslip_builder import (
     generate_betslips,
 )
 from src.oracle.betslip.correlation_engine import DEFAULT_CORRELATION_RULESET, CorrelationRuleSet, candidates_from_pool_picks
+from src.oracle.betslip.market_isolation_policy import get_isolated_markets
 from src.oracle.betslip.pick_pool import (
     DEFAULT_PICK_POOL_POLICY,
     PickPoolPolicy,
@@ -26,6 +27,20 @@ from src.oracle.betslip.pick_pool import (
 )
 from src.oracle.betslip.pick_pool_service import PickPoolService
 from src.oracle.betslip.proposal_snapshot_service import BetslipProposalSnapshotService
+from src.service_ia.training.model_registry import ModelRegistry
+
+
+def _default_multi_market_markets() -> list[str]:
+    """Mercati usati dal MIX multi-mercato quando il chiamante non ne
+    specifica esplicitamente uno (`markets=None`): tutti i mercati attivi
+    (`ModelRegistry.list_active_markets`, che gia' esclude i mercati
+    ritirati come corners) MENO quelli "in osservazione"
+    (`market_isolation_policy`, es. cards dal 2026-09-28 - vedi docstring
+    del modulo). Un chiamante che passa `markets` esplicitamente (es. una
+    sezione mono-mercato che interroga proprio cards) NON passa da qui:
+    l'isolamento si applica solo al default, mai a una richiesta esplicita."""
+    isolated = get_isolated_markets()
+    return [market for market in ModelRegistry().list_active_markets() if market not in isolated]
 
 
 class BetslipService:
@@ -74,10 +89,18 @@ class BetslipService:
         max_pool_size: int = 14,
         max_slips_per_profile: int = 5,
     ) -> tuple[PickPoolResult, BetslipGenerationResult]:
-        """Genera tre coorti separate senza promuovere quelle esplorative."""
+        """Genera tre coorti separate senza promuovere quelle esplorative.
+
+        `markets=None` (nessuna richiesta esplicita del chiamante) usa il
+        default del MIX multi-mercato: tutti i mercati attivi MENO quelli
+        "in osservazione" (`_default_multi_market_markets`) - mai i mercati
+        isolati mescolati silenziosamente nelle schedine multi-mercato. Un
+        `markets` esplicito (es. una richiesta mono-mercato su cards) resta
+        rispettato COSI' COM'E', isolamento o meno."""
+        effective_markets = markets if markets is not None else _default_multi_market_markets()
         candidates = self.pick_pool_service.candidates_for_day(
             target_date=target_date,
-            markets=markets,
+            markets=effective_markets,
         )
         pool_result = build_pick_pool(candidates, policy=pool_policy)
         play = generate_betslips(
