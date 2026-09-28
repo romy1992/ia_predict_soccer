@@ -371,10 +371,17 @@ function BettingStatistics({ report, fallback, days, onChangeDays }) {
 
 function ShadowPortfolioTable({ portfolios }) {
   const rows = [
-    ["ALL", "Complessivo simulato"],
-    ["PLAY", "PLAY simulato"],
-    ["BORDERLINE", "BORDERLINE simulato"],
-    ["NO BET", "NO BET simulato"],
+    ["ALL", "Complessivo simulato", false],
+    ["PLAY", "PLAY simulato", false],
+    // Dettaglio per profilo (2026-09-28): AGGRESSIVE ammette combinazioni
+    // fino a 4 eventi con probabilità stimata più bassa (floor 0.08) - il
+    // suo rumore può trascinare giù la media PLAY sopra senza essere
+    // distinguibile. Righe indentate: dettaglio della riga PLAY, non un
+    // altro portafoglio a sé.
+    ["PLAY_SAFE_BALANCED", "↳ PLAY (SAFE + BALANCED)", true],
+    ["PLAY_AGGRESSIVE", "↳ PLAY (AGGRESSIVE)", true],
+    ["BORDERLINE", "BORDERLINE simulato", false],
+    ["NO BET", "NO BET simulato", false],
   ];
   return (
     <section className="shadow-portfolios">
@@ -383,9 +390,9 @@ function ShadowPortfolioTable({ portfolios }) {
       <div className="table-wrap">
         <table>
           <thead><tr><th>Portafoglio</th><th>Schedine</th><th>Vinte</th><th>Perse</th><th>Pending</th><th>VOID</th><th>Capitale</th><th>Stake</th><th>Ritorno</th><th>Profitto</th><th>ROI simulato</th></tr></thead>
-          <tbody>{rows.map(([key, label]) => {
+          <tbody>{rows.map(([key, label, isDetail]) => {
             const row = portfolios?.[key] || {};
-            return <tr key={key}><td>{label}</td><td>{row.total ?? 0}</td><td>{row.won ?? 0}</td><td>{row.lost ?? 0}</td><td>{row.pending ?? 0}</td><td>{row.void ?? 0}</td><td>{formatNumber(row.current_bankroll, 2)}</td><td>{formatNumber(row.stake, 2)}</td><td>{formatNumber(row.return, 2)}</td><td>{formatNumber(row.profit, 2)}</td><td>{formatPercent(row.roi)}</td></tr>;
+            return <tr key={key} className={isDetail ? "shadow-portfolio-detail-row" : undefined}><td>{label}</td><td>{row.total ?? 0}</td><td>{row.won ?? 0}</td><td>{row.lost ?? 0}</td><td>{row.pending ?? 0}</td><td>{row.void ?? 0}</td><td>{formatNumber(row.current_bankroll, 2)}</td><td>{formatNumber(row.stake, 2)}</td><td>{formatNumber(row.return, 2)}</td><td>{formatNumber(row.profit, 2)}</td><td>{formatPercent(row.roi)}</td></tr>;
           })}</tbody>
         </table>
       </div>
