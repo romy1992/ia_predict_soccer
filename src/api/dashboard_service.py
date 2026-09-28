@@ -203,6 +203,42 @@ class DashboardService:
         allowed = FilterMarketService.SUPPORTED_MARKETS | FilterMarketService.LINE_MARKETS
         return [m for m in normalized if m in allowed]
 
+    # Colonna Odds richiesta per calcolare ciascun mercato a linea
+    # configurabile: e' quella del mercato "genitore" (stessa convenzione
+    # di `ODDS_MARKET` in cards_market.py/corners_market.py, ridichiarata
+    # qui per evitare l'import circolare gia' documentato li'). Per i
+    # mercati "base" (SUPPORTED_MARKETS) la colonna Odds coincide col nome
+    # del mercato stesso (vedi gia' `_aggregate_odds_from_db`).
+    _LINE_MARKET_ODDS_COLUMN = {
+        "corners_line_8_5": "corners",
+        "corners_line_9_5": "corners",
+        "corners_line_10_5": "corners",
+        "corners_line_11_5": "corners",
+        "cards_line_3_5": "cards",
+        "cards_line_4_5": "cards",
+        "cards_line_5_5": "cards",
+        "cards_line_6_5": "cards",
+    }
+
+    def _markets_without_odds(
+        self, db_match: Optional[Match], markets: list[str], predictions: dict[str, Any]
+    ) -> list[str]:
+        """Mercati SENZA quote disponibili per questa fixture (2026-09-28,
+        segnalato dall'operatore: badge "In coda" per Cards su campionati
+        minori che il provider quote non copre affatto per quel mercato -
+        MAI diventera' calcolabile, non e' un "non ancora" ma un "mai").
+        Copre solo l'assenza di ODDS (la causa confermata): un mercato
+        senza previsione per altri motivi (es. statistiche mancanti)
+        resta "in coda" come prima - nessuna generalizzazione oltre il
+        caso verificato."""
+        if not db_match or not db_match.odds:
+            return []
+        missing = [m for m in markets if m not in predictions]
+        if not missing:
+            return []
+        odds_obj = db_match.odds[0].to_dict()
+        return [m for m in missing if not odds_obj.get(self._LINE_MARKET_ODDS_COLUMN.get(m, m))]
+
     @classmethod
     def _cache_get(cls, key: str, ttl_seconds: Optional[int] = None) -> Optional[Any]:
         item = cls._api_cache.get(key)

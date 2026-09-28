@@ -287,7 +287,14 @@ def markets() -> dict[str, list[str]]:
     # riorganizzazione di best_models/ - es. under_over_4_5), cosi' non
     # restano selezionabili in nessuno dei due punti.
     active_markets = set(ModelRegistry().list_active_markets())
-    values = sorted(m for m in FilterMarketService.SUPPORTED_MARKETS if m in active_markets)
+    # `LINE_MARKETS` (cards_line_X/corners_line_X, MARKET-05/06) e' un set
+    # SEPARATO da `SUPPORTED_MARKETS` - senza includerlo qui questi mercati
+    # non comparivano mai fra i filtri Dashboard ne' nel selettore "Crea
+    # previsione manuale", nonostante siano gli unici Cards con un modello
+    # davvero in production (bug segnalato 2026-09-28: badge "Cards
+    # Over/Under X.5" visibili in tabella ma assenti dai filtri Mercato).
+    all_markets = FilterMarketService.SUPPORTED_MARKETS | FilterMarketService.LINE_MARKETS
+    values = sorted(m for m in all_markets if m in active_markets)
     return {"markets": values}
 
 
