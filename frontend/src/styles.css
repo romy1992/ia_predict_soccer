@@ -1085,11 +1085,16 @@ th {
   margin-top: 0;
 }
 
-.betslip-date {
+.betslip-date,
+.betslip-market {
   display: grid;
   gap: 4px;
   color: #64779d;
   font-size: 12px;
+}
+
+.betslip-market select {
+  max-width: 220px;
 }
 
 .stake-simulator {
