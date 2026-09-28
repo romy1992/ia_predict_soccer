@@ -462,6 +462,14 @@ button:disabled {
   color: #166a39;
 }
 
+/* fase `unknown`: partita iniziata da oltre 4 ore ma senza stato finale a DB
+   (sync non arrivato). Grigio/ambra volutamente neutro: non deve sembrare ne'
+   una partita in corso (rosso) ne' un risultato acquisito (verde). */
+.badge-stale {
+  background: #f1eddf;
+  color: #7a5c17;
+}
+
 .tabs {
   display: flex;
   flex-wrap: wrap;
@@ -667,6 +675,31 @@ th {
 
 .detail-panel {
   margin-top: 16px;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(9, 23, 48, 0.55);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 32px 16px;
+  overflow-y: auto;
+  z-index: 1000;
+}
+
+.modal-content {
+  width: 100%;
+  max-width: 1100px;
+  max-height: calc(100vh - 64px);
+  overflow-y: auto;
+  border-radius: 12px;
+}
+
+.modal-content .detail-panel,
+.modal-content > .stack {
+  margin-top: 0;
 }
 
 .detail-head-meta {
@@ -1566,6 +1599,21 @@ th {
   flex-direction: column;
   gap: 10px;
   margin-top: 10px;
+}
+
+.settings-batch-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px;
+  margin-top: 8px;
+  border-radius: 10px;
+  background: #f0f4ff;
+  border: 1px solid #dbe4fb;
+}
+
+.settings-batch-progress .panel-header {
+  margin: 0;
 }
 
 .settings-job-row {

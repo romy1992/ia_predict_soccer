@@ -128,6 +128,21 @@ class AppConfig:
     # pre-kickoff configurata.
     official_capture_interval_minutes: int = 5
     official_capture_minutes_before_kickoff: int = 60
+    # Job "Aggiorna rating squadre" (2026-09-24, tabella `team_rating`):
+    # ricalcola in BACKGROUND lo stato corrente (EXP-01) per OGNI squadra
+    # rileggendo lo storico UNA volta sola, cosi' "Oracle Match Detail" legge
+    # sempre una riga gia' calcolata invece di rifare query+ricalcolo
+    # sull'intero storico ad ogni apertura. I rating cambiano solo quando
+    # una squadra gioca una nuova partita finale: intervallo moderato, non
+    # serve la freschezza al minuto dei job quote/punteggi.
+    team_rating_refresh_interval_minutes: int = 60
+    # Job "Aggiorna Model Consensus" (2026-09-24, tabella
+    # `model_consensus_snapshot`): stessa finestra di
+    # `prediction_snapshot_interval_minutes` (NS oggi->oggi+N giorni +
+    # piccola finestra di concluse recenti), ma per il consensus multi-
+    # esperto invece della sola predizione diretta - popola la cache PRIMA
+    # che qualcuno apra "Oracle Match Detail".
+    model_consensus_refresh_interval_minutes: int = 60
 
 
 def load_app_config() -> AppConfig:
@@ -157,6 +172,8 @@ def load_app_config() -> AppConfig:
     official_capture_minutes_before_kickoff = _int_env(
         "OFFICIAL_CAPTURE_MINUTES_BEFORE_KICKOFF", default=60
     )
+    team_rating_refresh_interval_minutes = _int_env("TEAM_RATING_REFRESH_INTERVAL_MINUTES", default=60)
+    model_consensus_refresh_interval_minutes = _int_env("MODEL_CONSENSUS_REFRESH_INTERVAL_MINUTES", default=60)
     database_url = os.environ.get("DATABASE_URL", DEFAULT_DATABASE_URL).strip()
     database_schema = os.environ.get("DATABASE_SCHEMA", DEFAULT_DATABASE_SCHEMA).strip() or DEFAULT_DATABASE_SCHEMA
 
@@ -181,5 +198,7 @@ def load_app_config() -> AppConfig:
         prediction_snapshot_interval_minutes=prediction_snapshot_interval_minutes,
         official_capture_interval_minutes=official_capture_interval_minutes,
         official_capture_minutes_before_kickoff=official_capture_minutes_before_kickoff,
+        team_rating_refresh_interval_minutes=team_rating_refresh_interval_minutes,
+        model_consensus_refresh_interval_minutes=model_consensus_refresh_interval_minutes,
     )
 

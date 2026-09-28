@@ -133,6 +133,25 @@ class JobOfficialCaptureRequest(BaseModel):
     async_run: bool = True
 
 
+class JobTeamRatingRefreshRequest(BaseModel):
+    """Bottone "Esegui ora" di Impostazioni per il job 'Aggiorna rating
+    squadre': stessa funzione del job schedulato omonimo
+    (`run_team_rating_refresh`). Non chiama alcun provider esterno, nessun
+    parametro di filtro (rilegge sempre l'intero storico partite concluse)."""
+
+    async_run: bool = True
+
+
+class JobModelConsensusRefreshRequest(BaseModel):
+    """Bottone "Esegui ora" di Impostazioni per il job 'Aggiorna Model
+    Consensus': stessa funzione del job schedulato omonimo
+    (`run_model_consensus_refresh`). Non chiama alcun provider esterno."""
+
+    days_ahead: Optional[int] = None
+    recently_finished_days: Optional[int] = None
+    async_run: bool = True
+
+
 class JobResponse(BaseModel):
     queued: bool
     message: str
@@ -174,6 +193,10 @@ class JobSettingRow(BaseModel):
     schedule_kind: str
     schedule: dict[str, int]
     schedule_is_default: bool = True
+    # Ordine/inclusione per "Aggiorna tutto manualmente" (Impostazioni):
+    # vedi `src/jobs/job_settings.py::JOB_DEFINITIONS` per il significato.
+    run_all_priority: int = 999
+    run_all_included: bool = True
 
 
 class JobSettingsResponse(BaseModel):

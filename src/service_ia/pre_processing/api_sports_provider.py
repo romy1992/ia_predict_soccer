@@ -31,6 +31,33 @@ class ApiSportsQuotaExceededError(RuntimeError):
     QUALSIASI lega/stagione/data, quota daily gia' esaurita dai test)."""
 
 
+class ApiSportsUnavailableError(RuntimeError):
+    """Sollevata quando i retry si esauriscono senza una risposta valida
+    (rate-limit al minuto persistente, 429/5xx ripetuti, errori di rete).
+
+    Bug fix 2026-09-15: PRIMA, esaurito `max_retries`, `request()` faceva
+    `return []` - cioe' restituiva ESATTAMENTE lo stesso valore che significa
+    "nessuna partita per questa lega/data". E' lo stesso difetto di fondo che
+    `ApiSportsQuotaExceededError` aveva risolto per la quota giornaliera, ma
+    lasciato aperto su tutti gli altri modi di fallire. Le conseguenze sono
+    peggiori di una semplice riga di log mancante:
+
+      - `download_import_matches` incrementava `fixtures_seen += len([])`,
+        chiudeva la lega senza errori e il job finiva `success` con
+        `failed=0`, `errors=[]`: nessuna traccia che un intero campionato
+        non fosse stato importato;
+      - `SettlementService` non trovava le partite da riconciliare e le
+        lasciava indietro;
+      - le partite mai aggiornate restavano a `NS` con il calcio d'inizio
+        nel passato, cioe' la riga che la Dashboard mostrava "In diretta".
+
+    Chi preferisce il comportamento tollerante (una lega che fallisce non
+    deve fermare il batch) la intercetta esplicitamente: e' quello che fa
+    `download_import_matches`, che la registra in `report['errors']` e
+    continua con le altre leghe - la differenza e' che ora il fallimento
+    resta SCRITTO da qualche parte invece di sparire."""
+
+
 class ApiSportsProvider:
     """Provider API-Sports con retry e gestione centralizzata del rate limit."""
 
@@ -65,7 +92,9 @@ class ApiSportsProvider:
             except requests.RequestException as exc:
                 logging.warning("API-Sports request error attempt=%s path=%s err=%s", attempt, path, exc)
                 if attempt >= self.config.max_retries:
-                    return []
+                    raise ApiSportsUnavailableError(
+                        f"API-Sports irraggiungibile su '{path}' dopo {attempt} tentativi: {exc}"
+                    ) from exc
                 time.sleep(self.config.retry_backoff_seconds * attempt)
                 continue
 
@@ -112,7 +141,10 @@ class ApiSportsProvider:
                     errors,
                 )
                 if attempt >= self.config.max_retries:
-                    return []
+                    raise ApiSportsUnavailableError(
+                        f"API-Sports rate-limit al minuto non rientrato su '{path}' "
+                        f"dopo {attempt} tentativi: {self._format_errors(errors)}"
+                    )
                 time.sleep(self.config.retry_backoff_seconds * attempt)
                 continue
 
@@ -124,13 +156,21 @@ class ApiSportsProvider:
                     path,
                 )
                 if attempt >= self.config.max_retries:
-                    return []
+                    raise ApiSportsUnavailableError(
+                        f"API-Sports ha risposto {response.status_code} su '{path}' "
+                        f"per {attempt} tentativi consecutivi"
+                    )
                 time.sleep(self.config.retry_backoff_seconds * attempt)
                 continue
 
             return self._parse_response(path=path, payload=payload, response=response)
 
-        return []
+        # Irraggiungibile con la logica sopra (ogni ramo o ritorna o solleva
+        # all'ultimo tentativo), ma se un domani un `continue` sfuggisse non
+        # deve tornare una lista vuota indistinguibile da "nessun dato".
+        raise ApiSportsUnavailableError(
+            f"API-Sports: nessuna risposta valida su '{path}' dopo {self.config.max_retries} tentativi"
+        )
 
     @staticmethod
     def _safe_json(response: requests.Response) -> Optional[dict[str, Any]]:

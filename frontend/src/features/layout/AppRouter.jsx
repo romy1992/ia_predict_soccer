@@ -6,7 +6,6 @@ import MlLabPage from "../ml-lab/MlLabPage";
 import ModelDiagnosticsPage from "../model-diagnostics/ModelDiagnosticsPage";
 import MonitoringPage from "../monitoring/MonitoringPage";
 import OraclePage from "../oracle/OraclePage";
-import OracleMatchDetailPage from "../oracle/OracleMatchDetailPage";
 import SettingsPage from "../settings/SettingsPage";
 
 export default function AppRouter({ activePage, props }) {
@@ -15,9 +14,6 @@ export default function AppRouter({ activePage, props }) {
   }
   if (activePage === "predictions") {
     return <OraclePage {...props.predictions} />;
-  }
-  if (activePage === "oracle-detail") {
-    return <OracleMatchDetailPage {...props.oracleDetail} />;
   }
   if (activePage === "betslip") {
     return <BetslipPage {...props.betslip} />;
