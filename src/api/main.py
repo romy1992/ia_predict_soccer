@@ -31,6 +31,8 @@ from src.api.schemas import (
     DashboardMatchDetailResponse,
     DashboardOverviewResponse,
     HealthResponse,
+    IsolatedMarketsResponse,
+    IsolatedMarketsUpdateRequest,
     JobDailyRefreshRequest,
     JobDataQualityReportRequest,
     JobFutureSyncRequest,
@@ -114,6 +116,7 @@ from src.jobs.job_settings import (
     update_job_schedule,
     update_job_settings,
 )
+from src.oracle.betslip.market_isolation_policy import get_isolated_markets, set_isolated_markets
 from src.jobs.scheduler import (
     run_daily_refresh,
     run_data_quality_report,
@@ -1513,6 +1516,35 @@ def post_settings_jobs(payload: JobSettingsUpdateRequest) -> JobSettingsResponse
         jobs=list_job_definitions(),
         quota_paused=bool(pause_state.get("paused_date")),
         quota_paused_since=pause_state.get("paused_date"),
+    )
+
+
+@app.get("/settings/isolated-markets", response_model=IsolatedMarketsResponse)
+def get_settings_isolated_markets() -> IsolatedMarketsResponse:
+    """Mercati esclusi dal default del MIX multi-mercato delle schedine
+    (`BetslipService.generate_exploration_for_day` quando il chiamante non
+    passa `markets` esplicitamente - vedi `market_isolation_policy.py`).
+    Un mercato isolato resta comunque generabile esplicitamente (es. una
+    sezione mono-mercato che lo interroga da solo): questa lista non tocca
+    ne' il ModelRegistry ne' il ledger, solo il default del mix."""
+    return IsolatedMarketsResponse(
+        isolated_markets=sorted(get_isolated_markets()),
+        active_markets=ModelRegistry().list_active_markets(),
+    )
+
+
+@app.post("/settings/isolated-markets", response_model=IsolatedMarketsResponse)
+def post_settings_isolated_markets(payload: IsolatedMarketsUpdateRequest) -> IsolatedMarketsResponse:
+    """Sostituisce INTERAMENTE la lista dei mercati isolati (mai un merge
+    parziale, vedi `market_isolation_policy.set_isolated_markets`). Il job
+    schedulato `prediction_snapshot_refresh` e il bottone "Genera e salva"
+    rileggono questa lista ad ogni generazione (nessuna cache in-process),
+    quindi il toggle ha effetto immediato senza restart di nessun
+    container - stesso principio gia' applicato a `/settings/jobs`."""
+    updated = set_isolated_markets(payload.markets)
+    return IsolatedMarketsResponse(
+        isolated_markets=sorted(updated),
+        active_markets=ModelRegistry().list_active_markets(),
     )
 
 

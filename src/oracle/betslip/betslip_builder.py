@@ -150,13 +150,23 @@ BALANCED_PROFILE = SlipProfile(
 
 AGGRESSIVE_PROFILE = SlipProfile(
     name="AGGRESSIVE",
-    version="slip_profile_aggressive_v4_soft_diversification",
+    # v5: min_adjusted_probability alzata da 0.03 a 0.08 (2026-09-28). Con
+    # min_legs=4 e max_leg_odd=8.00, il floor v4 accettava combinazioni
+    # stimate al 3% di probabilita' di vincere - quota combinata
+    # potenzialmente altissima e varianza tale da rendere il ROI simulato
+    # dominato da poche schedine estreme piuttosto che da un edge medio
+    # verificabile (osservato: il paniere simulato PLAY, che include
+    # AGGRESSIVE, rendeva peggio del paniere BORDERLINE nonostante leg
+    # individualmente PLAY - vedi analisi ROI 2026-09-28). 0.08 resta il
+    # profilo piu' permissivo dei tre (SAFE 0.25, BALANCED 0.10) ma non piu'
+    # un biglietto della lotteria mascherato da schedina "PLAY".
+    version="slip_profile_aggressive_v5_probability_floor",
     min_legs=3,
     max_legs=4,
     min_leg_probability=0.25,
     max_leg_odd=8.00,
     max_penalty_pairs=3,
-    min_adjusted_probability=0.03,
+    min_adjusted_probability=0.08,
     risk_label="HIGH",
 )
 

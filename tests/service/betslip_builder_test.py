@@ -59,6 +59,14 @@ class TestSlipProfileValidation(unittest.TestCase):
         self.assertLess(BALANCED_PROFILE.max_penalty_pairs, AGGRESSIVE_PROFILE.max_penalty_pairs)
         self.assertGreater(SAFE_PROFILE.min_leg_probability, AGGRESSIVE_PROFILE.min_leg_probability)
 
+    def test_aggressive_probability_floor_is_not_a_lottery_ticket(self):
+        # v5 (2026-09-28): il floor v4 (0.03) accettava combinazioni stimate
+        # al 3% di probabilita' di vincere - varianza tale da dominare il
+        # ROI simulato del paniere PLAY. Resta il piu' permissivo dei tre
+        # profili, ma sopra una soglia minima difendibile.
+        self.assertGreaterEqual(AGGRESSIVE_PROFILE.min_adjusted_probability, 0.08)
+        self.assertLess(AGGRESSIVE_PROFILE.min_adjusted_probability, BALANCED_PROFILE.min_adjusted_probability)
+
 
 class TestGenerateBetslipsBasics(unittest.TestCase):
     def test_no_candidates_returns_empty_profiles(self):
@@ -95,10 +103,14 @@ class TestGenerateBetslipsBasics(unittest.TestCase):
         self.assertAlmostEqual(slip.risk_score, 1.0 - slip.adjusted_probability)
 
     def test_low_probability_picks_excluded_from_safe_but_present_in_aggressive(self):
+        # p_model sotto la soglia SAFE (0.55) ma la probabilita' combinata
+        # (~0.085) resta sopra il floor AGGRESSIVE v5 (0.08, alzato dal
+        # v4 0.03 - vedi betslip_builder.py): sotto quel floor sarebbero
+        # state scartate anche da AGGRESSIVE.
         candidates = [
-            _pick(fixture_id=1, market="h2h", outcome="Home", odd=3.5, p_model=0.34),
-            _pick(fixture_id=2, market="h2h", outcome="Away", odd=3.2, p_model=0.32),
-            _pick(fixture_id=3, market="goal_no_goal", outcome="Yes", odd=3.0, p_model=0.31),
+            _pick(fixture_id=1, market="h2h", outcome="Home", odd=3.5, p_model=0.45),
+            _pick(fixture_id=2, market="h2h", outcome="Away", odd=3.2, p_model=0.44),
+            _pick(fixture_id=3, market="goal_no_goal", outcome="Yes", odd=3.0, p_model=0.43),
         ]
         result = generate_betslips(candidates)
         self.assertEqual(result.profiles["SAFE"], [])  # p_model < 0.55 (soglia SAFE)
