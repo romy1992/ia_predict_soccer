@@ -39,9 +39,9 @@ class FakeProposalRepo:
         return snapshot
 
 
-def _generation(odd=1.8):
+def _generation(odd=1.8, fixture_id=10, profile_name="SAFE", slip_id="logical-slip"):
     leg = CandidatePick(
-        fixture_id=10,
+        fixture_id=fixture_id,
         market="1x2",
         outcome="Home",
         decision="PLAY",
@@ -55,8 +55,8 @@ def _generation(odd=1.8):
         policy_version="policy-v2",
     )
     slip = GeneratedSlip(
-        slip_id="logical-slip",
-        profile_name="SAFE",
+        slip_id=slip_id,
+        profile_name=profile_name,
         profile_version="safe-v2",
         risk_label="LOW",
         n_legs=1,
@@ -74,7 +74,7 @@ def _generation(odd=1.8):
         generated_at=datetime.now(timezone.utc).isoformat(),
         correlation_ruleset_version="correlation-v1",
         pool_considered=1,
-        profiles={"SAFE": [slip]},
+        profiles={profile_name: [slip]},
     )
 
 
@@ -251,3 +251,30 @@ def test_unified_statistics_keep_proposals_and_official_performance_separate():
     assert report["markets"]["daily"][0]["market"] == "1x2"
     assert report["overview"]["simulated_portfolios"]["ALL"]["total"] == 1
     assert report["overview"]["simulated_portfolios"]["PLAY"]["pending"] == 1
+
+
+def test_simulated_play_portfolio_split_by_profile_never_redefines_play():
+    proposal_repo = FakeProposalRepo()
+    snapshot_service = BetslipProposalSnapshotService(repo=proposal_repo)
+    snapshot_service.save_generation(
+        reference_date="2099-01-01",
+        generation=_generation(fixture_id=10, profile_name="SAFE", slip_id="safe-slip"),
+    )
+    snapshot_service.save_generation(
+        reference_date="2099-01-01",
+        generation=_generation(fixture_id=11, profile_name="AGGRESSIVE", slip_id="aggressive-slip"),
+    )
+    service = BettingStatisticsService(
+        ledger_repo=FakeLedgerRepo(),
+        proposal_repo=proposal_repo,
+        official_betslip_service=FakeOfficialService(),
+    )
+
+    portfolios = service.report(days=30)["overview"]["simulated_portfolios"]
+
+    # "PLAY" resta l'aggregato di sempre (mai ridefinito silenziosamente):
+    # include SAFE e AGGRESSIVE insieme.
+    assert portfolios["PLAY"]["total"] == 2
+    # Le nuove chiavi separano il profilo rumoroso da quello di fiducia.
+    assert portfolios["PLAY_SAFE_BALANCED"]["total"] == 1
+    assert portfolios["PLAY_AGGRESSIVE"]["total"] == 1

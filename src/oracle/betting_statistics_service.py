@@ -154,6 +154,22 @@ class BettingStatisticsService:
             )
             for label in ("PLAY", "BORDERLINE", "NO BET")
         }
+        # PLAY per profilo (2026-09-28): "PLAY" sopra include SAFE/BALANCED/
+        # AGGRESSIVE insieme - un mercato/profilo rumoroso puo' trascinare
+        # giu' la media senza che sia distinguibile dal resto (osservato:
+        # il paniere PLAY rendeva peggio di BORDERLINE, trainato da
+        # AGGRESSIVE - vedi analisi ROI 2026-09-28). Chiavi AGGIUNTIVE, mai
+        # una ridefinizione silenziosa di "PLAY" (chi legge gia' quella
+        # chiave continua a vedere lo stesso aggregato di sempre).
+        play_rows = [row for row in latest_proposals if row.situation == "PLAY"]
+        shadow_play_by_profile = {
+            "PLAY_SAFE_BALANCED": _shadow_bucket(
+                [row for row in play_rows if row.profile != "AGGRESSIVE"]
+            ),
+            "PLAY_AGGRESSIVE": _shadow_bucket(
+                [row for row in play_rows if row.profile == "AGGRESSIVE"]
+            ),
+        }
         shadow_daily_groups: dict[str, list[Any]] = defaultdict(list)
         for row in latest_proposals:
             shadow_daily_groups[row.reference_date].append(row)
@@ -176,6 +192,7 @@ class BettingStatisticsService:
                 "simulated_portfolios": {
                     "ALL": _shadow_bucket(latest_proposals),
                     **shadow_by_situation,
+                    **shadow_play_by_profile,
                 },
                 "official_slips": official_slips,
             },
