@@ -1142,8 +1142,15 @@ export default function App() {
       report: betslipReport,
       isLoading: betslipLoading,
       error: betslipError,
-      onLoadReport: (overrides = {}) => loadBetslip({ ...overrides, persist: true }),
+      // `persist: true` di default (comportamento storico di "Genera e
+      // salva"), ma un chiamante puo' esplicitamente passare
+      // `persist: false` (es. l'anteprima mono-mercato di BetslipPage,
+      // mai salvata: eviterebbe di inquinare il ROI condiviso del mix
+      // multi-mercato con combinazioni che il mix stesso non genererebbe
+      // mai insieme) - per questo l'override va DOPO il default, non prima.
+      onLoadReport: (overrides = {}) => loadBetslip({ persist: true, ...overrides }),
       dayData,
+      markets,
       bettingStatistics,
       bettingStatsDays,
       onLoadStatistics: loadBettingStatistics,

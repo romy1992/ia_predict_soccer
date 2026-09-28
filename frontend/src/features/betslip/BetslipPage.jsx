@@ -68,6 +68,7 @@ export default function BetslipPage({
   error,
   onLoadReport,
   dayData,
+  markets,
   bettingStatistics,
   bettingStatsDays,
   onLoadStatistics,
@@ -77,7 +78,20 @@ export default function BetslipPage({
   const [activeFilter, setActiveFilter] = useState("all");
   const [stake, setStake] = useState(10);
   const [copiedSlipId, setCopiedSlipId] = useState(null);
+  // Mix mono-mercato (2026-09-28): "all" = mix multi-mercato di sempre
+  // (generato E salvato, contribuisce al ROI ufficiale/simulato). Un
+  // mercato specifico e' SOLO anteprima (mai salvata, vedi onGenerate
+  // sotto) - impedisce a combinazioni che il mix multi-mercato non
+  // genererebbe mai insieme di inquinare il ROI condiviso.
+  const [selectedMarket, setSelectedMarket] = useState("all");
+  const marketOptions = (markets && markets.length > 0 ? markets : ["all"]).filter(
+    (market) => market !== "all"
+  );
+  const isMonoMarket = selectedMarket !== "all";
   const isPastDate = targetDate < todayIso();
+  function onGenerate() {
+    onLoadReport(isMonoMarket ? { markets: [selectedMarket], persist: false } : {});
+  }
 
   const fixtureIndex = useMemo(() => {
     const map = {};
@@ -162,16 +176,35 @@ export default function BetslipPage({
               Data
               <input type="date" value={targetDate} onChange={(e) => onChangeTargetDate(e.target.value)} />
             </label>
+            <label className="betslip-market">
+              Mercato
+              <select
+                value={selectedMarket}
+                onChange={(e) => setSelectedMarket(e.target.value)}
+                disabled={isPastDate}
+              >
+                <option value="all">Tutti (mix multi-mercato)</option>
+                {marketOptions.map((market) => (
+                  <option key={market} value={market}>{marketLabel(market)}</option>
+                ))}
+              </select>
+            </label>
             <button
               className="btn-primary"
-              onClick={() => onLoadReport()}
+              onClick={onGenerate}
               disabled={isLoading || isPastDate}
               title={isPastDate ? "Le date passate mostrano soltanto schedine salvate prima degli eventi." : ""}
             >
-              {isPastDate ? "Solo consultazione" : "Genera e salva"}
+              {isPastDate ? "Solo consultazione" : isMonoMarket ? "Genera anteprima mono-mercato" : "Genera e salva"}
             </button>
           </div>
         </div>
+        {isMonoMarket && !isPastDate && (
+          <div className="info-box">
+            Anteprima mono-mercato ({marketLabel(selectedMarket)}): solo consultazione, non viene salvata e non entra
+            nel ROI ufficiale/simulato. Per il mix multi-mercato salvato seleziona "Tutti".
+          </div>
+        )}
         <div className="stake-simulator">
           <label>
             Simula puntata
