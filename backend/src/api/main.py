@@ -224,7 +224,7 @@ async def _warm_serving_caches() -> None:
     except Exception:
         logging.exception("Prewarm indice arbitro fallito (non bloccante, si ricalcolera' al primo uso)")
     try:
-        await asyncio.to_thread(ModelRegistry().list_active_markets)
+        await asyncio.to_thread(lambda: ModelRegistry().list_active_markets())
     except Exception:
         logging.exception("Prewarm registry modelli fallito (non bloccante, si ricalcolera' al primo uso)")
 
