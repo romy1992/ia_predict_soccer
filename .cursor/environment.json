@@ -8,8 +8,8 @@
   "terminals": [
     {
       "name": "api",
-      "command": ".venv/bin/python -m uvicorn src.api.main:app --host 0.0.0.0 --port 8000",
-      "description": "API FastAPI su http://localhost:8000 (docs su /docs). Legge properties/config.env, quindi punta al Postgres dev remoto su Railway."
+      "command": "cd backend && ../.venv/bin/python -m uvicorn src.api.main:app --host 0.0.0.0 --port 8000",
+      "description": "API FastAPI su http://localhost:8000 (docs su /docs). Legge backend/properties/config.env, quindi punta al Postgres dev remoto su Railway."
     },
     {
       "name": "frontend",

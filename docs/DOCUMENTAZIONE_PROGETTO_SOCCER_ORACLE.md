@@ -15,17 +15,17 @@ Questa documentazione descrive lo stato attuale (as-is), il target (to-be) e il 
 
 ## 2) Stato attuale del repository (as-is)
 
-### Backend
-- `src/api/main.py`: avvio FastAPI, routing API, CORS.
-- `src/api/dashboard_service.py`: logica dashboard (overview/live/day/match detail), aggregazioni e predizioni.
-- `src/api/schemas.py`: schemi risposta/request API.
-- `src/repository/`: accesso dati DB e query helper.
-- `src/jobs/`: job operativi (`import`, `retrain`, scheduler, history).
+### Backend (`backend/`, dal 2026-09-29)
+- `backend/src/api/main.py`: avvio FastAPI, routing API, CORS.
+- `backend/src/api/dashboard_service.py`: logica dashboard (overview/live/day/match detail), aggregazioni e predizioni.
+- `backend/src/api/schemas.py`: schemi risposta/request API.
+- `backend/src/repository/`: accesso dati DB e query helper.
+- `backend/src/jobs/`: job operativi (`import`, `retrain`, scheduler, history).
 
 ### Training/ML
 - Pipeline e utility in:
-  - `service_ia/training/`
-  - `src/service_ia/training/`
+  - `backend/service_ia/training/` (legacy)
+  - `backend/src/service_ia/training/`
 - Presenza di pipeline storiche e script di fit, ma da consolidare in una pipeline unica per mercato.
 
 ### Frontend
@@ -34,9 +34,9 @@ Questa documentazione descrive lo stato attuale (as-is), il target (to-be) e il 
 - `frontend/src/styles.css`: tema UI e layout.
 
 ### Ops e setup
-- Docker/API: `docker-compose.yml`, `Dockerfile.api`.
-- Migrazioni DB: `alembic/`.
-- Smoke API: `scripts/smoke_api.ps1`.
+- Docker/API: `docker-compose.yml` (root), `backend/Dockerfile`, `frontend/Dockerfile`.
+- Migrazioni DB: `backend/alembic/`.
+- Smoke API: `backend/scripts/smoke_api.ps1`.
 
 ### 2.1 Audit DB reale (controllo approfondito)
 Il progetto attualmente convive con piu istanze PostgreSQL locali. Il controllo completo ha evidenziato:
