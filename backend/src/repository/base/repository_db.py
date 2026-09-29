@@ -19,7 +19,7 @@ _CFG = load_app_config()
 # DATABASE_URL viene letto da una sola sorgente di configurazione condivisa.
 DATABASE_URL = _CFG.database_url
 
-engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+engine = create_engine(DATABASE_URL, pool_pre_ping=True, pool_recycle=3600)
 
 # scoped_session (bug fix 2026-09-06): ogni THREAD che chiama SessionLocal()
 # ottiene una Session isolata (thread-local), mai la stessa istanza di un
