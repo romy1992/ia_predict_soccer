@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import json
 import logging
@@ -198,7 +199,7 @@ def _run_model_consensus_refresh_job(
         logging.exception("model_consensus_refresh job %s failed", job_id)
 
 
-def _warm_serving_caches() -> None:
+async def _warm_serving_caches() -> None:
     """Pre-scalda le cache in-memory di processo (indice arbitro,
     registry modelli) ad ogni avvio del container, invece di lasciare che
     sia il primo click reale su Oracle Match Detail/Dashboard a pagarne il
@@ -206,25 +207,38 @@ def _warm_serving_caches() -> None:
     replay sull'intero storico), osservato dall'operatore come "il primo
     click ci mette un casino, dal secondo in poi e' veloce". Import locale
     (lazy) per lo stesso motivo di `filter_market_service.py`: evitare un
-    ciclo d'importazione a livello di modulo con `cards_market.py`."""
+    ciclo d'importazione a livello di modulo con `cards_market.py`.
+
+    Eseguita come task asyncio schedulato DOPO il completamento dello
+    startup event (vedi `_on_startup_schedule_warm_caches`), mai come
+    thread daemon: un thread daemon puo' uccidere l'intero processo se il
+    parent esce prima che finisca, e comunque non deve mai bloccare
+    l'event loop che serve /health. Le chiamate bloccanti/sincrone sono
+    delegate a un executor via `asyncio.to_thread` cosi' l'event loop
+    resta libero di rispondere all'healthcheck e alle richieste reali per
+    tutta la durata del prewarm (100s+)."""
     from src.ml.markets.cards.cards_market import get_cached_referee_index
 
     try:
-        get_cached_referee_index()
+        await asyncio.to_thread(get_cached_referee_index)
     except Exception:
         logging.exception("Prewarm indice arbitro fallito (non bloccante, si ricalcolera' al primo uso)")
     try:
-        ModelRegistry().list_active_markets()
+        await asyncio.to_thread(ModelRegistry().list_active_markets)
     except Exception:
         logging.exception("Prewarm registry modelli fallito (non bloccante, si ricalcolera' al primo uso)")
 
 
 @app.on_event("startup")
-def _on_startup_warm_caches() -> None:
-    # Thread separato, MAI sull'event loop di avvio: l'healthcheck
-    # (`start_period: 15s` in docker-compose.yml) e la prima richiesta
-    # reale non devono aspettare fino a 100s+ per il prewarm.
-    threading.Thread(target=_warm_serving_caches, daemon=True, name="cache-warmup").start()
+async def _on_startup_schedule_warm_caches() -> None:
+    # Schedulato come task asyncio SUBITO DOPO il completamento dello
+    # startup event, non eseguito qui dentro: l'healthcheck deve poter
+    # colpire /health non appena Uvicorn e' pronto, senza aspettare fino a
+    # 100s+ per il prewarm delle cache. `asyncio.create_task` gira in
+    # parallelo alle richieste in arrivo sullo stesso event loop e non e'
+    # un thread daemon che potrebbe terminare il processo prematuramente.
+    asyncio.create_task(_warm_serving_caches())
+
 
 
 def _load_summary() -> list[dict[str, Any]]:
