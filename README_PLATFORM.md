@@ -7,23 +7,28 @@ Questa guida copre i nuovi moduli introdotti per:
 - dashboard React,
 - scheduler con job separati (data sync frequenti + training giornaliero indipendente, OPS-01).
 
+## Struttura repo (monorepo)
+- `backend/` - API FastAPI, scheduler, training ML, migrazioni Alembic (vedi sotto)
+- `frontend/` - dashboard React
+- `docker-compose.yml`, `docs/` - orchestrazione e documentazione a livello repo
+
 ## Nuovi moduli principali
-- `src/service_ia/training/train_multi_market.py`
-- `src/service_ia/training/market_service/filter_market_service.py`
-- `src/service_ia/training/model_registry.py`
-- `src/ml/registry/promotion_policy.py` (OPS-02: gate metriche + confronto candidate/production)
-- `src/jobs/scheduler.py`
-- `src/api/main.py`
+- `backend/src/service_ia/training/train_multi_market.py`
+- `backend/src/service_ia/training/market_service/filter_market_service.py`
+- `backend/src/service_ia/training/model_registry.py`
+- `backend/src/ml/registry/promotion_policy.py` (OPS-02: gate metriche + confronto candidate/production)
+- `backend/src/jobs/scheduler.py`
+- `backend/src/api/main.py`
 - `frontend/src/App.jsx`
 - `docker-compose.yml`
-- `Dockerfile.api`
+- `backend/Dockerfile`
 
 ## Struttura runtime canonica
-- runtime ufficiale backend/test/job: `src/`
-- cartella legacy esperimenti: `service_ia/` (vedi `service_ia/README_LEGACY.md`)
+- runtime ufficiale backend/test/job: `backend/src/`
+- cartella legacy esperimenti: `backend/service_ia/` (vedi `backend/service_ia/README_LEGACY.md`)
 
 ## Configurazione
-Nel file `properties/config.env` puoi aggiungere:
+Nel file `backend/properties/config.env` puoi aggiungere:
 
 - `DATABASE_URL` -> default gia' impostato sul DB dev remoto Railway (vedi sezione "Policy DATABASE_URL" subito sotto); vecchio valore locale ormai sostituito, mantenuto solo come riferimento storico: `postgresql://postgres:postgres@localhost:5432/match_db`
 - `APP_LEAGUES=135,136,140,39`
@@ -40,13 +45,13 @@ Se non li imposti, vengono usati i default del codice.
 
 ### Policy DATABASE_URL (dev/test/prod)
 - `dev` (default, d'ora in poi): `DATABASE_URL` punta SEMPRE al remoto Postgres "dev" ospitato su Railway (`sakura.proxy.rlwy.net:18862/railway`, richiesto esplicitamente 2026-09-04) - stessa istanza per esecuzione locale, Docker e training, nessuna dipendenza da un Postgres nativo dell'host
-- `docker compose`: **nessun Postgres containerizzato**. `api` e `scheduler` ereditano ENTRAMBI `DATABASE_URL` da `properties/config.env` (via `env_file`, nessun override in `environment:` cosi' da avere un'unica sorgente di verita' e non rischiare che i due servizi divergano) - DB remoto Railway sopra (nessun `host.docker.internal` necessario per il DB; resta configurato solo per compatibilita' con eventuali altri usi locali)
-- fallback nel codice (SOLO se `DATABASE_URL` non e' impostata affatto, es. nessun `config.env` caricato): `DEFAULT_DATABASE_URL` in `src/service_ia/config/app_config.py`, anch'esso allineato al DB dev Railway
+- `docker compose`: **nessun Postgres containerizzato**. `api` e `scheduler` ereditano ENTRAMBI `DATABASE_URL` da `backend/properties/config.env` (via `env_file`, nessun override in `environment:` cosi' da avere un'unica sorgente di verita' e non rischiare che i due servizi divergano) - DB remoto Railway sopra (nessun `host.docker.internal` necessario per il DB; resta configurato solo per compatibilita' con eventuali altri usi locali)
+- fallback nel codice (SOLO se `DATABASE_URL` non e' impostata affatto, es. nessun `config.env` caricato): `DEFAULT_DATABASE_URL` in `backend/src/service_ia/config/app_config.py`, anch'esso allineato al DB dev Railway
 - `test`: usa un DB isolato tramite override env (`DATABASE_URL`) prima di lanciare i test
 - verifica target attivo con `GET /health/database` (host/db/schema + conteggi tabelle)
 
 Nel setup corrente la sorgente runtime e impostata su:
-- `DATABASE_URL=postgresql://postgres:postgres@sakura.proxy.rlwy.net:18862/railway` (DB dev Railway, vedi `properties/config.env` per le credenziali complete)
+- `DATABASE_URL=postgresql://postgres:postgres@sakura.proxy.rlwy.net:18862/railway` (DB dev Railway, vedi `backend/properties/config.env` per le credenziali complete)
 
 Un'unica sorgente dati remota (Postgres Railway, dataset storico reale) per locale, Docker e training: nessun DB duplicato/vuoto da mantenere allineato.
 
@@ -77,9 +82,12 @@ docker compose down
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+pip install -r backend\requirements.txt
+Set-Location backend
 uvicorn src.api.main:app --reload --host 0.0.0.0 --port 8000
 ```
+
+Nota: i comandi `python -m src...` e `uvicorn src...` vanno sempre lanciati con `backend/` come cartella corrente (cwd) - e' da li' che il codice risolve `properties/config.env`, `best_models/` e `logs/`.
 
 ### Frontend React
 ```powershell
@@ -94,16 +102,18 @@ Apri nel browser:
 
 ## Run training multi-mercato (manuale)
 ```powershell
+Set-Location backend
 python -m src.service_ia.training.train_multi_market
 ```
 
 Output principali:
-- `best_models/*.pkl`
-- `best_models/registry/index.jsonl`
-- `best_models/training_summary.json`
+- `backend/best_models/*.pkl`
+- `backend/best_models/registry/index.jsonl`
+- `backend/best_models/training_summary.json`
 
 ## Run scheduler (job separati, OPS-01)
 ```powershell
+Set-Location backend
 python -m src.jobs.scheduler
 ```
 
@@ -120,9 +130,9 @@ Lo scheduler registra 6 job APScheduler COMPLETAMENTE separati e indipendenti (`
 
 `data_daily_refresh` e' lo STESSO job invocato dal bottone "Aggiorna tutto" della Sidebar (sempre visibile, in ogni pagina del frontend): importa le partite di IERI (tutti i campionati censiti) + sincronizza il calendario prossimo (`DAILY_REFRESH_DAYS_AHEAD` giorni, default 7, con upsert sulle partite gia' presenti). Si sovrappone volutamente alla finestra di `data_future_sync` — disattivabile da Impostazioni se si vuole un solo giro/giorno.
 
-Tutti i job che passano da `download_import_matches` (`data_daily_refresh`, `data_sync_today`, `data_future_sync`, `data_settlement`) e il bottone "Aggiorna tutto" condividono un advisory lock Postgres (`src/jobs/job_lock.py`, 2026-09-15): `api` e `scheduler` sono container distinti e `max_instances=1` di APScheduler vale solo dentro il proprio processo, quindi senza lock il bottone premuto mentre girava il job schedulato produceva due import sovrapposti sulla stessa finestra di date — 116 partite finite a DB in doppia copia. Chi non ottiene il lock salta il giro e lo storico registra un `success` con `skipped_locked` (non un `failed`, che `_is_job_due` non potrebbe distinguere da un problema vero).
+Tutti i job che passano da `download_import_matches` (`data_daily_refresh`, `data_sync_today`, `data_future_sync`, `data_settlement`) e il bottone "Aggiorna tutto" condividono un advisory lock Postgres (`backend/src/jobs/job_lock.py`, 2026-09-15): `api` e `scheduler` sono container distinti e `max_instances=1` di APScheduler vale solo dentro il proprio processo, quindi senza lock il bottone premuto mentre girava il job schedulato produceva due import sovrapposti sulla stessa finestra di date — 116 partite finite a DB in doppia copia. Chi non ottiene il lock salta il giro e lo storico registra un `success` con `skipped_locked` (non un `failed`, che `_is_job_due` non potrebbe distinguere da un problema vero).
 
-Ogni job logga il proprio esito in `best_models/jobs_history.jsonl` (`job_type`: `today_update`/`settlement`/`future_sync`/`daily_refresh`/`retrain`/`live_sync`). `build_scheduler(cfg)` costruisce lo scheduler SENZA avviarlo (usato dai test); `start_scheduler()` lo avvia (entry point di `python -m src.jobs.scheduler`).
+Ogni job logga il proprio esito in `backend/best_models/jobs_history.jsonl` (`job_type`: `today_update`/`settlement`/`future_sync`/`daily_refresh`/`retrain`/`live_sync`). `build_scheduler(cfg)` costruisce lo scheduler SENZA avviarlo (usato dai test); `start_scheduler()` lo avvia (entry point di `python -m src.jobs.scheduler`).
 
 ## Trigger manuale da API
 - `POST /jobs/import`
@@ -137,7 +147,7 @@ Tutti supportano `async_run=true/false`.
 
 ## Nota operativa
 Le predizioni vengono loggate in:
-- `best_models/predictions_log.jsonl`
+- `backend/best_models/predictions_log.jsonl`
 
 Le metriche/versioni modello sono consultabili in:
 - `GET /metrics/{market}`
@@ -173,7 +183,7 @@ Nota dati dashboard:
 
 ## Smoke test rapido API
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts/smoke_api.ps1
+powershell -ExecutionPolicy Bypass -File backend/scripts/smoke_api.ps1
 ```
 
 

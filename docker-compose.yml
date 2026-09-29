@@ -5,19 +5,19 @@ services:
   # riferimento per locale/Docker/training - vedi README_PLATFORM.md, sezione
   # "Policy DATABASE_URL"). `DATABASE_URL` NON viene piu' sovrascritto qui
   # sotto `environment:` per nessun servizio: e' unica sorgente di verita'
-  # `properties/config.env` (via `env_file`), per evitare che i due valori
+  # `backend/properties/config.env` (via `env_file`), per evitare che i due valori
   # divergano di nuovo (bug corretto il 2026-09-04: `api` era rimasto
   # agganciato al vecchio DB locale mentre `scheduler` gia' puntava a
   # Railway). `extra_hosts`/`host.docker.internal` restano configurati per
   # compatibilita' con eventuali altri usi locali futuri.
   api:
     build:
-      context: .
-      dockerfile: Dockerfile.api
+      context: ./backend
+      dockerfile: Dockerfile
     container_name: soccer_api
     restart: unless-stopped
     env_file:
-      - properties/config.env
+      - backend/properties/config.env
     environment:
       API_ODDS_ACTUAL_BASE: https://api.the-odds-api.com/v4/sports
       API_ODDS_HISTORIACAL_BASE: https://api.the-odds-api.com/v4/historical/sports
@@ -27,8 +27,8 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - ./best_models:/app/best_models
-      - ./logs:/app/logs
+      - ./backend/best_models:/app/best_models
+      - ./backend/logs:/app/logs
     # Limite esplicito: il training ML (GridSearchCV multi-mercato) puo'
     # saturare CPU/RAM della VM Docker fino a far uccidere il processo con
     # SIGKILL esterno (osservato 2 volte, OOMKilled=false -> non e' il
@@ -61,19 +61,19 @@ services:
 
   scheduler:
     build:
-      context: .
-      dockerfile: Dockerfile.api
+      context: ./backend
+      dockerfile: Dockerfile
     container_name: soccer_scheduler
     command: ["python", "-m", "src.jobs.scheduler"]
     restart: unless-stopped
     env_file:
-      - properties/config.env
+      - backend/properties/config.env
     environment:
       API_ODDS_ACTUAL_BASE: https://api.the-odds-api.com/v4/sports
       API_ODDS_HISTORIACAL_BASE: https://api.the-odds-api.com/v4/historical/sports
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
-      - ./best_models:/app/best_models
-      - ./logs:/app/logs
+      - ./backend/best_models:/app/best_models
+      - ./backend/logs:/app/logs
 

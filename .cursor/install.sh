@@ -14,7 +14,7 @@ if [ ! -x .venv/bin/python ]; then
 fi
 
 .venv/bin/pip install --quiet --upgrade pip
-.venv/bin/pip install --quiet -r requirements.txt
+.venv/bin/pip install --quiet -r backend/requirements.txt
 .venv/bin/pip install --quiet pytest
 
 npm ci --prefix frontend
