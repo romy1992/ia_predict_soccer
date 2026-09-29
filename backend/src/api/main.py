@@ -229,16 +229,17 @@ async def _warm_serving_caches() -> None:
         logging.exception("Prewarm registry modelli fallito (non bloccante, si ricalcolera' al primo uso)")
 
 
-@app.on_event("startup")
-async def _on_startup_schedule_warm_caches() -> None:
-    # Schedulato come task asyncio SUBITO DOPO il completamento dello
-    # startup event, non eseguito qui dentro: l'healthcheck deve poter
-    # colpire /health non appena Uvicorn e' pronto, senza aspettare fino a
-    # 100s+ per il prewarm delle cache. `asyncio.create_task` gira in
-    # parallelo alle richieste in arrivo sullo stesso event loop e non e'
-    # un thread daemon che potrebbe terminare il processo prematuramente.
-    asyncio.create_task(_warm_serving_caches())
 
+# NOTE (rollback temporaneo): lo startup event che schedulava
+# `_warm_serving_caches()` tramite `asyncio.create_task` e' stato rimosso
+# perche' causava il crash del processo Uvicorn circa 1 minuto dopo il
+# completamento dello startup (tutte le richieste HTTP tornavano
+# "connection refused" nonostante i log mostrassero "Application startup
+# complete"). La funzione `_warm_serving_caches` resta definita sopra ma
+# non viene piu' invocata: la prima richiesta reale tornera' a pagare il
+# costo del prewarm (100s+ a freddo), ma l'applicazione resta stabile e
+# risponde alle richieste. Da investigare in futuro il motivo per cui il
+# pattern asyncio.create_task rompeva l'event loop/processo.
 
 
 def _load_summary() -> list[dict[str, Any]]:
