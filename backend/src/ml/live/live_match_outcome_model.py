@@ -53,6 +53,7 @@ from src.ml.live.live_match_outcome_dataset import (
 from src.ml.markets.market_1x2 import OUTCOME_LABELS
 from src.ml.validation.temporal_split import expanding_window_splits
 from src.repository.live_data_repository import LiveDataRepository
+from src.service_ia.training.model_paths import load_expert_estimator
 from src.service_ia.training.model_registry import ModelRegistry
 
 MARKET_NAME = "1x2_live"
@@ -422,10 +423,10 @@ class LiveMatchOutcomeExpert:
     @classmethod
     def _from_run(cls, run: dict[str, Any]) -> "LiveMatchOutcomeExpert":
         model_path = run.get("model_path")
-        if not model_path or not os.path.exists(model_path):
+        if not model_path:
             raise FileNotFoundError(f"Model path non trovato per il run {run.get('run_id')}: {model_path}")
 
-        estimator = joblib.load(model_path)
+        estimator = load_expert_estimator(model_path)
         return cls(
             estimator=estimator,
             feature_names=list(run.get("feature_names") or []),

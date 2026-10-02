@@ -1,10 +1,10 @@
 import dataclasses
 import datetime as dt
 import hashlib
-import json
 import logging
 import os
 import subprocess
+from time import monotonic
 from typing import Any, Dict, Optional
 
 from src.ml.registry.promotion_policy import (
@@ -13,20 +13,40 @@ from src.ml.registry.promotion_policy import (
     evaluate_promotion,
 )
 from src.service_ia.training.model_paths import is_archived_model_path
+from src.storage import bucket_store
 
 logging.basicConfig(level=logging.INFO)
+
+_CACHE_TTL_SECONDS = 5.0
 
 
 class ModelRegistry:
     STAGES = {"candidate", "champion", "production", "retired"}
 
-    """Persist metadata for each trained model and expose latest lookup helpers."""
+    """Persist metadata for each trained model and expose latest lookup helpers.
 
-    def __init__(self, registry_dir: str = os.path.join("best_models", "registry")):
-        self.registry_dir = os.path.abspath(registry_dir)
-        self.index_file = os.path.join(self.registry_dir, "index.jsonl")
-        self.promotion_file = os.path.join(self.registry_dir, "promotion_history.jsonl")
-        os.makedirs(self.registry_dir, exist_ok=True)
+    Un oggetto per run (`<prefix>/runs/<run_id>.json`) e uno per evento di
+    promozione (`<prefix>/promotions/<event_id>.json`) sul Bucket S3-
+    compatible, invece di due file `.jsonl` che crescevano per append.
+    Motivo: `api` e `scheduler` sono due container Railway distinti che
+    scrivono entrambi questo registry (il secondo tramite il job
+    schedulato `ml_training`) - un append su un file condiviso via Volume
+    (mai montato su `scheduler`) non e' mai stato davvero sicuro
+    cross-processo (nessun lock, solo O_APPEND), e su S3 l'append non
+    esiste proprio. Una chiave per run elimina la race alla radice: ogni
+    scrittura e' un PUT sulla propria chiave, nessun altro writer la
+    tocca mai."""
+
+    def __init__(self, registry_dir: str = "best_models/registry"):
+        # Nome parametro invariato ("registry_dir") per compatibilita' con
+        # tutti i call site esistenti (produzione e test) - semanticamente
+        # ora e' un PREFISSO di chiavi sul bucket, non piu' una directory
+        # locale, ma qualunque stringa unica (incluso un path di
+        # `tempfile.TemporaryDirectory()` nei test) funziona comunque come
+        # prefisso valido.
+        self.registry_prefix = registry_dir.rstrip("/").replace("\\", "/")
+        self.runs_prefix = f"{self.registry_prefix}/runs/"
+        self.promotions_prefix = f"{self.registry_prefix}/promotions/"
 
     @staticmethod
     def _validate_stage(stage: Optional[str]) -> str:
@@ -35,52 +55,35 @@ class ModelRegistry:
             raise ValueError(f"Stage non valido: {stage}")
         return value
 
-    # Cache in-memory per file (mtime+size come chiave di invalidazione,
-    # non un TTL fisso): `index.jsonl`/`promotion_history.jsonl` sono letti
-    # e ri-parsati ad ogni chiamata di `get_production`/`get_latest`/
-    # `list_active_markets` - una volta per mercato, quindi decine di volte
-    # per una singola richiesta Oracle Match Detail/Dashboard. Erano stati
-    # lasciati deliberatamente senza cache ("file piccolo, costo
-    # trascurabile", vedi `PredictionSnapshotService._latest_model_for_market`)
-    # quando il registry era nuovo; con `index.jsonl` cresciuto a ~3 MB
-    # (il campo `extra` di ogni run puo' arrivare a ~380 KB, report di
-    # classificazione completi per l'analisi/debug) questo era diventato
-    # il collo di bottiglia dominante di "Oracle Match Detail" (~20s),
-    # misurato con cProfile: 70 letture dello stesso file in una sola
-    # richiesta. mtime+size invece di un TTL: una promozione/registrazione
-    # nuova (che scrive su uno di questi due file) deve riflettersi
-    # SUBITO, mai restare congelata per una finestra di tempo.
-    _JSONL_CACHE: dict[str, tuple[tuple[float, int], list[Dict[str, Any]]]] = {}
+    # Cache in-memory per prefisso, TTL breve (non piu' mtime+size: S3 non
+    # ha un singolo file il cui mtime rifletta "qualcosa in questo
+    # prefisso e' cambiato"). Invalidazione immediata nello stesso
+    # processo dopo ogni register()/_append_promotion_event() mantiene la
+    # freschezza istantanea per chi scrive; un altro processo la vede
+    # entro `_CACHE_TTL_SECONDS` - stesso principio della vecchia cache
+    # (mai un ricalcolo ad ogni singola chiamata: `index.jsonl` veniva
+    # riletto ~70 volte per una singola richiesta Oracle Match Detail).
+    _ROWS_CACHE: dict[str, tuple[float, list[Dict[str, Any]]]] = {}
 
-    @staticmethod
-    def _safe_jsonl_rows(path: str) -> list[Dict[str, Any]]:
-        if not os.path.exists(path):
-            ModelRegistry._JSONL_CACHE.pop(path, None)
-            return []
+    @classmethod
+    def _invalidate_cache(cls, prefix: str) -> None:
+        cls._ROWS_CACHE.pop(prefix, None)
 
-        stat = os.stat(path)
-        cache_key = (stat.st_mtime, stat.st_size)
-        cached = ModelRegistry._JSONL_CACHE.get(path)
-        if cached is not None and cached[0] == cache_key:
+    @classmethod
+    def _list_rows(cls, prefix: str) -> list[Dict[str, Any]]:
+        cached = cls._ROWS_CACHE.get(prefix)
+        if cached is not None and (monotonic() - cached[0]) < _CACHE_TTL_SECONDS:
             return cached[1]
 
-        rows: list[Dict[str, Any]] = []
-        with open(path, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    rows.append(json.loads(line))
-                except json.JSONDecodeError:
-                    continue
-        ModelRegistry._JSONL_CACHE[path] = (cache_key, rows)
+        rows = bucket_store.list_json(prefix)
+        cls._ROWS_CACHE[prefix] = (monotonic(), rows)
         return rows
 
-    @staticmethod
-    def _append_jsonl(path: str, payload: Dict[str, Any]) -> None:
-        with open(path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    def _run_key(self, run_id: str) -> str:
+        return f"{self.runs_prefix}{run_id}.json"
+
+    def _promotion_key(self, event_id: str) -> str:
+        return f"{self.promotions_prefix}{event_id}.json"
 
     @staticmethod
     def _default_feature_version(feature_names: list[str]) -> str:
@@ -125,10 +128,10 @@ class ModelRegistry:
         return raw if raw in ModelRegistry.STAGES else "candidate"
 
     def _registration_rows(self) -> list[Dict[str, Any]]:
-        return self._safe_jsonl_rows(self.index_file)
+        return self._list_rows(self.runs_prefix)
 
     def _promotion_rows(self) -> list[Dict[str, Any]]:
-        return self._safe_jsonl_rows(self.promotion_file)
+        return self._list_rows(self.promotions_prefix)
 
     def _lifecycle_maps(self) -> tuple[Dict[str, str], Dict[str, list[Dict[str, Any]]]]:
         registrations = self._registration_rows()
@@ -180,8 +183,9 @@ class ModelRegistry:
         metadata: Optional[Dict[str, Any]] = None,
     ) -> None:
         now_utc = dt.datetime.now(dt.timezone.utc)
+        event_id = f"promotion_{run_id}_{now_utc.strftime('%Y%m%dT%H%M%S%fZ')}"
         event = {
-            "event_id": f"promotion_{run_id}_{now_utc.strftime('%Y%m%dT%H%M%S%fZ')}",
+            "event_id": event_id,
             "run_id": run_id,
             "market": market,
             "from_stage": from_stage,
@@ -191,7 +195,8 @@ class ModelRegistry:
             "reason": reason,
             "metadata": metadata or {},
         }
-        self._append_jsonl(self.promotion_file, event)
+        bucket_store.put_json(self._promotion_key(event_id), event)
+        self._invalidate_cache(self.promotions_prefix)
 
     def register(
         self,
@@ -211,7 +216,6 @@ class ModelRegistry:
         now_utc = dt.datetime.now(dt.timezone.utc)
         timestamp = now_utc.strftime("%Y%m%dT%H%M%S%fZ")
         market_slug = market.replace("/", "_").replace(" ", "_")
-        metadata_path = os.path.join(self.registry_dir, f"{market_slug}_{timestamp}.json")
         normalized_stage = self._validate_stage(stage)
         resolved_extra = extra or {}
         resolved_dataset_version = dataset_version or resolved_extra.get("dataset_version") or "dataset:unspecified"
@@ -221,12 +225,18 @@ class ModelRegistry:
         resolved_windows = self._normalize_windows(windows or resolved_extra.get("windows"))
         resolved_git_sha = git_sha or resolved_extra.get("git_sha") or self._detect_git_sha()
 
+        run_id = f"{market_slug}_{timestamp}"
+        run_key = self._run_key(run_id)
+
         payload: Dict[str, Any] = {
-            "run_id": f"{market_slug}_{timestamp}",
+            "run_id": run_id,
             "created_at": now_utc.isoformat(),
             "market": market,
             "model_name": model_name,
-            "model_path": os.path.abspath(model_path),
+            # Chiave bucket (es. "best_models/h2h/h2h_champion.pkl"), non
+            # piu' un path locale: `SaveLoad`/i training module passano
+            # gia' la chiave, nessun `os.path.abspath` da fare qui.
+            "model_path": model_path,
             "metrics": metrics or {},
             "feature_names": feature_names or [],
             "params": params or {},
@@ -236,27 +246,21 @@ class ModelRegistry:
             "windows": resolved_windows,
             "git_sha": resolved_git_sha,
             "stage": normalized_stage,
-            "metadata_path": os.path.abspath(metadata_path),
+            "metadata_path": run_key,
         }
 
-        with open(metadata_path, "w", encoding="utf-8") as f:
-            json.dump(payload, f, ensure_ascii=False, indent=2)
+        bucket_store.put_json(run_key, payload)
+        self._invalidate_cache(self.runs_prefix)
 
-        self._append_jsonl(self.index_file, payload)
-
-        logging.info("Model metadata registered: %s", metadata_path)
+        logging.info("Model metadata registered: %s", run_key)
         return payload
 
     def get_run(self, run_id: str) -> Optional[Dict[str, Any]]:
-        rows = self._registration_rows()
-        match = None
-        for row in rows:
-            if row.get("run_id") == run_id:
-                match = row
-        if match is None:
+        row = bucket_store.get_json(self._run_key(run_id))
+        if row is None:
             return None
         stage_by_run, history_by_run = self._lifecycle_maps()
-        return self._decorate_row(match, stage_by_run=stage_by_run, history_by_run=history_by_run)
+        return self._decorate_row(row, stage_by_run=stage_by_run, history_by_run=history_by_run)
 
     def promote(
         self,
@@ -391,6 +395,7 @@ class ModelRegistry:
         if market:
             rows = [row for row in rows if row.get("market") == market]
 
+        rows = sorted(rows, key=lambda row: row.get("created_at", ""))
         stage_by_run, history_by_run = self._lifecycle_maps()
         decorated = [
             self._decorate_row(row, stage_by_run=stage_by_run, history_by_run=history_by_run)
@@ -600,7 +605,3 @@ class ModelRegistry:
             events = [event for event in events if event.get("market") == market]
         events = sorted(events, key=lambda item: item.get("changed_at", ""))
         return events[-limit:]
-
-
-
-

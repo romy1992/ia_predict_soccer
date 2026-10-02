@@ -1,15 +1,17 @@
 import logging
 import os
 
-import joblib
-from sklearn.calibration import CalibratedClassifierCV
+from src.storage import bucket_store
 
 logging.basicConfig(level=logging.DEBUG)
 
 
 class SaveLoad:
     """
-    Classe per salvare e caricare modelli sklearn
+    Salva/carica modelli sklearn sul Bucket S3-compatible (non piu'
+    filesystem locale): `scheduler`, che esegue il retrain automatico
+    giornaliero, non ha mai avuto un Volume montato - ogni scrittura
+    locale andava persa ad ogni redeploy e non era mai visibile ad `api`.
     """
 
     def __init__(self, **kwargs):
@@ -24,33 +26,36 @@ class SaveLoad:
 
     def generate_filename(self):
         """
-        Genera il percorso completo del file per salvare il modello.
+        Genera la CHIAVE bucket per il modello - sempre '/' (mai
+        `os.path.join`, che su Windows userebbe '\\' e produrrebbe una
+        chiave S3 non valida).
 
         `filename` puo' contenere una sottocartella relativa a `best_models`
         (es. `under_over/under_over_1_5/under_over_1_5_champion_20260914`):
-        `save_model` crea la cartella se non esiste, quindi i mercati rifatti
-        con la procedura nuova salvano direttamente nella propria cartella.
-        :return: percorso completo del file
+        i mercati rifatti con la procedura nuova salvano direttamente nella
+        propria "cartella" (prefisso di chiave).
+        :return: chiave bucket completa
         """
-        self.filename = os.path.abspath(
-            os.path.join('best_models', self.filename if self.filename.endswith('.pkl') else f'{self.filename}.pkl'))
+        name = self.filename if self.filename.endswith('.pkl') else f'{self.filename}.pkl'
+        name = name.replace('\\', '/').lstrip('/')
+        self.key = f'best_models/{name}'
+        self.filename = self.key
 
     def save_model(self, estimator, **metadata):
         """
-        Salva il modello addestrato su file
+        Salva il modello addestrato sul bucket.
         :param estimator: modello sklearn addestrato
         """
         if self.save_pkl:
-            os.makedirs(os.path.dirname(self.filename), exist_ok=True)
-            joblib.dump(estimator, self.filename)
-            logging.info(f'Modello salvato in {self.filename}')
+            bucket_store.put_joblib(self.key, estimator)
+            logging.info(f'Modello salvato sul bucket: {self.key}')
 
             if self.registry_enabled:
                 from src.service_ia.training.model_registry import ModelRegistry
 
                 registry = ModelRegistry(registry_dir=self.registry_dir)
                 registry.register(
-                    model_path=self.filename,
+                    model_path=self.key,
                     market=metadata.get('market_name', self.market_name),
                     model_name=metadata.get('model_name', estimator.__class__.__name__),
                     metrics=metadata.get('metrics', self.metrics),
@@ -66,12 +71,12 @@ class SaveLoad:
 
     def load_model(self):
         """
-        :return: modello sklearn caricato da file
+        :return: modello sklearn caricato dal bucket, o None se assente
         """
-        if os.path.exists(self.filename):
-            estimator = joblib.load(self.filename)
-            logging.info(f'Modello caricato da {self.filename}')
+        if bucket_store.exists(self.key):
+            estimator = bucket_store.get_joblib(self.key)
+            logging.info(f'Modello caricato dal bucket: {self.key}')
             return estimator
         else:
-            logging.error(f'File modello non trovato: {self.filename}')
+            logging.error(f'File modello non trovato sul bucket: {self.key}')
             return None

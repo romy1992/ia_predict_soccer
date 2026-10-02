@@ -24,6 +24,7 @@ from typing import Any, Optional
 import joblib
 import numpy as np
 
+from src.service_ia.training.model_paths import load_expert_estimator
 from src.service_ia.training.model_registry import ModelRegistry
 
 # Specifica esplicita del tipo di classificazione per ciascun mercato "diretto"
@@ -148,10 +149,10 @@ class DirectMarketExpert:
     @classmethod
     def _from_run(cls, run: dict[str, Any]) -> "DirectMarketExpert":
         model_path = run.get("model_path")
-        if not model_path or not os.path.exists(model_path):
+        if not model_path:
             raise FileNotFoundError(f"Model path non trovato per il run {run.get('run_id')}: {model_path}")
 
-        estimator = joblib.load(model_path)
+        estimator = load_expert_estimator(model_path)
         return cls(
             market=run.get("market"),
             estimator=estimator,

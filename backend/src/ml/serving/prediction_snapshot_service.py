@@ -9,8 +9,9 @@ import pandas as pd
 from src.repository.match_prediction_snapshot_repository import MatchPredictionSnapshotRepository
 from src.service_ia.model.match import MatchPredictionSnapshot
 from src.service_ia.training.market_service.filter_market_service import FilterMarketService
-from src.service_ia.training.model_paths import resolve_model_path
+from src.service_ia.training.model_paths import resolve_model_key
 from src.service_ia.training.model_registry import ModelRegistry
+from src.storage import bucket_store
 
 # Stesso insieme di `dashboard_service.FINAL_STATUSES` (fonte di verita' per
 # "questa fixture e' conclusa, i suoi dati non cambieranno piu'") - non
@@ -109,12 +110,10 @@ class PredictionSnapshotService:
         cls._model_cache.clear()
 
     @classmethod
-    def _load_model(cls, model_path: str):
-        if model_path not in cls._model_cache:
-            import joblib
-
-            cls._model_cache[model_path] = joblib.load(model_path)
-        return cls._model_cache[model_path]
+    def _load_model(cls, model_key: str):
+        if model_key not in cls._model_cache:
+            cls._model_cache[model_key] = bucket_store.get_joblib(model_key)
+        return cls._model_cache[model_key]
 
     def _latest_model_for_market(self, market: str) -> Optional[dict[str, Any]]:
         # Letto FRESCO ad ogni chiamata (mai cache a livello di classe qui):
@@ -242,8 +241,8 @@ class PredictionSnapshotService:
             # riga rimasta indietro darebbe una predizione mancante invece di
             # un errore visibile. Se il percorso registrato esiste, e' sempre
             # quello che vince.
-            model_path = resolve_model_path(model_meta.get("model_path"))
-            if not model_path:
+            model_key = resolve_model_key(model_meta.get("model_path"))
+            if not model_key:
                 continue
 
             frame = frames.get(market)
@@ -272,7 +271,7 @@ class PredictionSnapshotService:
                     continue
 
             try:
-                model = self._load_model(model_path)
+                model = self._load_model(model_key)
                 prediction, probability = self._extract_probability(model=model, X=X)
             except Exception:
                 continue

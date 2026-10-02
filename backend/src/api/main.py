@@ -9,7 +9,6 @@ import threading
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Optional
 
-import joblib
 import numpy as np
 from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -137,7 +136,8 @@ from src.service_ia.config.app_config import load_app_config
 from src.service_ia.pre_processing.api_sports_provider import ApiSportsProvider
 from src.service_ia.pre_processing.settlement_service import SettlementService
 from src.service_ia.training.market_service.filter_market_service import FilterMarketService
-from src.service_ia.training.model_paths import resolve_model_path
+from src.service_ia.training.model_paths import resolve_model_key
+from src.storage import bucket_store
 from src.service_ia.training.model_registry import ModelRegistry
 from src.service_ia.training.prediction_logger import PredictionLogger
 
@@ -170,8 +170,7 @@ def _project_root() -> str:
     return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
 
-def _summary_path() -> str:
-    return os.path.join(_project_root(), "best_models", "training_summary.json")
+_TRAINING_SUMMARY_KEY = "best_models/training_summary.json"
 
 
 def _run_prediction_snapshot_refresh_job(target_date: Optional[str], job_id: str) -> None:
@@ -243,17 +242,8 @@ async def _warm_serving_caches() -> None:
 
 
 def _load_summary() -> list[dict[str, Any]]:
-    path = _summary_path()
-    if not os.path.exists(path):
-        return []
-    with open(path, "r", encoding="utf-8") as f:
-        try:
-            payload = json.load(f)
-            if isinstance(payload, list):
-                return payload
-            return []
-        except json.JSONDecodeError:
-            return []
+    payload = bucket_store.get_json(_TRAINING_SUMMARY_KEY, default=[])
+    return payload if isinstance(payload, list) else []
 
 
 def _extract_probability(model: Any, X) -> tuple[int, float]:
@@ -509,16 +499,23 @@ def predict(market: str, payload: PredictRequest) -> PredictResponse:
     if not active:
         raise HTTPException(status_code=404, detail=f"Nessun modello disponibile per mercato {market}")
 
-    # Il percorso registrato viene risolto (`resolve_model_path`) e non usato
+    # La chiave registrata viene risolta (`resolve_model_key`) e non usata
     # alla cieca: dopo la riorganizzazione di `best_models/` un modello puo'
     # stare in `under_over/<mercato>/` o in `archivio/`. Il valore registrato
     # vince sempre quando esiste; il messaggio d'errore mostra comunque quello,
-    # non il percorso cercato, perche' e' li' che va corretta la riga.
-    model_path = resolve_model_path(active.get("model_path"))
-    if not model_path:
+    # non la chiave cercata, perche' e' li' che va corretta la riga.
+    model_key = resolve_model_key(active.get("model_path"))
+    if not model_key:
         raise HTTPException(status_code=404, detail=f"File modello non trovato: {active.get('model_path')}")
 
-    model = joblib.load(model_path)
+    try:
+        model = bucket_store.get_joblib(model_key)
+    except Exception as exc:
+        # Una GET di rete puo' fallire transitoriamente (timeout, bucket
+        # momentaneamente irraggiungibile) dove un file locale non
+        # avrebbe mai sollevato - 503 invece di un 500 generico, cosi' il
+        # chiamante sa che vale la pena ritentare.
+        raise HTTPException(status_code=503, detail=f"Impossibile caricare il modello dal bucket: {exc}") from exc
 
     builder = FilterMarketService()
     frame = builder.build_prediction_frame(market=market, fixture_id=payload.fixture_id)

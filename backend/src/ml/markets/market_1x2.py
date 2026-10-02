@@ -44,6 +44,7 @@ from src.ml.evaluation.multiclass_probability_metrics import (
 from src.ml.validation.temporal_split import expanding_window_splits
 from src.service_ia.pre_processing.feature_selection import FeatureSelectionService
 from src.service_ia.training.market_service.filter_market_service import FilterMarketService
+from src.service_ia.training.model_paths import load_expert_estimator
 from src.service_ia.training.model_registry import ModelRegistry
 
 MARKET_NAME = "1x2"
@@ -497,10 +498,10 @@ class Market1x2Expert:
     @classmethod
     def _from_run(cls, run: dict[str, Any]) -> "Market1x2Expert":
         model_path = run.get("model_path")
-        if not model_path or not os.path.exists(model_path):
+        if not model_path:
             raise FileNotFoundError(f"Model path non trovato per il run {run.get('run_id')}: {model_path}")
 
-        estimator = joblib.load(model_path)
+        estimator = load_expert_estimator(model_path)
         return cls(
             estimator=estimator,
             feature_names=list(run.get("feature_names") or []),

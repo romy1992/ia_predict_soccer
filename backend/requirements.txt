@@ -20,4 +20,5 @@ stripe>=11.0
 requests>=2.31
 rapidfuzz>=3.9
 python-dateutil>=2.9
+boto3>=1.34
 

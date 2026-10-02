@@ -12,6 +12,7 @@ from src.ml.serving.prediction_snapshot_service import PredictionSnapshotService
 from src.repository.match_prediction_snapshot_repository import MatchPredictionSnapshotRepository
 from src.service_ia.model.match import Base, MatchPredictionSnapshot
 from src.service_ia.training.model_registry import ModelRegistry
+from src.storage import bucket_store
 
 
 def _make_session_factory():
@@ -98,9 +99,12 @@ class TestPredictionSnapshotServiceResolvePredictions(unittest.TestCase):
         PredictionSnapshotService.clear_model_cache()
         self.addCleanup(PredictionSnapshotService.clear_model_cache)
 
-        self._tmp_model_file = tempfile.NamedTemporaryFile(suffix=".pkl", delete=False)
-        self._tmp_model_file.close()
-        self.model_path = self._tmp_model_file.name
+        # Chiave presente sul bucket fake (non un path locale): `_load_model`
+        # e' quasi sempre mockato in questi test, ma la risoluzione
+        # (`resolve_model_key`) avviene PRIMA e non e' mockata - deve
+        # trovare qualcosa di esistente per non saltare il mercato.
+        self.model_path = "best_models/h2h/h2h_champion_test.pkl"
+        bucket_store.put_json(self.model_path, {"placeholder": True})
 
     def _service(self, frames_by_market, model_meta_by_market, fake_model):
         service = PredictionSnapshotService()

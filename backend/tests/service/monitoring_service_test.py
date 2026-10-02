@@ -23,6 +23,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from src.jobs.job_history import JobHistory
+from src.storage import bucket_store
 from src.ml.monitoring.monitoring_policy import MonitoringThresholds
 from src.ml.monitoring.monitoring_service import MonitoringService
 from src.repository.prediction_ledger_repository import PredictionLedgerRepository
@@ -355,11 +356,10 @@ class TestRecentFailedJobsCount(unittest.TestCase):
         history.update_job("j1", status="failed")
         # Forziamo timestamp esplicito nel passato remoto per un secondo job.
         old_failed = history.create_job(job_type="retrain", status="failed", job_id="j2")
-        rows = history._read_rows()
-        for row in rows:
-            if row["job_id"] == "j2":
-                row["timestamp"] = (now - timedelta(days=30)).isoformat()
-        history._write_rows(rows)
+        key = history._job_key("j2")
+        row = bucket_store.get_json(key)
+        row["timestamp"] = (now - timedelta(days=30)).isoformat()
+        bucket_store.put_json(key, row)
 
         service = MonitoringService(
             ledger_repo=mock.Mock(),

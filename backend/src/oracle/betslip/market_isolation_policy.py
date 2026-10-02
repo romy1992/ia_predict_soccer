@@ -32,15 +32,16 @@ mai a una richiesta che nomina esplicitamente il mercato.
 
 from __future__ import annotations
 
-import json
 import logging
-import os
 import threading
 from typing import Any
+
+from src.storage import bucket_store
 
 logger = logging.getLogger(__name__)
 
 _LOCK = threading.Lock()
+_ISOLATED_MARKETS_KEY = "best_models/isolated_markets.json"
 
 # Default deliberatamente prudente (mai un edit silenzioso: una nuova
 # esclusione/rimozione passa da `set_isolated_markets`, mai da qui). Cards
@@ -58,24 +59,17 @@ DEFAULT_ISOLATED_MARKETS: frozenset[str] = frozenset(
 )
 
 
-def _isolated_markets_path() -> str:
-    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-    return os.path.join(project_root, "best_models", "isolated_markets.json")
-
-
 def get_isolated_markets() -> frozenset[str]:
     """Legge la lista corrente dei mercati isolati, sempre normalizzata
-    (stringhe, minuscolo, senza spazi) - un file assente/vuoto/corrotto
+    (stringhe, minuscolo, senza spazi) - una chiave assente/vuota/corrotta
     ritorna il default, mai un'eccezione propagata al chiamante (stesso
     principio di `job_settings.get_job_settings`)."""
-    path = _isolated_markets_path()
-    if not os.path.exists(path):
-        return DEFAULT_ISOLATED_MARKETS
     try:
-        with open(path, "r", encoding="utf-8") as f:
-            loaded = json.load(f)
-    except (json.JSONDecodeError, OSError) as exc:
-        logger.warning("isolated_markets.json illeggibile (%s): uso i default", exc)
+        loaded = bucket_store.get_json(_ISOLATED_MARKETS_KEY, default=None)
+    except Exception as exc:
+        logger.warning("isolated_markets.json illeggibile dal bucket (%s): uso i default", exc)
+        return DEFAULT_ISOLATED_MARKETS
+    if loaded is None:
         return DEFAULT_ISOLATED_MARKETS
     if not isinstance(loaded, list):
         logger.warning("isolated_markets.json non e' una lista: uso i default")
@@ -87,14 +81,10 @@ def set_isolated_markets(markets: list[str]) -> frozenset[str]:
     """Sostituisce INTERAMENTE la lista (mai un merge parziale: a
     differenza dei toggle per-job di `job_settings`, qui un'unica lista
     esplicita e' piu' chiara di un dizionario di flag per un insieme di
-    mercati che cambia raramente). Persistenza atomica (file temporaneo +
-    `os.replace`), stesso principio di `job_settings.update_job_settings`."""
+    mercati che cambia raramente). Persistenza sul bucket (PUT dell'intero
+    oggetto, atomico per costruzione), stesso principio di
+    `job_settings.update_job_settings`."""
     normalized = sorted({str(m).strip().lower() for m in markets if str(m).strip()})
     with _LOCK:
-        path = _isolated_markets_path()
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        tmp_path = f"{path}.tmp"
-        with open(tmp_path, "w", encoding="utf-8") as f:
-            json.dump(normalized, f, ensure_ascii=False, indent=2)
-        os.replace(tmp_path, path)
+        bucket_store.put_json(_ISOLATED_MARKETS_KEY, normalized)
     return frozenset(normalized)

@@ -1,10 +1,8 @@
-import os
-import tempfile
 import unittest
-from unittest import mock
 
 from src.jobs import job_settings
 from src.service_ia.config.app_config import AppConfig
+from src.storage import bucket_store
 
 
 def _cfg(**overrides) -> AppConfig:
@@ -32,18 +30,9 @@ def _cfg(**overrides) -> AppConfig:
 
 
 class _IsolatedSchedulePath(unittest.TestCase):
-    """Isola `job_schedule.json` in una directory temporanea per ogni test,
-    cosi' nessun test tocca mai il file reale in `best_models/` del
-    progetto (stesso principio di `JobHistory(path=...)` nei test
-    esistenti, qui applicato via monkeypatch del path module-level)."""
-
-    def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self._tmp.cleanup)
-        schedule_path = os.path.join(self._tmp.name, "job_schedule.json")
-        patcher = mock.patch.object(job_settings, "_schedule_path", return_value=schedule_path)
-        patcher.start()
-        self.addCleanup(patcher.stop)
+    """Isolamento garantito dalla fixture autouse di `conftest.py` (bucket
+    fake nuovo ad ogni test): nessun mock di path necessario, ogni test
+    parte gia' con un bucket vuoto."""
 
 
 class TestCfgDefaultSchedule(_IsolatedSchedulePath):
@@ -68,10 +57,7 @@ class TestGetJobScheduleOverrides(_IsolatedSchedulePath):
         self.assertEqual(job_settings.get_job_schedule_overrides(), {})
 
     def test_returns_empty_dict_on_corrupt_file(self):
-        path = job_settings._schedule_path()
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
-            f.write("{not valid json")
+        bucket_store.put_bytes(job_settings._SCHEDULE_KEY, b"{not valid json")
         self.assertEqual(job_settings.get_job_schedule_overrides(), {})
 
 
@@ -115,11 +101,9 @@ class TestUpdateAndResetJobSchedule(_IsolatedSchedulePath):
         overrides = job_settings.get_job_schedule_overrides()
         self.assertEqual(overrides["ml_training"], {"hour": 2, "minute": 15})
 
-    def test_update_persists_atomically_no_tmp_file_left(self):
+    def test_update_persists_on_the_bucket(self):
         job_settings.update_job_schedule("data_sync_today", {"interval_minutes": 20})
-        path = job_settings._schedule_path()
-        self.assertTrue(os.path.exists(path))
-        self.assertFalse(os.path.exists(f"{path}.tmp"))
+        self.assertTrue(bucket_store.exists(job_settings._SCHEDULE_KEY))
 
     def test_update_does_not_clobber_other_jobs(self):
         job_settings.update_job_schedule("ml_training", {"hour": 2, "minute": 15})
