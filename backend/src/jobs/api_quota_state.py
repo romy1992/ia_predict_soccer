@@ -1,62 +1,49 @@
 from __future__ import annotations
 
-import json
 import logging
-import os
 import threading
 from datetime import datetime, timezone
 from typing import Any, Optional
 
+from src.storage import bucket_store
+
 logger = logging.getLogger(__name__)
 
 _LOCK = threading.Lock()
-
-
-def _state_path() -> str:
-    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-    return os.path.join(project_root, "best_models", "api_quota_state.json")
+_STATE_KEY = "best_models/api_quota_state.json"
 
 
 def _read_state() -> dict[str, Any]:
-    path = _state_path()
-    if not os.path.exists(path):
-        return {}
     try:
-        with open(path, "r", encoding="utf-8") as f:
-            payload = json.load(f)
-            return payload if isinstance(payload, dict) else {}
-    except (json.JSONDecodeError, OSError):
+        payload = bucket_store.get_json(_STATE_KEY, default={})
+    except Exception:
         return {}
+    return payload if isinstance(payload, dict) else {}
 
 
 def _write_state(partial_update: dict[str, Any]) -> None:
     """Merge (mai overwrite totale) di `partial_update` nello stato gia'
-    persistito su disco, poi scrittura atomica (file temp + `os.replace`,
-    per evitare letture di JSON troncato in caso di scritture concorrenti).
+    persistito sul bucket (PUT dell'intero oggetto - atomico per
+    costruzione, S3 non ha scritture parziali).
 
-    Scritto su un file condiviso tra i container `api` e `scheduler`
-    (entrambi montano `./best_models`, vedi docker-compose.yml) perche' le
-    chiamate reali avvengono in PROCESSI SEPARATI: senza persistenza su
-    disco, l'endpoint `/settings/quota` (letto dal container `api`) non
-    vedrebbe mai gli aggiornamenti fatti dalle chiamate del `scheduler`.
-    Il merge (invece di un overwrite) e' necessario perche' due fonti
-    diverse scrivono sullo STESSO file in momenti diversi: lo snapshot
-    passivo `daily_remaining/minute_*` (osservato su OGNI chiamata dati,
-    vedi `record_quota_snapshot`) e lo snapshot autoritativo `status_*`
-    (solo quando l'utente clicca "Aggiorna", vedi `record_status_snapshot`)
-    - un overwrite totale farebbe perdere l'uno scrivendo l'altro."""
-    path = _state_path()
+    Scritto su una chiave condivisa tra i container `api` e `scheduler`
+    (stesso bucket, nessun Volume) perche' le chiamate reali avvengono in
+    PROCESSI SEPARATI: senza questa persistenza condivisa, l'endpoint
+    `/settings/quota` (letto dal container `api`) non vedrebbe mai gli
+    aggiornamenti fatti dalle chiamate del `scheduler`. Il merge (invece di
+    un overwrite) e' necessario perche' due fonti diverse scrivono sulla
+    STESSA chiave in momenti diversi: lo snapshot passivo
+    `daily_remaining/minute_*` (osservato su OGNI chiamata dati, vedi
+    `record_quota_snapshot`) e lo snapshot autoritativo `status_*` (solo
+    quando l'utente clicca "Aggiorna", vedi `record_status_snapshot`) - un
+    overwrite totale farebbe perdere l'uno scrivendo l'altro."""
     try:
         with _LOCK:
             state = _read_state()
             state.update(partial_update)
-            os.makedirs(os.path.dirname(path), exist_ok=True)
-            tmp_path = f"{path}.tmp"
-            with open(tmp_path, "w", encoding="utf-8") as f:
-                json.dump(state, f, ensure_ascii=False, indent=2)
-            os.replace(tmp_path, path)
-    except OSError as exc:
-        logger.warning("Impossibile persistere api_quota_state.json: %s", exc)
+            bucket_store.put_json(_STATE_KEY, state)
+    except Exception as exc:
+        logger.warning("Impossibile persistere api_quota_state.json sul bucket: %s", exc)
 
 
 def record_quota_snapshot(

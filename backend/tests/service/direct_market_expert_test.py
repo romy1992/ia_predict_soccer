@@ -2,12 +2,12 @@ import os
 import tempfile
 import unittest
 
-import joblib
 import numpy as np
 import pandas as pd
 from sklearn.linear_model import LogisticRegression
 
 from src.ml.experts.direct.direct_market_expert import DIRECT_MARKET_SPECS, DirectMarketExpert
+from src.storage import bucket_store
 
 
 class _FakeRegistry:
@@ -79,23 +79,22 @@ class TestDirectMarketExpert(unittest.TestCase):
 
     def test_load_production_uses_registry_and_reads_model_path(self):
         model, _ = self._fitted_estimator()
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            model_path = os.path.join(tmp_dir, "h2h_champion.pkl")
-            joblib.dump(model, model_path)
+        model_key = "best_models/h2h/h2h_champion.pkl"
+        bucket_store.put_joblib(model_key, model)
 
-            fake_run = {
-                "market": "h2h",
-                "model_path": model_path,
-                "feature_names": ["f1", "f2"],
-                "run_id": "h2h_20260101T000000000000Z",
-                "current_stage": "production",
-            }
-            registry = _FakeRegistry(production_run=fake_run)
+        fake_run = {
+            "market": "h2h",
+            "model_path": model_key,
+            "feature_names": ["f1", "f2"],
+            "run_id": "h2h_20260101T000000000000Z",
+            "current_stage": "production",
+        }
+        registry = _FakeRegistry(production_run=fake_run)
 
-            expert = DirectMarketExpert.load_production(market="h2h", registry=registry)
-            self.assertEqual(expert.market, "h2h")
-            self.assertEqual(expert.stage, "production")
-            self.assertEqual(expert.run_id, fake_run["run_id"])
+        expert = DirectMarketExpert.load_production(market="h2h", registry=registry)
+        self.assertEqual(expert.market, "h2h")
+        self.assertEqual(expert.stage, "production")
+        self.assertEqual(expert.run_id, fake_run["run_id"])
 
     def test_load_production_raises_lookup_error_when_missing(self):
         registry = _FakeRegistry(production_run=None)

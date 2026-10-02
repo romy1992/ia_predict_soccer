@@ -25,18 +25,19 @@ una vista diagnostica dedicata."""
 
 from __future__ import annotations
 
+import logging
 from dataclasses import asdict, dataclass, field
 from typing import Any, Optional
 
-import joblib
 import numpy as np
 import pandas as pd
 from sklearn.metrics import confusion_matrix, precision_recall_fscore_support, roc_auc_score, roc_curve
 
 from src.ml.evaluation.probability_metrics import temporal_oof_probabilities
 from src.service_ia.training.market_service.filter_market_service import FilterMarketService
-from src.service_ia.training.model_paths import resolve_model_path
+from src.service_ia.training.model_paths import resolve_model_key
 from src.service_ia.training.model_registry import ModelRegistry
+from src.storage import bucket_store
 from src.service_ia.training.train_multi_market import _build_temporal_cv, _filter_valid_splits
 
 _META_COLUMNS = ["y", "market", "id_fixture", "season", "league", "prediction_at"]
@@ -92,12 +93,12 @@ def evaluate_market_diagnostics(
     if not model_meta:
         return MarketDiagnostics(market=market, status="no_model")
 
-    # Percorso RISOLTO: dopo la riorganizzazione di `best_models/` il file
+    # Chiave RISOLTA: dopo la riorganizzazione di `best_models/` il file
     # puo' stare in `under_over/<mercato>/` o in `archivio/`, e una riga di
     # registry rimasta indietro farebbe sparire il mercato dalla diagnostica
     # come se non avesse un modello.
-    model_path = resolve_model_path(model_meta.get("model_path"))
-    if not model_path:
+    model_key = resolve_model_key(model_meta.get("model_path"))
+    if not model_key:
         return MarketDiagnostics(market=market, status="no_model")
 
     df = FilterMarketService().build_dataset(market=market, seasons=seasons)
@@ -119,7 +120,11 @@ def evaluate_market_diagnostics(
     if len(cv_splits) < 2:
         return MarketDiagnostics(market=market, status="insufficient_data")
 
-    champion = joblib.load(model_path)
+    try:
+        champion = bucket_store.get_joblib(model_key)
+    except Exception:
+        logging.exception("Impossibile caricare il modello dal bucket per %s (chiave %s)", market, model_key)
+        return MarketDiagnostics(market=market, status="no_model")
     oof = temporal_oof_probabilities(estimator=champion, X=X, y=y, cv_splits=cv_splits)
     if oof.empty or oof["y_true"].nunique() < 2:
         return MarketDiagnostics(market=market, status="single_class_oof")

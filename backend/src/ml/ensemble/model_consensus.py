@@ -41,7 +41,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-import joblib
+from src.storage import bucket_store
 import numpy as np
 import pandas as pd
 
@@ -302,7 +302,7 @@ def build_model_consensus_for_fixture(
     meta_model_feature_names: Optional[list[str]] = None
     if meta_run:
         try:
-            meta_model = joblib.load(meta_run["model_path"])
+            meta_model = bucket_store.get_joblib(meta_run["model_path"])
             meta_model_feature_names = list(meta_run.get("feature_names") or [])
         except Exception:
             meta_model = None

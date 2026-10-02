@@ -37,6 +37,7 @@ from src.service_ia.model.match import Match, MatchPredictionSnapshot, Statistic
 from src.service_ia.training.market_service.filter_market_service import FilterMarketService
 from src.service_ia.training.model_registry import ModelRegistry
 from src.service_ia.utility.request_api import base_api_statistics
+from src.storage import bucket_store
 
 FINAL_STATUSES = {"FT", "AET", "PEN", "ABD", "CANC", "PST", "WO"}
 LIVE_STATUSES = {"1H", "HT", "2H", "ET", "BT", "P", "LIVE", "INT"}
@@ -1878,40 +1879,31 @@ class DashboardService:
             "day": day.__dict__,
         }
 
-    _DATES_STATE_FILENAME = "dashboard_dates_state.json"
-
-    def _dates_state_path(self) -> str:
-        root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "best_models"))
-        os.makedirs(root, exist_ok=True)
-        return os.path.join(root, self._DATES_STATE_FILENAME)
+    _DATES_STATE_KEY = "best_models/dashboard_dates_state.json"
 
     def _first_seen_date(self, today: date) -> date:
         """Data di "nascita" della select date accumulata (TopFilters):
-        persistita su file (volume `best_models/`, sopravvive ai rebuild
-        Docker) la PRIMA volta che questo endpoint viene chiamato, cosi' la
-        lista cresce di un giorno alla volta da quel momento in poi (richiesta
-        utente: "elenco di date dal giorno 1 ... che man mano viene
-        accumulato"), SENZA dipendere da un trigger esterno che popoli il
-        Prediction Ledger (usato comunque come fonte aggiuntiva in
+        persistita sul bucket (condiviso tra `api`/`scheduler`, sopravvive
+        ai redeploy) la PRIMA volta che questo endpoint viene chiamato, cosi'
+        la lista cresce di un giorno alla volta da quel momento in poi
+        (richiesta utente: "elenco di date dal giorno 1 ... che man mano
+        viene accumulato"), SENZA dipendere da un trigger esterno che popoli
+        il Prediction Ledger (usato comunque come fonte aggiuntiva in
         `get_available_dates`: se contiene una data ancora piu' vecchia,
         vince quella)."""
-        path = self._dates_state_path()
         stored: Optional[date] = None
-        if os.path.exists(path):
-            try:
-                with open(path, "r", encoding="utf-8") as f:
-                    payload = json.load(f)
-                raw = payload.get("first_seen_date")
-                if raw:
-                    stored = date.fromisoformat(raw)
-            except Exception:
-                stored = None
+        try:
+            payload = bucket_store.get_json(self._DATES_STATE_KEY, default=None)
+            raw = payload.get("first_seen_date") if payload else None
+            if raw:
+                stored = date.fromisoformat(raw)
+        except Exception:
+            stored = None
 
         if stored is None:
             stored = today
             try:
-                with open(path, "w", encoding="utf-8") as f:
-                    json.dump({"first_seen_date": stored.isoformat()}, f)
+                bucket_store.put_json(self._DATES_STATE_KEY, {"first_seen_date": stored.isoformat()})
             except Exception:
                 pass
 

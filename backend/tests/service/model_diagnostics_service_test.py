@@ -1,9 +1,7 @@
-import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from unittest import mock
 
-import joblib
 import numpy as np
 import pandas as pd
 from sklearn.linear_model import LogisticRegression
@@ -15,6 +13,7 @@ from src.ml.evaluation.model_diagnostics_service import (
     list_diagnosable_markets,
 )
 from src.service_ia.training.market_service.filter_market_service import FilterMarketService
+from src.storage import bucket_store
 
 
 def _synthetic_binary_dataset(n: int = 150, seed: int = 7) -> pd.DataFrame:
@@ -83,13 +82,17 @@ class TestEvaluateMarketDiagnosticsStatuses(unittest.TestCase):
         self.assertEqual(result.status, "no_model")
 
     def test_insufficient_data_when_dataset_is_empty(self):
-        registry = _FakeRegistry(production={"h2h": {"model_path": __file__}})  # file esistente, path irrilevante qui
+        model_path = "best_models/h2h/h2h_champion_test.pkl"  # chiave esistente sul bucket fake, contenuto irrilevante qui
+        bucket_store.put_joblib(model_path, LogisticRegression())
+        registry = _FakeRegistry(production={"h2h": {"model_path": model_path}})
         with mock.patch.object(FilterMarketService, "build_dataset", return_value=pd.DataFrame()):
             result = evaluate_market_diagnostics(market="h2h", registry=registry)
         self.assertEqual(result.status, "insufficient_data")
 
     def test_insufficient_data_when_too_few_rows_for_temporal_cv(self):
-        registry = _FakeRegistry(production={"h2h": {"model_path": __file__}})
+        model_path = "best_models/h2h/h2h_champion_test.pkl"
+        bucket_store.put_joblib(model_path, LogisticRegression())
+        registry = _FakeRegistry(production={"h2h": {"model_path": model_path}})
         tiny_df = _synthetic_binary_dataset(n=5)
         with mock.patch.object(FilterMarketService, "build_dataset", return_value=tiny_df):
             result = evaluate_market_diagnostics(market="h2h", registry=registry)
@@ -98,10 +101,8 @@ class TestEvaluateMarketDiagnosticsStatuses(unittest.TestCase):
 
 class TestEvaluateMarketDiagnosticsEndToEnd(unittest.TestCase):
     def setUp(self):
-        self._tmp_model_file = tempfile.NamedTemporaryFile(suffix=".pkl", delete=False)
-        self._tmp_model_file.close()
-        self.model_path = self._tmp_model_file.name
-        joblib.dump(LogisticRegression(max_iter=1000), self.model_path)
+        self.model_path = "best_models/h2h/h2h_champion_test.pkl"
+        bucket_store.put_joblib(self.model_path, LogisticRegression(max_iter=1000))
 
     def test_ok_status_with_full_report(self):
         registry = _FakeRegistry(
@@ -160,10 +161,8 @@ class TestEvaluateMarketDiagnosticsEndToEnd(unittest.TestCase):
 
 class TestEvaluateMarketsDiagnosticsBatch(unittest.TestCase):
     def setUp(self):
-        self._tmp_model_file = tempfile.NamedTemporaryFile(suffix=".pkl", delete=False)
-        self._tmp_model_file.close()
-        self.model_path = self._tmp_model_file.name
-        joblib.dump(LogisticRegression(max_iter=1000), self.model_path)
+        self.model_path = "best_models/h2h/h2h_champion_test.pkl"
+        bucket_store.put_joblib(self.model_path, LogisticRegression(max_iter=1000))
 
     def test_isolates_per_market_errors_without_failing_the_whole_batch(self):
         registry = _FakeRegistry()

@@ -52,6 +52,7 @@ from src.ml.markets.totals.totals_market import _count_monotonicity_violations, 
 from src.ml.validation.temporal_split import expanding_window_splits
 from src.repository.match_repository import MatchRepository
 from src.service_ia.training.market_service.filter_market_service import FilterMarketService
+from src.service_ia.training.model_paths import load_expert_estimator
 from src.service_ia.training.model_registry import ModelRegistry
 from src.service_ia.training.train_multi_market import _select_champion_via_model_search
 from src.service_ia.utility.utils import convert_orm_match_to_dict
@@ -590,10 +591,10 @@ class CornersExpert:
     @classmethod
     def _from_run(cls, line: float, run: dict[str, Any]) -> "CornersExpert":
         model_path = run.get("model_path")
-        if not model_path or not os.path.exists(model_path):
+        if not model_path:
             raise FileNotFoundError(f"Model path non trovato per il run {run.get('run_id')}: {model_path}")
 
-        estimator = joblib.load(model_path)
+        estimator = load_expert_estimator(model_path)
         return cls(
             line=float(line),
             estimator=estimator,

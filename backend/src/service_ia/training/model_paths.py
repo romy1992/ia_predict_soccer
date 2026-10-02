@@ -36,6 +36,8 @@ import os
 import re
 from typing import Iterable, Optional
 
+from src.storage import bucket_store
+
 BEST_MODELS_DIRNAME = "best_models"
 CONTAINER_BEST_MODELS = "/app/best_models"
 ARCHIVIO_DIRNAME = "archivio"
@@ -193,7 +195,10 @@ def resolve_model_path(path: Optional[str], root: Optional[str] = None) -> Optio
     Le alternative servono solo quando quel file non c'e' piu' - tipicamente
     una riga rimasta indietro dopo uno spostamento - e sostituiscono un "File
     modello non trovato" con il modello giusto trovato altrove.
-    """
+
+    SOLO per gli script operativi locali (`scripts/analysis`/
+    `scripts/maintenance`, mai eseguiti su Railway): `api`/`scheduler`
+    usano `resolve_model_key` sul bucket, vedi sotto."""
     if not path:
         return None
 
@@ -206,3 +211,59 @@ def resolve_model_path(path: Optional[str], root: Optional[str] = None) -> Optio
         if os.path.exists(candidato):
             return candidato
     return None
+
+
+def _candidate_keys(path: str, root: str) -> Iterable[str]:
+    """Come `_candidate_paths`, ma chiavi S3 (sempre `/`, mai
+    `os.path.join` che su Windows userebbe `\\`)."""
+    yield path
+
+    relativo = relative_to_best_models(path)
+    if relativo is None:
+        return
+
+    yield f"{root}/{relativo}"
+
+    nome = os.path.basename(relativo)
+    yield f"{root}/{nome}"
+    yield f"{root}/{ARCHIVIO_DIRNAME}/{nome}"
+    for mercato in MERCATI_NUOVA_PROCEDURA:
+        yield f"{root}/under_over/{mercato}/{nome}"
+        yield f"{root}/{ARCHIVIO_DIRNAME}/{mercato}/{nome}"
+    for mercato in MERCATI_CARTELLA_EVENTO:
+        yield f"{root}/{mercato}/{nome}"
+        yield f"{root}/{ARCHIVIO_DIRNAME}/{mercato}/{nome}"
+
+
+def resolve_model_key(path: Optional[str], root: str = BEST_MODELS_DIRNAME) -> Optional[str]:
+    """Equivalente di `resolve_model_path` ma per chiavi sul Bucket
+    S3-compatible (`api`/`scheduler`, mai filesystem locale): stessa
+    cascata di candidati, verificata con `bucket_store.exists` invece di
+    `os.path.exists`. Mai solleva - `None` se nessun candidato esiste."""
+    if not path:
+        return None
+
+    visti: set[str] = set()
+    for candidato in _candidate_keys(str(path), root):
+        if not candidato or candidato in visti:
+            continue
+        visti.add(candidato)
+        if bucket_store.exists(candidato):
+            return candidato
+    return None
+
+
+def load_expert_estimator(path: Optional[str], root: str = BEST_MODELS_DIRNAME):
+    """Risolve ``path`` a una chiave sul bucket e carica l'estimator con
+    `joblib` - fattorizza il blocco "check esistenza poi joblib.load"
+    duplicato identico nelle 5 classi `*Expert._from_run`
+    (`market_1x2.py`, `corners_market.py`, `cards_market.py`,
+    `live_match_outcome_model.py`, `direct_market_expert.py`), cosi' i 5
+    punti restano allineati invece di 5 edit paralleli che possono
+    divergere. Solleva `FileNotFoundError` se nessun candidato esiste -
+    stesso contratto che queste classi avevano gia' col controllo
+    `os.path.exists` esplicito."""
+    key = resolve_model_key(path, root=root)
+    if key is None:
+        raise FileNotFoundError(f"File modello non trovato: {path}")
+    return bucket_store.get_joblib(key)

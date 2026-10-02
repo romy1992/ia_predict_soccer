@@ -31,6 +31,7 @@ from src.ml.validation.temporal_split import expanding_window_splits
 from src.service_ia.pre_processing.feature_selection import FeatureSelectionService
 from src.service_ia.training.market_service.filter_market_service import FilterMarketService
 from src.service_ia.training.model_paths import destination_subdir
+from src.storage import bucket_store
 from src.service_ia.training.utility_training.save_load import SaveLoad
 
 logging.basicConfig(level=logging.INFO)
@@ -629,10 +630,9 @@ def train_market(
             os.path.join(sotto, f"{market}_champion_calibrator") if sotto else f"{market}_champion_calibrator"
         )
         if calibration_payload.get("enabled"):
-            calibrator_path = os.path.abspath(os.path.join("best_models", f"{relativo_calibratore}.pkl"))
-            os.makedirs(os.path.dirname(calibrator_path), exist_ok=True)
-            joblib.dump(champion_estimator, calibrator_path)
-            calibration_payload["calibrator_path"] = calibrator_path
+            calibrator_key = f"best_models/{relativo_calibratore.replace(os.sep, '/')}.pkl"
+            bucket_store.put_joblib(calibrator_key, champion_estimator)
+            calibration_payload["calibrator_path"] = calibrator_key
 
         saver = SaveLoad(
             save_pkl=True,
@@ -737,8 +737,6 @@ def train_all_markets(
                 )
             )
 
-    summary_path = os.path.abspath(os.path.join("best_models", "training_summary.json"))
-    os.makedirs(os.path.dirname(summary_path), exist_ok=True)
     serializable_results = [
         {
             "market": r.market,
@@ -751,8 +749,7 @@ def train_all_markets(
         }
         for r in results
     ]
-    with open(summary_path, "w", encoding="utf-8") as f:
-        json.dump(serializable_results, f, ensure_ascii=False, indent=2)
+    bucket_store.put_json("best_models/training_summary.json", serializable_results)
 
     return results
 

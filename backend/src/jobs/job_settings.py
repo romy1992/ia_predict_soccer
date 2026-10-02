@@ -1,14 +1,13 @@
 from __future__ import annotations
 
-import json
 import logging
-import os
 import threading
 from datetime import datetime, timezone
 from typing import Any, Optional
 
 from src.jobs.api_quota_state import get_quota_snapshot, is_quota_exhausted_today
 from src.service_ia.config.app_config import AppConfig, load_app_config
+from src.storage import bucket_store
 
 logger = logging.getLogger(__name__)
 
@@ -232,26 +231,24 @@ DEFAULT_JOB_SETTINGS: dict[str, bool] = {
 
 
 
-def _settings_path() -> str:
-    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-    return os.path.join(project_root, "best_models", "job_settings.json")
+_SETTINGS_KEY = "best_models/job_settings.json"
 
 
 def get_job_settings() -> dict[str, bool]:
     """Legge i flag enabled/disabled correnti, sempre con TUTTE le chiavi
-    note (anche se il file su disco e' vuoto/parziale/mancante): un job
+    note (anche se l'oggetto sul bucket e' vuoto/parziale/mancante): un job
     nuovo aggiunto in futuro a `JOB_DEFINITIONS` risultera' comunque
-    presente con il suo default, mai un KeyError lato scheduler/frontend."""
-    path = _settings_path()
-    stored: dict[str, Any] = {}
-    if os.path.exists(path):
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                loaded = json.load(f)
-                if isinstance(loaded, dict):
-                    stored = loaded
-        except (json.JSONDecodeError, OSError) as exc:
-            logger.warning("job_settings.json illeggibile (%s): uso i default", exc)
+    presente con il suo default, mai un KeyError lato scheduler/frontend.
+    Chiamata PRIMA di ogni esecuzione schedulata (`_run_if_enabled`): un
+    fallimento di rete verso il bucket non deve mai bloccare il tick dello
+    scheduler, uso i default come fallback."""
+    try:
+        stored = bucket_store.get_json(_SETTINGS_KEY, default={})
+    except Exception as exc:
+        logger.warning("job_settings.json illeggibile dal bucket (%s): uso i default", exc)
+        stored = {}
+    if not isinstance(stored, dict):
+        stored = {}
 
     merged = dict(DEFAULT_JOB_SETTINGS)
     for job_id in JOB_DEFINITIONS:
@@ -261,11 +258,12 @@ def get_job_settings() -> dict[str, bool]:
 
 
 def update_job_settings(updates: dict[str, bool]) -> dict[str, bool]:
-    """Aggiorna (merge parziale) i flag e persiste su disco (scrittura
-    atomica via file temporaneo + `os.replace`, cosi' un container che
-    legge nel mezzo di uno scritto da un altro non trova mai JSON tronco).
-    Chiavi non riconosciute sollevano `ValueError` esplicito (mai un job
-    fantasma scritto su file per un typo del chiamante)."""
+    """Aggiorna (merge parziale) i flag e persiste sul bucket (PUT
+    dell'intero oggetto - stesso principio dell'atomicita' che la vecchia
+    scrittura via file temporaneo + `os.replace` garantiva, qui per
+    costruzione: S3 non ha scritture parziali). Chiavi non riconosciute
+    sollevano `ValueError` esplicito (mai un job fantasma scritto per un
+    typo del chiamante)."""
     unknown = [job_id for job_id in updates if job_id not in JOB_DEFINITIONS]
     if unknown:
         raise ValueError(f"Job id non riconosciuti: {unknown}")
@@ -273,13 +271,7 @@ def update_job_settings(updates: dict[str, bool]) -> dict[str, bool]:
     with _LOCK:
         current = get_job_settings()
         current.update({job_id: bool(value) for job_id, value in updates.items()})
-
-        path = _settings_path()
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        tmp_path = f"{path}.tmp"
-        with open(tmp_path, "w", encoding="utf-8") as f:
-            json.dump(current, f, ensure_ascii=False, indent=2)
-        os.replace(tmp_path, path)
+        bucket_store.put_json(_SETTINGS_KEY, current)
 
     return current
 
@@ -334,9 +326,7 @@ def list_job_definitions(cfg: Optional[AppConfig] = None) -> list[dict[str, Any]
 # override salvato, il valore effettivo resta quello di `AppConfig`
 # (variabili d'ambiente) - stesso "default" di sempre, invariato per chi
 # non tocca mai questa pagina.
-def _schedule_path() -> str:
-    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-    return os.path.join(project_root, "best_models", "job_schedule.json")
+_SCHEDULE_KEY = "best_models/job_schedule.json"
 
 
 def _cfg_default_schedule(job_id: str, cfg: AppConfig) -> dict[str, int]:
@@ -348,16 +338,12 @@ def get_job_schedule_overrides() -> dict[str, dict[str, int]]:
     """Legge gli override di orario/intervallo salvati - SOLO i job con un
     override esplicito compaiono qui (un job mai toccato dall'operatore
     non ha una chiave, e resta sul default `AppConfig`)."""
-    path = _schedule_path()
-    if not os.path.exists(path):
-        return {}
     try:
-        with open(path, "r", encoding="utf-8") as f:
-            loaded = json.load(f)
-            return loaded if isinstance(loaded, dict) else {}
-    except (json.JSONDecodeError, OSError) as exc:
-        logger.warning("job_schedule.json illeggibile (%s): uso i default AppConfig", exc)
+        loaded = bucket_store.get_json(_SCHEDULE_KEY, default={})
+    except Exception as exc:
+        logger.warning("job_schedule.json illeggibile dal bucket (%s): uso i default AppConfig", exc)
         return {}
+    return loaded if isinstance(loaded, dict) else {}
 
 
 def _validate_schedule(job_id: str, schedule: dict[str, Any]) -> dict[str, int]:
@@ -396,13 +382,7 @@ def update_job_schedule(job_id: str, schedule: dict[str, Any]) -> dict[str, dict
     with _SCHEDULE_LOCK:
         current = get_job_schedule_overrides()
         current[job_id] = validated
-
-        path = _schedule_path()
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        tmp_path = f"{path}.tmp"
-        with open(tmp_path, "w", encoding="utf-8") as f:
-            json.dump(current, f, ensure_ascii=False, indent=2)
-        os.replace(tmp_path, path)
+        bucket_store.put_json(_SCHEDULE_KEY, current)
 
     return current
 
@@ -415,13 +395,7 @@ def reset_job_schedule(job_id: str) -> dict[str, dict[str, int]]:
     with _SCHEDULE_LOCK:
         current = get_job_schedule_overrides()
         current.pop(job_id, None)
-
-        path = _schedule_path()
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        tmp_path = f"{path}.tmp"
-        with open(tmp_path, "w", encoding="utf-8") as f:
-            json.dump(current, f, ensure_ascii=False, indent=2)
-        os.replace(tmp_path, path)
+        bucket_store.put_json(_SCHEDULE_KEY, current)
 
     return current
 
@@ -444,34 +418,23 @@ def resolve_job_schedule(job_id: str, cfg: Optional[AppConfig] = None) -> dict[s
 
 
 
-def _quota_pause_path() -> str:
-    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-    return os.path.join(project_root, "best_models", "quota_pause_state.json")
+_QUOTA_PAUSE_KEY = "best_models/quota_pause_state.json"
 
 
 def _read_quota_pause_state() -> dict[str, Any]:
-    path = _quota_pause_path()
-    if not os.path.exists(path):
-        return {}
     try:
-        with open(path, "r", encoding="utf-8") as f:
-            payload = json.load(f)
-            return payload if isinstance(payload, dict) else {}
-    except (json.JSONDecodeError, OSError):
+        payload = bucket_store.get_json(_QUOTA_PAUSE_KEY, default={})
+    except Exception:
         return {}
+    return payload if isinstance(payload, dict) else {}
 
 
 def _write_quota_pause_state(state: dict[str, Any]) -> None:
-    path = _quota_pause_path()
     try:
         with _QUOTA_PAUSE_LOCK:
-            os.makedirs(os.path.dirname(path), exist_ok=True)
-            tmp_path = f"{path}.tmp"
-            with open(tmp_path, "w", encoding="utf-8") as f:
-                json.dump(state, f, ensure_ascii=False, indent=2)
-            os.replace(tmp_path, path)
-    except OSError as exc:
-        logger.warning("Impossibile persistere quota_pause_state.json: %s", exc)
+            bucket_store.put_json(_QUOTA_PAUSE_KEY, state)
+    except Exception as exc:
+        logger.warning("Impossibile persistere quota_pause_state.json sul bucket: %s", exc)
 
 
 def get_quota_pause_state() -> dict[str, Any]:

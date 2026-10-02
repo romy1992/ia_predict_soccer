@@ -1,25 +1,14 @@
-import os
-import tempfile
 import unittest
-from unittest import mock
 
 from src.oracle.betslip import market_isolation_policy
+from src.storage import bucket_store
 
 _DEFAULT_CARDS_LINES = frozenset({"cards_line_3_5", "cards_line_4_5", "cards_line_5_5", "cards_line_6_5"})
 
 
 class _IsolatedMarketsPath(unittest.TestCase):
-    """Isola `isolated_markets.json` in una directory temporanea per ogni
-    test, cosi' nessun test tocca mai il file reale in `best_models/` del
-    progetto (stesso principio di `job_settings_test.py`)."""
-
-    def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self._tmp.cleanup)
-        path = os.path.join(self._tmp.name, "isolated_markets.json")
-        patcher = mock.patch.object(market_isolation_policy, "_isolated_markets_path", return_value=path)
-        patcher.start()
-        self.addCleanup(patcher.stop)
+    """Isolamento garantito dalla fixture autouse di `conftest.py` (bucket
+    fake nuovo ad ogni test): nessun mock di path necessario."""
 
 
 class TestGetIsolatedMarkets(_IsolatedMarketsPath):
@@ -27,17 +16,11 @@ class TestGetIsolatedMarkets(_IsolatedMarketsPath):
         self.assertEqual(market_isolation_policy.get_isolated_markets(), _DEFAULT_CARDS_LINES)
 
     def test_returns_default_on_corrupt_file(self):
-        path = market_isolation_policy._isolated_markets_path()
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
-            f.write("{not valid json")
+        bucket_store.put_bytes(market_isolation_policy._ISOLATED_MARKETS_KEY, b"{not valid json")
         self.assertEqual(market_isolation_policy.get_isolated_markets(), _DEFAULT_CARDS_LINES)
 
     def test_returns_default_when_file_is_not_a_list(self):
-        path = market_isolation_policy._isolated_markets_path()
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
-            f.write('{"cards": true}')
+        bucket_store.put_json(market_isolation_policy._ISOLATED_MARKETS_KEY, {"cards": True})
         self.assertEqual(market_isolation_policy.get_isolated_markets(), _DEFAULT_CARDS_LINES)
 
     def test_normalizes_case_and_whitespace(self):
@@ -61,11 +44,9 @@ class TestSetIsolatedMarkets(_IsolatedMarketsPath):
         market_isolation_policy.set_isolated_markets([])
         self.assertEqual(market_isolation_policy.get_isolated_markets(), frozenset())
 
-    def test_persists_atomically_no_tmp_file_left(self):
+    def test_persists_on_the_bucket(self):
         market_isolation_policy.set_isolated_markets(["cards"])
-        path = market_isolation_policy._isolated_markets_path()
-        self.assertTrue(os.path.exists(path))
-        self.assertFalse(os.path.exists(f"{path}.tmp"))
+        self.assertTrue(bucket_store.exists(market_isolation_policy._ISOLATED_MARKETS_KEY))
 
 
 if __name__ == "__main__":
