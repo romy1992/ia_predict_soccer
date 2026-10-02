@@ -168,7 +168,13 @@ def run_manual_retrain(
             "markets": markets,
             "seasons": seasons,
             "selection_method": selection_method,
-            "results": [r.__dict__ for r in results],
+            # `estimator` escluso: e' l'oggetto sklearn vero e proprio
+            # (gia' persistito a parte da `SaveLoad.save_model`/
+            # `ModelRegistry.register`), non serializzabile in JSON - un
+            # summary che lo include fa fallire `mark_success` con
+            # "Object of type ... is not JSON serializable" anche quando
+            # il training e il salvataggio sono andati a buon fine.
+            "results": [{k: v for k, v in r.__dict__.items() if k != "estimator"} for r in results],
             "duration_seconds": time.perf_counter() - start,
         }
         history.mark_success(job_id=job_id, summary=summary)
