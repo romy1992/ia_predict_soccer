@@ -22,9 +22,18 @@ from typing import Any, Optional
 
 import boto3
 import joblib
+from botocore.config import Config
 from botocore.exceptions import ClientError
 
 from .env import require_bucket_env
+
+# `ModelRegistry`/`JobHistory` leggono un prefisso intero con un
+# `ThreadPoolExecutor(max_workers=16)` (vedi `list_json`) - il pool HTTP
+# di default di botocore (10) e' piu' piccolo di 16, quindi ogni lettura
+# di un prefisso scartava connessioni invece di riusarle ("Connection pool
+# is full, discarding connection", osservato nei log di `scheduler`).
+# Allineato al parallelismo massimo usato in questo modulo.
+_MAX_POOL_CONNECTIONS = 20
 
 logging.basicConfig(level=logging.INFO)
 
@@ -50,6 +59,7 @@ def _get_client_and_bucket():
         aws_access_key_id=env.access_key_id,
         aws_secret_access_key=env.secret_access_key,
         region_name=env.region or "auto",
+        config=Config(max_pool_connections=_MAX_POOL_CONNECTIONS),
     )
     _bucket_name = env.bucket_name
     _lock_initialized = True
