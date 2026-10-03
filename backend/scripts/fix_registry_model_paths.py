@@ -1,4 +1,14 @@
-"""Riscrive `model_path` in `best_models/registry/index.jsonl` per puntare
+"""DEPRECATO (post-migrazione al Bucket S3, 2026-10): il problema che
+questo script risolveva non esiste piu'. Il registry non contiene piu'
+path locali dipendenti dalla macchina (`model_path` e' ormai una CHIAVE
+sul bucket, identica per chiunque la legga), e `resolve_model_key`
+(`src/service_ia/training/model_paths.py`) gestisce gia' da solo eventuali
+righe disallineate tramite una cascata di chiavi candidate. Tenuto per
+riferimento storico, non eseguire piu'.
+
+---
+
+Riscrive `model_path` in `best_models/registry/index.jsonl` per puntare
 alla cartella `best_models/` LOCALE (calcolata sulla macchina che esegue
 questo script), non a quella della sessione cloud dove i modelli sono
 stati addestrati/registrati in origine.
