@@ -13,7 +13,9 @@ su tutti e 4 i mercati (tipicamente piu' piccola della somma - allineamento
 via id_fixture, non per posizione).
 
 Richiede i CSV esportati (vedi export_datasets_for_cloud_training.py) nella
-directory passata via --export-dir e i 4 *_champion.pkl in --models-dir.
+directory passata via --export-dir. I 4 champion vengono letti dal registry
+(production, o l'ultimo candidate) e caricati dal bucket - non serve piu'
+indicare una cartella locale dei modelli.
 """
 from __future__ import annotations
 
@@ -21,7 +23,6 @@ import argparse
 import json
 import os
 
-import joblib
 import numpy as np
 import pandas as pd
 from sklearn.base import clone
@@ -34,8 +35,9 @@ from src.ml.markets.totals.totals_market import (
     _count_monotonicity_violations,
     enforce_monotonic_over_probabilities,
 )
-from src.service_ia.training.model_paths import resolve_model_path
+from src.service_ia.training.model_paths import resolve_model_key
 from src.service_ia.training.train_multi_market import _build_temporal_cv, _filter_valid_splits
+from src.storage import bucket_store
 
 MARKETS = ["under_over_1_5", "under_over_2_5", "under_over_3_5", "under_over_4_5"]
 MARKET_TO_LABEL = {"under_over_1_5": "over_1_5", "under_over_2_5": "over_2_5", "under_over_3_5": "over_3_5", "under_over_4_5": "over_4_5"}
@@ -46,7 +48,7 @@ def _class1_probability(raw_proba: np.ndarray) -> np.ndarray:
     return arr[:, 1] if arr.ndim == 2 and arr.shape[1] == 2 else arr.reshape(-1)
 
 
-def compute_oof_by_fixture(market: str, export_dir: str, models_dir: str) -> tuple[dict[int, float], dict[int, int]]:
+def compute_oof_by_fixture(market: str, export_dir: str) -> tuple[dict[int, float], dict[int, int]]:
     df = pd.read_csv(os.path.join(export_dir, f"{market}.csv"))
     df["prediction_at"] = pd.to_datetime(df["prediction_at"], utc=True, errors="coerce")
     df = df.dropna(subset=["prediction_at"]).sort_values(by=["prediction_at", "id_fixture"]).reset_index(drop=True)
@@ -59,15 +61,19 @@ def compute_oof_by_fixture(market: str, export_dir: str, models_dir: str) -> tup
     raw_splits = _build_temporal_cv(df)
     cv_splits = _filter_valid_splits(y=y, splits=raw_splits)
 
-    # Percorso risolto: dopo la riorganizzazione di `best_models/` il champion
-    # di un mercato puo' stare in `archivio/` o nella cartella del mercato, e
-    # cercarlo solo nella radice darebbe "file non trovato" su un file che c'e'.
-    percorso_champion = resolve_model_path(
-        os.path.join(models_dir, f"{market}_champion.pkl"), root=models_dir
-    )
-    if percorso_champion is None:
-        raise FileNotFoundError(f"Champion non trovato per {market} sotto {models_dir}")
-    champion = joblib.load(percorso_champion)
+    # Il champion REGISTRATO (production, o l'ultimo candidate se nessuna
+    # production) e' la fonte di verita' - non un file costruito a partire
+    # da un nome convenzionale: il registry vive sul bucket, non c'e' piu'
+    # una `best_models/` locale da cui indovinare il path.
+    from src.service_ia.training.model_registry import ModelRegistry
+
+    run = ModelRegistry().get_production(market=market) or ModelRegistry().get_latest(market=market)
+    if run is None:
+        raise FileNotFoundError(f"Nessun run registrato per {market}")
+    chiave_champion = resolve_model_key(run.get("model_path"))
+    if chiave_champion is None:
+        raise FileNotFoundError(f"Champion non trovato sul bucket per {market} ({run.get('model_path')})")
+    champion = bucket_store.get_joblib(chiave_champion)
 
     n = len(df)
     oof_proba = np.full(n, np.nan)
@@ -119,7 +125,6 @@ def _youden_classification(y_true: np.ndarray, p1: np.ndarray) -> dict:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--export-dir", default=os.path.join("scripts", "analysis", "_export"))
-    parser.add_argument("--models-dir", default="best_models")
     parser.add_argument("--output", default=os.path.join("best_models", "champions_monotonic_result.json"))
     args = parser.parse_args()
 
@@ -127,7 +132,7 @@ def main() -> None:
     y_by_market: dict[str, dict[int, int]] = {}
     for market in MARKETS:
         print(f"=== OOF {market} ===", flush=True)
-        proba_by_market[market], y_by_market[market] = compute_oof_by_fixture(market, args.export_dir, args.models_dir)
+        proba_by_market[market], y_by_market[market] = compute_oof_by_fixture(market, args.export_dir)
         print(f"  fixture con OOF valido: {len(proba_by_market[market])}", flush=True)
 
     common_fixtures = set(proba_by_market[MARKETS[0]].keys())

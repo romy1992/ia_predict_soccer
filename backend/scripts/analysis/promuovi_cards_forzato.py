@@ -1,4 +1,12 @@
-"""Promozione FORZATA dei 3 candidati cards (linee 4.5/5.5/6.5) del 19/09/2026.
+"""STORICO (post-migrazione al Bucket S3, 2026-10): run_id specifici del
+19/09/2026, gia' promossi all'epoca - rieseguirlo e' un no-op
+(`promote_with_policy` e' idempotente se lo stage e' gia' quello target).
+`riscrivi_percorsi_container()` rimossa: il registry non contiene piu'
+percorsi locali da convertire. Tenuto per riferimento storico.
+
+---
+
+Promozione FORZATA dei 3 candidati cards (linee 4.5/5.5/6.5) del 19/09/2026.
 
 Il gate ha rifiutato questi 3 candidati perche' il loro `selection_score` e'
 piu' basso di quello dei modelli in production del 12/09. Verificato che il
@@ -23,13 +31,11 @@ Uso:
 
 from __future__ import annotations
 
-import json
 import os
 import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
-from src.service_ia.training.model_paths import to_container_path  # noqa: E402
 from src.service_ia.training.model_registry import ModelRegistry  # noqa: E402
 
 RUN_IDS = [
@@ -58,32 +64,6 @@ REASON = (
 )
 
 
-def riscrivi_percorsi_container() -> None:
-    index = os.path.join("best_models", "registry", "index.jsonl")
-    if not os.path.exists(index):
-        return
-    righe = [json.loads(l) for l in open(index, encoding="utf-8")]
-    corrette = 0
-    for r in righe:
-        for campo in ("model_path", "metadata_path"):
-            valore = r.get(campo) or ""
-            nuovo = to_container_path(valore)
-            if valore and nuovo != valore:
-                r[campo] = nuovo
-                corrette += 1
-        cal = (r.get("extra") or {}).get("calibration") or {}
-        valore = cal.get("calibrator_path") or ""
-        nuovo = to_container_path(valore)
-        if valore and nuovo != valore:
-            cal["calibrator_path"] = nuovo
-            corrette += 1
-    if corrette:
-        with open(index, "w", encoding="utf-8") as f:
-            for r in righe:
-                f.write(json.dumps(r, ensure_ascii=False) + "\n")
-        print(f"percorsi riscritti in forma container: {corrette}")
-
-
 def main() -> int:
     registry = ModelRegistry()
     for run_id in RUN_IDS:
@@ -96,7 +76,6 @@ def main() -> int:
         )
         print(f"{run_id} -> promoted={esito.get('promoted')}")
 
-    riscrivi_percorsi_container()
     return 0
 
 

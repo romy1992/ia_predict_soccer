@@ -27,55 +27,20 @@ import json
 import os
 import sys
 
-import joblib
 import numpy as np
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
 from scripts.analysis.passo6_soglie_e_roi import costruisci, prepara  # noqa: E402
 from src.ml.calibration.calibration_service import CalibrationService  # noqa: E402
-from src.service_ia.training.model_paths import destination_subdir, to_container_path  # noqa: E402
+from src.service_ia.training.model_paths import destination_subdir  # noqa: E402
 from src.service_ia.training.model_registry import ModelRegistry  # noqa: E402
 from src.service_ia.training.train_multi_market import _build_temporal_cv, _filter_valid_splits  # noqa: E402
 from src.service_ia.training.utility_training.save_load import SaveLoad  # noqa: E402
+from src.storage import bucket_store  # noqa: E402
 
 SUFFISSO = "20260914"
 EXPORT = os.path.join("scripts", "analysis", "_export")
-
-
-def riscrivi_percorsi_container() -> None:
-    """Porta in forma container i percorsi delle righe appena registrate.
-
-    Tocca solo le righe che hanno un percorso non ancora in forma container:
-    quelle gia' corrette restano come sono. La conversione passa da
-    `to_container_path`, che PRESERVA la sottocartella: da quando i modelli
-    nuovi stanno in `best_models/under_over/<mercato>/`, ricostruire il
-    percorso dal solo nome file lo appiattirebbe nella radice e il file non si
-    troverebbe piu'.
-    """
-    index = os.path.join("best_models", "registry", "index.jsonl")
-    if not os.path.exists(index):
-        return
-    righe = [json.loads(l) for l in open(index, encoding="utf-8")]
-    corrette = 0
-    for r in righe:
-        for campo in ("model_path", "metadata_path"):
-            valore = r.get(campo) or ""
-            nuovo = to_container_path(valore)
-            if valore and nuovo != valore:
-                r[campo] = nuovo
-                corrette += 1
-        cal = (r.get("extra") or {}).get("calibration") or {}
-        valore = cal.get("calibrator_path") or ""
-        nuovo = to_container_path(valore)
-        if valore and nuovo != valore:
-            cal["calibrator_path"] = nuovo
-            corrette += 1
-    if corrette:
-        with open(index, "w", encoding="utf-8") as f:
-            for r in righe:
-                f.write(json.dumps(r, ensure_ascii=False) + "\n")
-        print(f"percorsi riscritti in forma container: {corrette}")
 
 
 def main() -> int:
@@ -113,12 +78,9 @@ def main() -> int:
     # riconoscere quali fossero quelli in uso richiedeva di leggere il
     # registry riga per riga.
     sotto = destination_subdir(MERCATO)
-    percorso_cal = os.path.abspath(
-        os.path.join("best_models", sotto, f"{MERCATO}_champion_calibrator_{SUFFISSO}.pkl")
-    )
-    os.makedirs(os.path.dirname(percorso_cal), exist_ok=True)
-    joblib.dump(calibrato, percorso_cal)
-    print(f"\ncalibratore salvato in {percorso_cal}")
+    chiave_cal = f"best_models/{sotto}/{MERCATO}_champion_calibrator_{SUFFISSO}.pkl".replace("//", "/")
+    bucket_store.put_joblib(chiave_cal, calibrato)
+    print(f"\ncalibratore salvato sul bucket: {chiave_cal}")
 
     saver = SaveLoad(
         save_pkl=True,
@@ -161,18 +123,11 @@ def main() -> int:
                 "method": ris.method,
                 "pre_metrics": ris.pre_metrics,
                 "post_metrics": ris.post_metrics,
-                "calibrator_path": percorso_cal,
+                "calibrator_path": chiave_cal,
                 "sample_size": ris.sample_size,
             },
         },
     )
-
-    # `SaveLoad` registra il percorso ASSOLUTO della macchina su cui gira. Ma
-    # l'app dell'operatore gira in Docker con `./best_models:/app/best_models`,
-    # quindi al primo utilizzo darebbe "File modello non trovato". Va riscritto
-    # in forma container. Il bridge se n'e' accorto il 2026-09-14 e ha dovuto
-    # correggere a mano le tre righe appena promosse.
-    riscrivi_percorsi_container()
 
     registry = ModelRegistry()
     ultimo = registry.get_latest(market=MERCATO)

@@ -1,4 +1,12 @@
-"""Allinea il registry dei modelli allo stato deciso il 2026-09-14.
+"""STORICO (post-migrazione al Bucket S3, 2026-10): script legato a un evento
+specifico gia' eseguito (2026-09-14, `DA_FARE` con run gia' promossi). La
+logica di archiviazione locale (`archivia()`) non si applica piu' - il
+registry vive sul bucket, non c'e' una `best_models/archivio/` locale
+condivisa da popolare. Tenuto per riferimento storico, non rieseguire.
+
+---
+
+Allinea il registry dei modelli allo stato deciso il 2026-09-14.
 
 DA ESEGUIRE SULLA MACCHINA DELL'OPERATORE, dove sta il registry vero. La
 sessione cloud ha un registry effimero e scollegato: promuovere li' non

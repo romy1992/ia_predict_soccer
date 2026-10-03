@@ -1,4 +1,16 @@
-"""Da' una forma a `best_models/`: i modelli nuovi per mercato, il resto in archivio.
+"""DEPRECATO (post-migrazione al Bucket S3, 2026-10): il problema che
+questo script risolveva non esiste piu'. I nuovi salvataggi
+(`SaveLoad`/`destination_subdir`) scrivono gia' nella posizione corretta
+per mercato sul bucket, e il backfill una tantum
+(`scripts/maintenance/backfill_bucket_registry.py`) ha gia' portato lo
+storico esistente nella struttura organizzata. Non c'e' piu' una
+`best_models/` locale condivisa da riorganizzare: ogni ambiente (locale o
+Railway) legge/scrive lo stesso bucket. Tenuto per riferimento storico,
+non eseguire piu'.
+
+---
+
+Da' una forma a `best_models/`: i modelli nuovi per mercato, il resto in archivio.
 
 DA ESEGUIRE SULLA MACCHINA DELL'OPERATORE, dove sta il registry vero (quello
 montato dai container con `./best_models:/app/best_models`). La sessione cloud
