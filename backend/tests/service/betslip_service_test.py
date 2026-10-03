@@ -208,16 +208,33 @@ class TestBetslipService(unittest.TestCase):
 
         _, generation = service.generate_exploration_for_day(date(2026, 9, 12))
 
-        total = sum(
-            len(slips)
+        all_slips = [
+            slip
             for profiles in generation.decision_groups.values()
             for slips in profiles.values()
-        )
-        self.assertGreaterEqual(total, 10)
+            for slip in slips
+        ]
+        total = len(all_slips)
+        # Con un unico market family (nessuna diversificazione possibile) il
+        # pool per profilo resta comunque troncato a 4 pick
+        # (`max_candidates_per_family`): da sole SAFE produce fino a
+        # `max_slips_per_profile` (5) combinazioni a 2 leg genuinamente
+        # distinte, un minimo garantito dal fallback indipendentemente da
+        # quante altre ne producano BALANCED/AGGRESSIVE.
+        self.assertGreaterEqual(total, 5)
         self.assertLessEqual(total, 18)
         self.assertTrue(
             any("limited_market_diversification" in item for item in generation.warnings)
         )
+        # Le stesse leg che superano le soglie di piu' profili (qui: pick
+        # identiche per quota/probabilita') vanno deduplicate cross-profilo
+        # (`_dedupe_cross_profile`) - mai la stessa combinazione mostrata
+        # due volte sotto Prudente/Bilanciata/Spinta.
+        leg_sets = [
+            frozenset((leg.fixture_id, leg.market, leg.outcome) for leg in slip.legs)
+            for slip in all_slips
+        ]
+        self.assertEqual(len(leg_sets), len(set(leg_sets)))
 
 
 if __name__ == "__main__":

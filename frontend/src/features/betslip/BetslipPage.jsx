@@ -1,5 +1,6 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import ModelLegend from "../shared/ModelLegend";
+import { downloadCardAsImage, downloadCardsAsZip } from "../shared/cardExport";
 import { formatNumber, formatOdd, formatPercent, marketLabel, todayIso } from "../shared/formatters";
 
 /**
@@ -78,6 +79,9 @@ export default function BetslipPage({
   const [activeFilter, setActiveFilter] = useState("all");
   const [stake, setStake] = useState(10);
   const [copiedSlipId, setCopiedSlipId] = useState(null);
+  const [downloadingSlipId, setDownloadingSlipId] = useState(null);
+  const [downloadingAll, setDownloadingAll] = useState(false);
+  const cardNodes = useRef(new Map());
   // Mix mono-mercato (2026-09-28): "all" = mix multi-mercato di sempre
   // (generato E salvato, contribuisce al ROI ufficiale/simulato). Un
   // mercato specifico e' SOLO anteprima (mai salvata, vedi onGenerate
@@ -141,7 +145,11 @@ export default function BetslipPage({
       return sourceSlips.filter((slip) => ["WON", "LOST", "VOID"].includes(slip.status));
     }
     if (PROFILE_ORDER.includes(activeFilter)) {
-      return sourceSlips.filter((slip) => (slip.profile_name || slip.profile) === activeFilter);
+      return sourceSlips.filter((slip) =>
+        (slip.matching_profiles?.length ? slip.matching_profiles : [slip.profile_name || slip.profile]).includes(
+          activeFilter
+        )
+      );
     }
     return sourceSlips;
   }, [activeFilter, sourceSlips]);
@@ -159,6 +167,38 @@ export default function BetslipPage({
     const id = slip.slip_id || slip.id;
     setCopiedSlipId(id);
     window.setTimeout(() => setCopiedSlipId(null), 1800);
+  }
+
+  function slipImageFilename(slip) {
+    const profiles = slip.matching_profiles?.length ? slip.matching_profiles : [slip.profile_name || slip.profile];
+    const labels = profiles.map((profile) => PROFILE_LABELS[profile] || profile).join("-");
+    return `schedina_${labels}_${slip.slip_id || slip.id}.png`;
+  }
+
+  async function downloadSlipImage(slip) {
+    const id = slip.slip_id || slip.id;
+    const node = cardNodes.current.get(id);
+    if (!node) return;
+    setDownloadingSlipId(id);
+    try {
+      await downloadCardAsImage(node, slipImageFilename(slip));
+    } finally {
+      setDownloadingSlipId(null);
+    }
+  }
+
+  async function downloadAllVisibleImages() {
+    const entries = visibleSlips
+      .map((slip) => ({ slip, node: cardNodes.current.get(slip.slip_id || slip.id) }))
+      .filter((entry) => entry.node)
+      .map((entry) => ({ node: entry.node, filename: slipImageFilename(entry.slip) }));
+    if (entries.length === 0) return;
+    setDownloadingAll(true);
+    try {
+      await downloadCardsAsZip(entries, `schedine_${targetDate}.zip`);
+    } finally {
+      setDownloadingAll(false);
+    }
   }
 
   return (
@@ -313,6 +353,14 @@ export default function BetslipPage({
           <div className="empty-state">Nessuna schedina disponibile per questo filtro.</div>
         )}
 
+        {visibleSlips.length > 0 && (
+          <div className="betslip-list-actions">
+            <button className="btn-secondary" onClick={downloadAllVisibleImages} disabled={downloadingAll}>
+              {downloadingAll ? "Download in corso..." : `Scarica tutte le immagini (${visibleSlips.length})`}
+            </button>
+          </div>
+        )}
+
         <div className="betslip-list">
           {visibleSlips.map((slip) => (
             <SlipCard
@@ -322,6 +370,16 @@ export default function BetslipPage({
               stake={stake}
               copied={copiedSlipId === (slip.slip_id || slip.id)}
               onCopy={() => copySlip(slip)}
+              downloading={downloadingSlipId === (slip.slip_id || slip.id)}
+              onDownloadImage={() => downloadSlipImage(slip)}
+              cardRef={(node) => {
+                const id = slip.slip_id || slip.id;
+                if (node) {
+                  cardNodes.current.set(id, node);
+                } else {
+                  cardNodes.current.delete(id);
+                }
+              }}
             />
           ))}
         </div>
@@ -480,20 +538,29 @@ function SlipStatistics({ report, proposals, official }) {
   );
 }
 
-function SlipCard({ slip, fixtureIndex, stake, copied, onCopy }) {
+function SlipCard({ slip, fixtureIndex, stake, copied, onCopy, cardRef, onDownloadImage, downloading }) {
   const shadowLegs = slip.shadow_settlement?.legs;
   const legs = !slip.is_official && shadowLegs?.length ? shadowLegs : slip.legs || [];
   const situation = slip.situation || slip.initial_situation || "N/D";
   const hasShadowStatus = !slip.is_official && Boolean(slip.shadow_status);
   const status = slip.is_official ? slip.status || "PENDING" : slip.shadow_status || "PROPOSTA";
   const profile = slip.profile_name || slip.profile;
+  const extraProfiles = (slip.matching_profiles || []).filter((name) => name !== profile);
   const simulatedReturn = Number(stake) * Number(slip.combined_odd || 0);
   const simulatedProfit = simulatedReturn - Number(stake);
   return (
-    <article className={`slip-card ${riskClass(slip.risk_label)}`}>
+    <article className={`slip-card ${riskClass(slip.risk_label)}`} ref={cardRef}>
       <div className="slip-card-header">
         <div>
           <strong>{situation === "PLAY" ? "Play" : "Valutazione"} · {PROFILE_LABELS[profile] || profile || "Generica"}</strong>
+          {extraProfiles.length > 0 && (
+            <span
+              className="multi-profile-badge"
+              title="Questa combinazione di eventi supera anche le soglie di altri profili di rischio: mostrata una sola volta."
+            >
+              Valida anche per {extraProfiles.map((name) => PROFILE_LABELS[name] || name).join(", ")}
+            </span>
+          )}
           <small>{PROFILE_HELP[profile] || slip.situation_reason || slip.initial_reason}</small>
         </div>
         <div className="slip-card-status">
@@ -559,7 +626,9 @@ function SlipCard({ slip, fixtureIndex, stake, copied, onCopy }) {
         </div>
         <div className="slip-actions">
           <button className="btn-secondary" onClick={onCopy}>{copied ? "Copiata!" : "Copia schedina"}</button>
-          <button className="btn-secondary" onClick={() => window.print()}>Stampa / PDF</button>
+          <button className="btn-secondary" onClick={onDownloadImage} disabled={downloading}>
+            {downloading ? "Download..." : "Scarica immagine"}
+          </button>
         </div>
       </div>
 

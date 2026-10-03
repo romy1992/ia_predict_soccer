@@ -1,7 +1,7 @@
 from pathlib import Path
 
 
-FRONTEND = Path(__file__).resolve().parents[2] / "frontend" / "src"
+FRONTEND = Path(__file__).resolve().parents[3] / "frontend" / "src"
 
 
 def test_betslip_renders_aggregate_and_pick_metrics():
@@ -59,7 +59,8 @@ def test_betslip_uses_compact_coupon_structure():
         "Vincita potenziale",
         "Profitto potenziale",
         "Copia schedina",
-        "Stampa / PDF",
+        "Scarica immagine",
+        "Scarica tutte le immagini",
     ):
         assert label in source
     for css_class in (

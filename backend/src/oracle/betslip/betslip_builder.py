@@ -238,6 +238,11 @@ class GeneratedSlip:
     status: str = "PROPOSED"
     is_official: bool = False
     shadow_status: Optional[str] = None
+    # Popolato da `betslip_service._dedupe_cross_profile`: le stesse leg
+    # possono superare le soglie di piu' profili (es. SAFE e BALANCED), nel
+    # qual caso la schedina viene mostrata una sola volta ma elenca qui
+    # tutti i profili per cui e' valida (mai un'informazione persa).
+    matching_profiles: list = field(default_factory=list)
 
 
 @dataclass
