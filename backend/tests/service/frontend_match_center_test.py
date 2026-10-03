@@ -1,7 +1,7 @@
 from pathlib import Path
 
 
-FRONTEND = Path(__file__).resolve().parents[2] / "frontend" / "src"
+FRONTEND = Path(__file__).resolve().parents[3] / "frontend" / "src"
 
 
 def test_match_center_contains_required_columns_and_distinct_void_concepts():

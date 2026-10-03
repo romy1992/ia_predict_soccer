@@ -149,15 +149,48 @@ class BetslipService:
                 merged[profile] = rows[:max_slips_per_profile]
             return merged
 
-        play_only = only(play, "PLAY")
-        borderline_only = merge_groups(
-            only(play, "BORDERLINE"),
-            only(borderline, "BORDERLINE"),
+        def dedupe_cross_profile(group: dict) -> dict:
+            """`slip_id` include il nome del profilo (`_slip_id`,
+            betslip_builder.py), quindi le STESSE leg che superano le soglie
+            di piu' profili (tipico: una combo a 2 eventi valida sia per
+            SAFE sia per BALANCED) arrivano qui come schedine "diverse" con
+            lo stesso contenuto. `merge_groups` sopra non lo rileva (dedup
+            solo per slip_id, mai cross-profilo). Qui raggruppiamo per
+            identita' reale delle leg (fixture/mercato/esito) e teniamo
+            una sola copia, assegnata al profilo piu' prudente tra quelli
+            che la generano (`profiles` e' ordinato SAFE/BALANCED/AGGRESSIVE)
+            - gli altri profili restano tracciati in `matching_profiles`,
+            mai persi silenziosamente."""
+            profile_order = [item.name for item in profiles]
+            seen_by_legs: dict[frozenset, object] = {}
+            deduped = {name: [] for name in profile_order}
+            for profile_name in profile_order:
+                for slip in group.get(profile_name, []):
+                    legs_key = frozenset(
+                        (leg.fixture_id, leg.market, leg.outcome) for leg in slip.legs
+                    )
+                    existing = seen_by_legs.get(legs_key)
+                    if existing is not None:
+                        existing.matching_profiles.append(profile_name)
+                        continue
+                    slip.matching_profiles = [profile_name]
+                    seen_by_legs[legs_key] = slip
+                    deduped[profile_name].append(slip)
+            return deduped
+
+        play_only = dedupe_cross_profile(only(play, "PLAY"))
+        borderline_only = dedupe_cross_profile(
+            merge_groups(
+                only(play, "BORDERLINE"),
+                only(borderline, "BORDERLINE"),
+            )
         )
-        no_bet_only = merge_groups(
-            only(play, "NO BET"),
-            only(borderline, "NO BET"),
-            only(no_bet, "NO BET"),
+        no_bet_only = dedupe_cross_profile(
+            merge_groups(
+                only(play, "NO BET"),
+                only(borderline, "NO BET"),
+                only(no_bet, "NO BET"),
+            )
         )
         groups = {
             "PLAY": play_only,
