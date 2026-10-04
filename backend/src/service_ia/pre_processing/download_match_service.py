@@ -91,6 +91,15 @@ def map_base_match(match, id_fix, fixture, league, season):
         'date_match': fixture['fixture']['date'],
         'current_league': league,
         'league_match': fixture['league']['id'],
+        # Nome del campionato (2026-10-04): mai popolato da questo import
+        # API-Sports, solo dall'import storico odds-api
+        # (`migrate_df_to_db.py`, 'sport_title') - le fixture mai toccate da
+        # quell'import restavano senza nome, mostrando in UI l'id numerico
+        # di `current_league` (fallback in `_serialize_match`). API-Sports
+        # fornisce lo stesso nome in `fixture['league']['name']`: lo usiamo
+        # solo se `title_league` non e' gia' valorizzato (mai sovrascrivere
+        # una colonna "di proprieta'" del percorso odds-api).
+        'title_league': (match.title_league if match else None) or fixture['league'].get('name'),
         'referee': fixture['fixture']['referee'],
         'round': fixture['league']['round'],
         'season': season,
