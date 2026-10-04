@@ -39,7 +39,7 @@ class FakeProposalRepo:
         return snapshot
 
 
-def _generation(odd=1.8, fixture_id=10, profile_name="SAFE", slip_id="logical-slip"):
+def _generation(odd=1.8, fixture_id=10, profile_name="SAFE", slip_id="logical-slip", matching_profiles=None):
     leg = CandidatePick(
         fixture_id=fixture_id,
         market="1x2",
@@ -69,6 +69,7 @@ def _generation(odd=1.8, fixture_id=10, profile_name="SAFE", slip_id="logical-sl
         decision_policy_version="slip-policy-v1",
         correlation_ruleset_version="correlation-v1",
         situation="PLAY",
+        matching_profiles=matching_profiles or [],
     )
     return BetslipGenerationResult(
         generated_at=datetime.now(timezone.utc).isoformat(),
@@ -276,5 +277,35 @@ def test_simulated_play_portfolio_split_by_profile_never_redefines_play():
     # include SAFE e AGGRESSIVE insieme.
     assert portfolios["PLAY"]["total"] == 2
     # Le nuove chiavi separano il profilo rumoroso da quello di fiducia.
+    assert portfolios["PLAY_SAFE_BALANCED"]["total"] == 1
+    assert portfolios["PLAY_AGGRESSIVE"]["total"] == 1
+
+
+def test_cross_profile_slip_counts_in_every_eligible_profile_bucket():
+    # Il dedup cross-profilo di `betslip_service.py` assegna in UI una
+    # schedina valida per piu' profili a quello piu' prudente (qui
+    # BALANCED), ma le statistiche per profilo devono comunque contarla
+    # anche in AGGRESSIVE (`matching_profiles`) - altrimenti il campione
+    # AGGRESSIVE si svuota artificialmente di ogni combo "facile".
+    proposal_repo = FakeProposalRepo()
+    snapshot_service = BetslipProposalSnapshotService(repo=proposal_repo)
+    snapshot_service.save_generation(
+        reference_date="2099-01-01",
+        generation=_generation(
+            fixture_id=10,
+            profile_name="BALANCED",
+            slip_id="shared-slip",
+            matching_profiles=["BALANCED", "AGGRESSIVE"],
+        ),
+    )
+    service = BettingStatisticsService(
+        ledger_repo=FakeLedgerRepo(),
+        proposal_repo=proposal_repo,
+        official_betslip_service=FakeOfficialService(),
+    )
+
+    portfolios = service.report(days=30)["overview"]["simulated_portfolios"]
+
+    assert portfolios["PLAY"]["total"] == 1
     assert portfolios["PLAY_SAFE_BALANCED"]["total"] == 1
     assert portfolios["PLAY_AGGRESSIVE"]["total"] == 1
