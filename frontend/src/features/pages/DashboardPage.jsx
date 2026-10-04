@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import MatchTable from "../matches/components/MatchTable";
 import PhaseTabs from "../matches/components/PhaseTabs";
+import LeagueTabs from "../matches/components/LeagueTabs";
 import MarketTabs from "../matches/components/MarketTabs";
 import ModelLegend from "../shared/ModelLegend";
 import { marketLabel, phaseClass, phaseLabel } from "../shared/formatters";
@@ -14,6 +15,9 @@ export default function DashboardPage({
   selectedFixtureId,
   phaseFilter,
   onChangePhaseFilter,
+  leagues,
+  selectedLeague,
+  onChangeSelectedLeague,
   markets,
   selectedMarket,
   onChangeSelectedMarket,
@@ -103,6 +107,7 @@ export default function DashboardPage({
         </div>
 
         <PhaseTabs phases={["all", "to_play", "live", "finished", "unknown"]} value={phaseFilter} onChange={onChangePhaseFilter} />
+        <LeagueTabs leagues={leagues} value={selectedLeague} onChange={onChangeSelectedLeague} />
         <MarketTabs markets={markets} value={selectedMarket} onChange={onChangeSelectedMarket} />
         <div className="match-center-controls">
           <label>

@@ -86,6 +86,7 @@ export default function App() {
   const [phaseFilter, setPhaseFilter] = useState("all");
   const [markets, setMarkets] = useState(["all"]);
   const [selectedMarket, setSelectedMarket] = useState("all");
+  const [selectedLeague, setSelectedLeague] = useState("all");
   const [asyncRun, setAsyncRun] = useState(true);
   const [manualFixtureId, setManualFixtureId] = useState("");
   const [manualMarket, setManualMarket] = useState("under_over_2_5");
@@ -173,17 +174,31 @@ export default function App() {
     return [selectedMarket];
   }, [selectedMarket]);
   const safeRows = dayData?.rows || [];
-  // Filtro client-side (fase + mercato) sui dati GIA' scaricati da
-  // `loadDashboardData` (che ora richiede sempre tutte le fasi/mercati in
+  // Campionati presenti nella giornata caricata (non un catalogo statico
+  // come `markets`): cambia ogni volta che cambia `dayData`, mai filtrato a
+  // sua volta da fase/mercato/campionato selezionati, cosi' i tab restano
+  // stabili mentre si cambiano gli altri filtri.
+  const leagues = useMemo(() => {
+    const unique = Array.from(new Set(safeRows.map((row) => row.league).filter(Boolean)));
+    unique.sort((a, b) => a.localeCompare(b));
+    return unique;
+  }, [safeRows]);
+  // Se il campionato selezionato non e' piu' tra quelli della giornata
+  // (es. cambio data), ricade su "all" senza bisogno di un effect dedicato.
+  const effectiveSelectedLeague = leagues.includes(selectedLeague) ? selectedLeague : "all";
+  // Filtro client-side (fase + campionato + mercato) sui dati GIA' scaricati
+  // da `loadDashboardData` (che ora richiede sempre tutte le fasi/mercati in
   // un colpo solo): cambiare tab in Dashboard e' quindi istantaneo, nessuna
   // nuova richiesta al backend ne' ricalcolo delle predizioni ML.
   const dashboardDayData = useMemo(() => {
     const rows = dayData?.rows || [];
     const phaseRows = phaseFilter === "all" ? rows : rows.filter((row) => row.phase === phaseFilter);
+    const leagueRows =
+      effectiveSelectedLeague === "all" ? phaseRows : phaseRows.filter((row) => row.league === effectiveSelectedLeague);
     const marketRows =
-      selectedMarket === "all" ? phaseRows : phaseRows.map((row) => filterRowByMarket(row, selectedMarket));
+      selectedMarket === "all" ? leagueRows : leagueRows.map((row) => filterRowByMarket(row, selectedMarket));
     return { ...dayData, rows: marketRows, returned: marketRows.length };
-  }, [dayData, phaseFilter, selectedMarket]);
+  }, [dayData, phaseFilter, effectiveSelectedLeague, selectedMarket]);
   const showMatchFilters = ["dashboard", "predictions"].includes(activePage);
   // Segnale globale (non solo pagina Impostazioni) per disabilitare TUTTI i
   // bottoni che richiamano il provider esterno API-Sports quando la quota
@@ -1087,6 +1102,9 @@ export default function App() {
       selectedFixtureId,
       phaseFilter,
       onChangePhaseFilter: setPhaseFilter,
+      leagues,
+      selectedLeague: effectiveSelectedLeague,
+      onChangeSelectedLeague: setSelectedLeague,
       markets,
       selectedMarket,
       onChangeSelectedMarket: setSelectedMarket,

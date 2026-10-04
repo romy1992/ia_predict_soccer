@@ -92,6 +92,21 @@ def _shadow_bucket(rows: list[Any]) -> dict[str, Any]:
     }
 
 
+def _row_profiles(row: Any) -> list[str]:
+    """Tutti i profili per cui la schedina era valida, non solo quello
+    "piu' prudente" a cui `_dedupe_cross_profile` (betslip_service.py)
+    assegna la card in UI per evitare duplicati visivi. Le statistiche per
+    profilo devono restare basate sull'idoneita' reale (una schedina
+    valida sia per BALANCED sia per AGGRESSIVE conta in entrambi i
+    bucket), altrimenti il dedup UI svuoterebbe artificialmente il
+    campione di AGGRESSIVE spostando ogni schedina "facile" su un profilo
+    piu' prudente. Fallback a `row.profile` per gli snapshot salvati prima
+    di questo campo (`matching_profiles` assente dal payload)."""
+    payload = getattr(row, "payload", None) or {}
+    matching = payload.get("matching_profiles") or []
+    return list(matching) if matching else [row.profile]
+
+
 class BettingStatisticsService:
     """Vista unica; non mescola mai proposte e performance ufficiale."""
 
@@ -147,7 +162,8 @@ class BettingStatisticsService:
         proposal_profile_groups: dict[str, list[Any]] = defaultdict(list)
         for row in proposals:
             proposal_daily_groups[row.reference_date].append(row)
-            proposal_profile_groups[row.profile].append(row)
+            for profile in _row_profiles(row):
+                proposal_profile_groups[profile].append(row)
         shadow_by_situation = {
             label: _shadow_bucket(
                 [row for row in latest_proposals if row.situation == label]
@@ -164,10 +180,10 @@ class BettingStatisticsService:
         play_rows = [row for row in latest_proposals if row.situation == "PLAY"]
         shadow_play_by_profile = {
             "PLAY_SAFE_BALANCED": _shadow_bucket(
-                [row for row in play_rows if row.profile != "AGGRESSIVE"]
+                [row for row in play_rows if set(_row_profiles(row)) - {"AGGRESSIVE"}]
             ),
             "PLAY_AGGRESSIVE": _shadow_bucket(
-                [row for row in play_rows if row.profile == "AGGRESSIVE"]
+                [row for row in play_rows if "AGGRESSIVE" in _row_profiles(row)]
             ),
         }
         shadow_daily_groups: dict[str, list[Any]] = defaultdict(list)
