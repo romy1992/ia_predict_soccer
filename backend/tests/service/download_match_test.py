@@ -509,6 +509,31 @@ class TestMapBaseMatchScore(unittest.TestCase):
         self.assertIsNone(dict_match["score_away"])
 
 
+class TestMapBaseMatchTitleLeague(unittest.TestCase):
+    """`title_league` (2026-10-04): questo import API-Sports non lo
+    popolava mai, lasciandolo valorizzato solo dall'import storico
+    odds-api (`migrate_df_to_db.py`) - le fixture mai toccate da
+    quell'import mostravano in UI l'id numerico di `current_league`
+    invece del nome del campionato."""
+
+    def test_uses_api_sports_league_name_when_title_league_never_set(self):
+        fixture = _sample_fixture()
+        fixture["league"]["name"] = "Serie A"
+        dict_match = map_base_match(match=None, id_fix=1326590, fixture=fixture, league=135, season=2026)
+        self.assertEqual(dict_match["title_league"], "Serie A")
+
+    def test_none_when_fixture_has_no_league_name(self):
+        dict_match = map_base_match(match=None, id_fix=1326590, fixture=_sample_fixture(), league=135, season=2026)
+        self.assertIsNone(dict_match["title_league"])
+
+    def test_never_overwrites_a_title_league_already_set_by_odds_api(self):
+        fixture = _sample_fixture()
+        fixture["league"]["name"] = "Serie A"
+        existing_match = Match(title_league="Italy Serie A")
+        dict_match = map_base_match(match=existing_match, id_fix=1326590, fixture=fixture, league=135, season=2026)
+        self.assertEqual(dict_match["title_league"], "Italy Serie A")
+
+
 class TestDownloadImportMatchesScoreWithoutStatistics(unittest.TestCase):
     """Regressione reale segnalata dall'operatore (2026-09-10): una fixture
     "Finita" per cui l'endpoint statistiche dedicato non ha dati (leghe
