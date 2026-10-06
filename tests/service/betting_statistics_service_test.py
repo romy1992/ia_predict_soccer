@@ -120,6 +120,7 @@ def test_saved_proposals_are_returned_without_regeneration():
             "reference_date": "2026-09-10",
             "saved_at": saved_at.isoformat(),
             "is_latest": True,
+            "last_confirmed_at": None,
             "shadow_status": "PENDING",
             "shadow_stake": 1.0,
             "shadow_effective_odd": None,

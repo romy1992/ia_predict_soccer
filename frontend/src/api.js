@@ -181,10 +181,15 @@ export function saveBetslipGeneration({ targetDate } = {}) {
   });
 }
 
-export function getSavedBetslipProposals({ targetDate, latestOnly = true, limit = 200 } = {}) {
+export function getSavedBetslipProposals({ targetDate, latestOnly = true, currentOnly = true, limit = 200 } = {}) {
   const params = new URLSearchParams();
   params.set("reference_date", targetDate);
   params.set("latest_only", String(latestOnly));
+  // `currentOnly=true` (default, 2026-10-06): solo le proposte confermate
+  // dall'ultimo giro di generazione per quel giorno, non l'accumulo di
+  // ogni combinazione mai proposta nel corso della giornata - vedi
+  // `current_only` in `GET /betslip/proposals` (main.py).
+  params.set("current_only", String(currentOnly));
   params.set("limit", String(limit));
   return request(`/betslip/proposals?${params.toString()}`);
 }

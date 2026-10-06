@@ -30,6 +30,27 @@ from src.oracle.betslip.proposal_snapshot_service import BetslipProposalSnapshot
 from src.service_ia.training.model_registry import ModelRegistry
 
 
+def _is_pre_kickoff(slip, captured_at: datetime) -> bool:
+    """Una schedina e' salvabile come proposta "shadow" SOLO se TUTTE le
+    leg hanno un kickoff noto e futuro rispetto a `captured_at` - mai una
+    proposta con una partita gia' iniziata (o senza kickoff tracciato):
+    diventerebbe un paper bet fasullo, mai realmente "piazzabile" nel
+    momento del salvataggio. Condiviso tra il mix multi-mercato e le
+    generazioni mono-mercato, mai duplicato."""
+    kickoffs = []
+    for leg in slip.legs:
+        if not leg.kickoff_at:
+            return False
+        try:
+            parsed = datetime.fromisoformat(leg.kickoff_at.replace("Z", "+00:00"))
+        except ValueError:
+            return False
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        kickoffs.append(parsed)
+    return bool(kickoffs) and all(kickoff > captured_at for kickoff in kickoffs)
+
+
 def _default_multi_market_markets() -> list[str]:
     """Mercati usati dal MIX multi-mercato quando il chiamante non ne
     specifica esplicitamente uno (`markets=None`): tutti i mercati attivi
@@ -259,20 +280,6 @@ class BetslipService:
         )
         skipped_started = 0
 
-        def is_pre_kickoff(slip) -> bool:
-            kickoffs = []
-            for leg in slip.legs:
-                if not leg.kickoff_at:
-                    return False
-                try:
-                    parsed = datetime.fromisoformat(leg.kickoff_at.replace("Z", "+00:00"))
-                except ValueError:
-                    return False
-                if parsed.tzinfo is None:
-                    parsed = parsed.replace(tzinfo=timezone.utc)
-                kickoffs.append(parsed)
-            return bool(kickoffs) and all(kickoff > captured_at for kickoff in kickoffs)
-
         source_groups = generation.decision_groups or {"PLAY": generation.profiles}
         filtered_groups = {}
         for decision, decision_profiles in source_groups.items():
@@ -280,7 +287,7 @@ class BetslipService:
             for profile, slips in decision_profiles.items():
                 eligible = []
                 for slip in slips:
-                    if is_pre_kickoff(slip):
+                    if _is_pre_kickoff(slip, captured_at):
                         slip.shadow_status = "PENDING"
                         eligible.append(slip)
                     else:
@@ -297,4 +304,79 @@ class BetslipService:
         )
         report["proposals_skipped_started"] = skipped_started
         return pool_result, generation, report
+
+    def generate_and_snapshot_mono_market_for_day(
+        self,
+        target_date: date,
+        ruleset: CorrelationRuleSet = DEFAULT_CORRELATION_RULESET,
+        now: Optional[datetime] = None,
+    ) -> dict[str, dict]:
+        """Mix MONO-mercato (2026-10-06, richiesto esplicitamente
+        dall'operatore): per ciascun mercato attivo NON isolato, fino a 3
+        schedine PLAY (una per profilo SAFE/BALANCED/AGGRESSIVE -
+        `max_slips_per_profile=1`, nessun nuovo meccanismo di cap: e' lo
+        stesso gia' usato da `generate_betslips`, vedi betslip_builder.py),
+        salvate con lo stesso meccanismo idempotente del mix multi-mercato
+        (`BetslipProposalSnapshotService.save_generation`, stesso
+        `captured_at`, stesso filtro pre-kickoff).
+
+        Un SOLO fetch dei candidati per l'intera giornata
+        (`PickPoolService.candidates_for_day`, mercati attivi non isolati),
+        poi partizionati in memoria per `CandidatePick.market`: nessuna
+        query DB ripetuta per mercato, a differenza di N chiamate separate
+        a `generate_exploration_for_day(markets=[singolo_mercato])`.
+
+        Ritorna un report per mercato (`{mercato: {proposals_seen/created/
+        unchanged, proposals_skipped_started}}`), mai un unico aggregato:
+        un fallimento su un singolo mercato resta isolato e tracciabile,
+        mai un'eccezione che blocca gli altri."""
+        captured_at = now or datetime.now(timezone.utc)
+        if captured_at.tzinfo is None:
+            captured_at = captured_at.replace(tzinfo=timezone.utc)
+        if target_date < captured_at.date():
+            raise ValueError(
+                "Le date passate sono disponibili solo in consultazione: "
+                "non è consentito generare schedine retroattive"
+            )
+
+        isolated = get_isolated_markets()
+        mono_markets = [market for market in ModelRegistry().list_active_markets() if market not in isolated]
+        all_candidates = self.pick_pool_service.candidates_for_day(
+            target_date=target_date,
+            markets=mono_markets,
+        )
+        candidates_by_market: dict[str, list] = {}
+        for candidate in all_candidates:
+            candidates_by_market.setdefault(candidate.market, []).append(candidate)
+
+        reports: dict[str, dict] = {}
+        for market in mono_markets:
+            generation = generate_betslips(
+                candidates_by_market.get(market, []),
+                ruleset=ruleset,
+                max_slips_per_profile=1,
+                allowed_decisions=frozenset({"PLAY"}),
+            )
+            skipped_started = 0
+            eligible_profiles = {}
+            for profile, slips in generation.profiles.items():
+                eligible = []
+                for slip in slips:
+                    if _is_pre_kickoff(slip, captured_at):
+                        slip.shadow_status = "PENDING"
+                        eligible.append(slip)
+                    else:
+                        skipped_started += 1
+                eligible_profiles[profile] = eligible
+            generation.profiles = eligible_profiles
+            if skipped_started:
+                generation.warnings.append(f"not_saved_started_or_missing_kickoff:{skipped_started}")
+            report = self.proposal_snapshot_service.save_generation(
+                reference_date=target_date.isoformat(),
+                generation=generation,
+                generated_at=captured_at,
+            )
+            report["proposals_skipped_started"] = skipped_started
+            reports[market] = report
+        return reports
 

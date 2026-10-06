@@ -193,6 +193,67 @@ class TestBetslipService(unittest.TestCase):
         _, kwargs = pick_pool_service.candidates_for_day.call_args
         self.assertEqual(kwargs["markets"], ["cards"])
 
+    def test_mono_market_fetches_candidates_once_and_partitions_by_market(self):
+        now = datetime(2026, 10, 6, 10, 0, tzinfo=timezone.utc)
+        future = (now + timedelta(hours=5)).isoformat()
+        picks = [
+            # h2h: 4 fixture distinte -> abbastanza per popolare tutti e 3 i profili
+            _pool_pick(1, "h2h", "Home", 1.8, 0.60, kickoff_at=future),
+            _pool_pick(2, "h2h", "Away", 1.9, 0.58, kickoff_at=future),
+            _pool_pick(3, "h2h", "Home", 2.0, 0.55, kickoff_at=future),
+            _pool_pick(4, "h2h", "Away", 2.1, 0.50, kickoff_at=future),
+            # goal_no_goal: solo 2 fixture -> AGGRESSIVE (min 3 leg) resta vuoto
+            _pool_pick(5, "goal_no_goal", "Yes", 1.9, 0.58, kickoff_at=future),
+            _pool_pick(6, "goal_no_goal", "No", 1.7, 0.60, kickoff_at=future),
+        ]
+        snapshot_service = mock.Mock()
+        snapshot_service.save_generation.return_value = {
+            "proposals_seen": 0,
+            "proposals_created": 0,
+            "proposals_unchanged": 0,
+        }
+        service, pick_pool_service = self._service_with_pool(picks, snapshot_service)
+
+        with mock.patch(
+            "src.oracle.betslip.betslip_service.ModelRegistry"
+        ) as registry_cls, mock.patch(
+            "src.oracle.betslip.betslip_service.get_isolated_markets",
+            return_value=frozenset({"cards_line_4_5"}),
+        ):
+            registry_cls.return_value.list_active_markets.return_value = [
+                "h2h",
+                "goal_no_goal",
+                "cards_line_4_5",
+            ]
+            reports = service.generate_and_snapshot_mono_market_for_day(
+                target_date=date(2026, 10, 6), now=now
+            )
+
+        # Un solo fetch dei candidati per l'intera giornata, mai uno per mercato.
+        pick_pool_service.candidates_for_day.assert_called_once()
+
+        # Il mercato isolato non compare proprio nel report.
+        self.assertEqual(set(reports.keys()), {"h2h", "goal_no_goal"})
+        self.assertEqual(snapshot_service.save_generation.call_count, 2)
+
+        # Al massimo 1 schedina per profilo (3 profili -> al massimo 3 totali).
+        generation_calls = [
+            call.kwargs["generation"] for call in snapshot_service.save_generation.call_args_list
+        ]
+        for generation in generation_calls:
+            total = sum(len(slips) for slips in generation.profiles.values())
+            self.assertLessEqual(total, 3)
+            for slips in generation.profiles.values():
+                self.assertLessEqual(len(slips), 1)
+
+    def test_mono_market_rejects_past_dates(self):
+        service, _ = self._service_with_pool([])
+        now = datetime(2026, 10, 6, 10, 0, tzinfo=timezone.utc)
+        with self.assertRaisesRegex(ValueError, "solo in consultazione"):
+            service.generate_and_snapshot_mono_market_for_day(
+                target_date=date(2026, 10, 5), now=now
+            )
+
     def test_exploration_caps_total_and_keeps_single_family_fallback(self):
         picks = [
             _pool_pick(

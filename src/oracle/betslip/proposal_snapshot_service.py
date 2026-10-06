@@ -114,6 +114,12 @@ class BetslipProposalSnapshotService:
                 shadow_stake=1.0,
                 staking_policy_version="shadow_flat_unit_v1",
                 generated_at=captured_at,
+                # Sempre il timestamp di QUESTO giro, sia che la riga sia
+                # nuova/rivista sia che sia una ri-conferma a payload
+                # invariato (`save_revision` lo applica anche in quel caso)
+                # - e' il campo che `list_current` usa per isolare "la
+                # lista di oggi" dall'accumulo di tutti i giri precedenti.
+                last_confirmed_at=captured_at,
             )
             _, created = self.repo.save_revision(snapshot)
             report["proposals_created"] += int(created)
@@ -124,13 +130,26 @@ class BetslipProposalSnapshotService:
         *,
         reference_date: str,
         latest_only: bool = True,
+        current_only: bool = False,
         limit: int = 200,
     ) -> list[dict[str, Any]]:
-        """Restituisce gli snapshot già salvati, senza rigenerare il passato."""
-        rows = self.repo.list_all(
-            reference_date=reference_date,
-            latest_only=latest_only,
-            limit=limit,
+        """Restituisce gli snapshot già salvati, senza rigenerare il passato.
+
+        `current_only=True` (nuovo, 2026-10-06) restringe a `list_current`
+        (SOLO le righe confermate dall'ULTIMO giro di generazione per
+        `reference_date`, mai l'accumulo di tutti i giri della giornata -
+        vedi `BettingSlipProposalRepository.list_current`) e ignora
+        `latest_only`, che resta per compatibilità con chi la passa
+        esplicitamente. Default `False`: comportamento INVARIATO per
+        qualunque chiamante esistente che non lo richiede esplicitamente."""
+        rows = (
+            self.repo.list_current(reference_date=reference_date, limit=limit)
+            if current_only
+            else self.repo.list_all(
+                reference_date=reference_date,
+                latest_only=latest_only,
+                limit=limit,
+            )
         )
         result = []
         for row in rows:
@@ -141,6 +160,11 @@ class BetslipProposalSnapshotService:
                     "reference_date": row.reference_date,
                     "saved_at": row.generated_at.isoformat() if row.generated_at else None,
                     "is_latest": bool(row.is_latest),
+                    "last_confirmed_at": (
+                        row.last_confirmed_at.isoformat()
+                        if getattr(row, "last_confirmed_at", None)
+                        else None
+                    ),
                     "shadow_status": getattr(row, "shadow_status", "PENDING"),
                     "shadow_stake": getattr(row, "shadow_stake", 1.0),
                     "shadow_effective_odd": getattr(row, "shadow_effective_odd", None),
