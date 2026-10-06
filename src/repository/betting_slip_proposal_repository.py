@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
+from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 
 from src.repository.base.repository_db import SessionLocal
@@ -23,6 +24,16 @@ class BettingSlipProposalRepository:
                 .first()
             )
             if existing is not None:
+                # Payload invariato (stesso snapshot_key): nessuna nuova riga,
+                # ma la lineage va comunque "ri-confermata" dal giro corrente
+                # - altrimenti una combinazione stabile sparirebbe dalla vista
+                # corrente (`list_current`) pur essendo ancora valida. MAI
+                # toccare `is_latest`/`generated_at` qui: quei campi restano
+                # il segnale "e' cambiato qualcosa", non "e' stata rivista".
+                if snapshot.last_confirmed_at is not None:
+                    existing.last_confirmed_at = snapshot.last_confirmed_at
+                    session.commit()
+                    session.refresh(existing)
                 return existing, False
 
             previous = (
@@ -74,6 +85,38 @@ class BettingSlipProposalRepository:
                     BettingSlipProposalSnapshot.generated_at.desc(),
                     BettingSlipProposalSnapshot.id.asc(),
                 )
+                .limit(max(0, limit))
+                .all()
+            )
+
+    def list_current(
+        self,
+        *,
+        reference_date: str,
+        limit: int = 200,
+    ) -> list[BettingSlipProposalSnapshot]:
+        """Righe `is_latest=True` confermate dal giro di generazione PIU'
+        RECENTE per `reference_date` (stesso `last_confirmed_at`, mai un
+        giro precedente) - la "lista di oggi" limitata, a differenza di
+        `list_all(latest_only=True)` che ritorna TUTTO l'accumulato del
+        giorno (ogni lineage mai generata, anche se un giro successivo non
+        la ripropone piu'). Non tocca liquidazione/ROI: quelli restano su
+        `is_latest`/`list_pending_settlement`, invariati."""
+        with SessionLocal() as session:
+            max_confirmed_at = (
+                session.query(func.max(BettingSlipProposalSnapshot.last_confirmed_at))
+                .filter(BettingSlipProposalSnapshot.reference_date == reference_date)
+                .filter(BettingSlipProposalSnapshot.is_latest.is_(True))
+                .scalar()
+            )
+            if max_confirmed_at is None:
+                return []
+            return (
+                session.query(BettingSlipProposalSnapshot)
+                .filter(BettingSlipProposalSnapshot.reference_date == reference_date)
+                .filter(BettingSlipProposalSnapshot.is_latest.is_(True))
+                .filter(BettingSlipProposalSnapshot.last_confirmed_at == max_confirmed_at)
+                .order_by(BettingSlipProposalSnapshot.id.asc())
                 .limit(max(0, limit))
                 .all()
             )
