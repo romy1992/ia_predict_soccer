@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import JobRunProgress from "../shared/JobRunProgress";
 
 function parseCsvInts(value) {
   if (!value || !value.trim()) {
@@ -25,6 +26,7 @@ export default function DataCenterPage({
   opsMessage,
   health,
   quotaExhausted,
+  runRows = {},
 }) {
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
@@ -38,6 +40,17 @@ export default function DataCenterPage({
 
   const parsedSeasons = useMemo(() => parseCsvInts(seasonsInput), [seasonsInput]);
   const parsedLeagues = useMemo(() => parseCsvInts(leaguesInput), [leaguesInput]);
+
+  // `isSubmitting` copre solo l'invio della POST (quasi istantaneo con
+  // `async_run`, torna subito a false) - il job in background puo' girare
+  // per minuti dopo. Un'azione resta "in corso" finche' il job tracciato in
+  // `runRows` non raggiunge uno stato finale (polling via `JobRunProgress`,
+  // stesso meccanismo di "Esegui ora" in Impostazioni).
+  const isRunActive = (row) => ["queued", "running"].includes(row?.status);
+  const importRunning = isSubmitting || isRunActive(runRows.import);
+  const todayUpdateRunning = isSubmitting || isRunActive(runRows.todayUpdate);
+  const futureSyncRunning = isSubmitting || isRunActive(runRows.futureSync);
+  const settlementRunning = isSubmitting || isRunActive(runRows.settlement);
 
   async function runAction(action) {
     setLocalError("");
@@ -195,13 +208,15 @@ export default function DataCenterPage({
           </div>
 
           <div className="inline-form" style={{ marginTop: 10 }}>
-            <button className="btn-primary" disabled={isSubmitting || quotaExhausted} onClick={handleHistoricalImport}>
-              {isSubmitting ? (<><span className="spinner spinner-dark" />In corso...</>) : "Import storico"}
+            <button className="btn-primary" disabled={importRunning || quotaExhausted} onClick={handleHistoricalImport}>
+              {importRunning ? (<><span className="spinner spinner-dark" />In corso...</>) : "Import storico"}
             </button>
-            <button className="btn-secondary" disabled={isSubmitting} onClick={handleSettlement}>
-              {isSubmitting ? (<><span className="spinner spinner-dark" />In corso...</>) : "Settlement finali"}
+            <button className="btn-secondary" disabled={settlementRunning} onClick={handleSettlement}>
+              {settlementRunning ? (<><span className="spinner spinner-dark" />In corso...</>) : "Settlement finali"}
             </button>
           </div>
+          <JobRunProgress row={runRows.import} />
+          <JobRunProgress row={runRows.settlement} />
         </section>
 
         <section className="panel">
@@ -218,20 +233,22 @@ export default function DataCenterPage({
               Target date
               <input type="date" value={targetDate} onChange={(e) => setTargetDate(e.target.value)} />
             </label>
-            <button className="btn-primary" disabled={isSubmitting || quotaExhausted} onClick={handleTodayUpdate}>
-              {isSubmitting ? (<><span className="spinner" />In corso...</>) : "Aggiorna oggi"}
+            <button className="btn-primary" disabled={todayUpdateRunning || quotaExhausted} onClick={handleTodayUpdate}>
+              {todayUpdateRunning ? (<><span className="spinner" />In corso...</>) : "Aggiorna oggi"}
             </button>
           </div>
+          <JobRunProgress row={runRows.todayUpdate} />
 
           <div className="inline-form" style={{ marginTop: 10 }}>
             <label>
               Days ahead
               <input value={daysAhead} onChange={(e) => setDaysAhead(e.target.value)} />
             </label>
-            <button className="btn-primary" disabled={isSubmitting || quotaExhausted} onClick={handleFutureSync}>
-              {isSubmitting ? (<><span className="spinner" />In corso...</>) : "Sync future"}
+            <button className="btn-primary" disabled={futureSyncRunning || quotaExhausted} onClick={handleFutureSync}>
+              {futureSyncRunning ? (<><span className="spinner" />In corso...</>) : "Sync future"}
             </button>
           </div>
+          <JobRunProgress row={runRows.futureSync} />
         </section>
       </div>
 

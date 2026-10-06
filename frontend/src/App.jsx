@@ -1032,24 +1032,41 @@ export default function App() {
       setOpsMessage(message);
     }
   }
+  // Traccia il job_id restituito da un'azione Data Center nello STESSO
+  // `jobRunRows` gia' usato da "Esegui ora" (Impostazioni): il polling
+  // esistente (vedi l'effect su `jobRunActiveKey`) lo raccoglie
+  // automaticamente, nessun secondo meccanismo di polling da scrivere.
+  // Chiavi sintetiche (mai uguali a un job_id reale di JOB_DEFINITIONS)
+  // cosi' un'azione Data Center non si sovrascrive mai con la riga di
+  // "Esegui ora" per lo stesso job schedulato (es. data_settlement).
+  function trackDataCenterJobRun(key, data) {
+    const runId = data?.details?.job_id;
+    if (runId) {
+      setJobRunRows((prev) => ({ ...prev, [key]: { job_id: runId, status: "queued", summary: {} } }));
+    }
+  }
   async function handleHistoricalImport(payload) {
     const data = await triggerImport(payload);
     setOpsMessage(JSON.stringify(data, null, 2));
+    trackDataCenterJobRun("data_center_import", data);
     return data;
   }
   async function handleTodayUpdate(payload) {
     const data = await triggerTodayUpdate(payload);
     setOpsMessage(JSON.stringify(data, null, 2));
+    trackDataCenterJobRun("data_center_today_update", data);
     return data;
   }
   async function handleFutureSync(payload) {
     const data = await triggerFutureSync(payload);
     setOpsMessage(JSON.stringify(data, null, 2));
+    trackDataCenterJobRun("data_center_future_sync", data);
     return data;
   }
   async function handleSettlement(payload) {
     const data = await triggerSettlement(payload);
     setOpsMessage(JSON.stringify(data, null, 2));
+    trackDataCenterJobRun("data_center_settlement", data);
     return data;
   }
   async function handleRetrain() {
@@ -1115,6 +1132,12 @@ export default function App() {
       jobsRows,
       onRefreshJobs: refreshJobs,
       quotaExhausted: isQuotaExhausted,
+      runRows: {
+        import: jobRunRows.data_center_import,
+        todayUpdate: jobRunRows.data_center_today_update,
+        futureSync: jobRunRows.data_center_future_sync,
+        settlement: jobRunRows.data_center_settlement,
+      },
     },
     mlLab: {
       asyncRun,
