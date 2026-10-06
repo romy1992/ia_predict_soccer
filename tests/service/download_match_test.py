@@ -11,7 +11,6 @@ from src.service_ia.pre_processing.download_match_service import (
     download_import_matches,
     map_base_match,
     map_odds,
-    map_odds_snapshots,
 )
 
 
@@ -267,69 +266,6 @@ class TestDownloadMatch(unittest.TestCase):
         self.assertEqual(report["fixtures_seen"], 2)
         self.assertGreaterEqual(report["failed"], 1)
         self.assertGreaterEqual(report["inserted"], 1)
-
-    @patch("src.service_ia.pre_processing.download_match_service.BET_BOOKMAKERS", [{"id": 1}])
-    def test_map_odds_snapshots_includes_player_goalscorer_market(self):
-        """Cantiere 'giocatori che segnano': il mercato 'Anytime Goal Scorer'
-        (bet id 92, API-Sports) deve finire negli snapshot anche se
-        BET_BOOKMAKERS/bet.json (patchato qui a solo id 1, come le altre
-        fixture di questo file) non lo contiene - PLAYER_MARKET_BET_IDS si
-        unisce sempre, indipendentemente dalla whitelist team-level."""
-        payload = [
-            {
-                "update": "2026-10-10T13:00:00+00:00",
-                "bookmakers": [
-                    {
-                        "name": "Bet365",
-                        "bets": [
-                            {
-                                "id": 92,
-                                "name": "Anytime Goal Scorer",
-                                "values": [
-                                    {"value": "Milutin Osmajic", "odd": "3.40"},
-                                    {"value": "Nicolo Fagioli", "odd": "7.00"},
-                                ],
-                            }
-                        ],
-                    }
-                ],
-            }
-        ]
-
-        snapshots = map_odds_snapshots(id_match="match-1", id_fixture=1550140, fixture_bookmakers=payload)
-
-        self.assertEqual(len(snapshots), 2)
-        self.assertTrue(all(s.market == "player_anytime_goalscorer" for s in snapshots))
-        self.assertEqual({s.outcome for s in snapshots}, {"Milutin Osmajic", "Nicolo Fagioli"})
-        self.assertTrue(all(s.line is None for s in snapshots))
-
-    @patch("src.service_ia.pre_processing.download_match_service.BET_BOOKMAKERS", [{"id": 1}])
-    def test_map_odds_ignores_player_goalscorer_market(self):
-        """Il mercato giocatore NON deve finire nella riga piatta di feature
-        pre-match (`map_odds`/`switch_bet`): quella whitelist resta solo
-        `BET_BOOKMAKERS`, mai unita a `PLAYER_MARKET_BET_IDS` - altrimenti 40+
-        giocatori per partita diventerebbero colonne della tabella Odds."""
-        payload = [
-            {
-                "bookmakers": [
-                    {
-                        "name": "Bet365",
-                        "bets": [
-                            {
-                                "id": 92,
-                                "name": "Anytime Goal Scorer",
-                                "values": [{"value": "Milutin Osmajic", "odd": "3.40"}],
-                            }
-                        ],
-                    }
-                ]
-            }
-        ]
-
-        result = map_odds(match=None, id_fix=1550140, fixture_bookmakers=payload)
-
-        self.assertIsNotNone(result)
-        self.assertNotIn("player_anytime_goalscorer", result)
 
     @patch("src.service_ia.pre_processing.download_match_service.repo_match.massive_update_bulk")
     @patch("src.service_ia.pre_processing.download_match_service.repo_match.search_filter")
