@@ -174,6 +174,28 @@ class TestJobTargetsAreCorrectAndIndependent(unittest.TestCase):
         self.assertIs(_target_func(daily_refresh_job), scheduler_module.run_daily_refresh)
         self.assertIsNot(_target_func(daily_refresh_job), scheduler_module.run_manual_retrain)
 
+    def test_daily_refresh_also_runs_settlement_as_third_phase(self):
+        """2026-10-06, richiesto esplicitamente dall'operatore: il bottone
+        "Aggiorna tutto" della sidebar prima importava i risultati di ieri
+        ma non li riconciliava mai, lasciando le schedine simulate bloccate
+        su "Sim. In corso" finche' qualcuno non lanciava il settlement a
+        parte. Verifica che `run_manual_settlement` sia chiamata come terza
+        sotto-fase e che il suo report finisca nel summary sotto
+        "settlement"."""
+        with mock.patch.object(scheduler_module, "run_manual_import", return_value={"updated": 1}) as import_mock, \
+             mock.patch.object(scheduler_module, "run_manual_future_sync", return_value={"synced": 2}) as future_mock, \
+             mock.patch.object(
+                 scheduler_module, "run_manual_settlement", return_value={"shadow_settled": 3}
+             ) as settlement_mock:
+            result = scheduler_module.run_daily_refresh(
+                seasons=[2026], leagues=[39], days_ahead=7
+            )
+
+        import_mock.assert_called_once()
+        future_mock.assert_called_once()
+        settlement_mock.assert_called_once_with(seasons=[2026], leagues=[39])
+        self.assertEqual(result["settlement"], {"shadow_settled": 3})
+
     def test_live_sync_job_targets_run_manual_live_sync_never_retrain(self):
         sched = scheduler_module.build_scheduler(cfg=_cfg())
         live_job = sched.get_job("data_sync_live")
