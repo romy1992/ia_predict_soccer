@@ -266,13 +266,24 @@ def run_daily_refresh(
     2) sincronizza il calendario delle partite PROSSIME in una finestra di
        `days_ahead` giorni (default 7), che si arricchira' via via di quote
        man mano che le partite si avvicinano (le quote dell'API sports
-       durano solo una settimana - vedi `download_match_service.py`).
+       durano solo una settimana - vedi `download_match_service.py`);
+    3) riconcilia il settlement (ledger + schedine ufficiali + schedine
+       simulate, `run_manual_settlement` - 2026-10-06, richiesto
+       esplicitamente dall'operatore): PRIMA di questa fase il bottone
+       importava i risultati ma non li riconciliava mai, lasciando le
+       schedine simulate bloccate su "Sim. In corso" finche' qualcuno non
+       lanciava il settlement a parte. Finestra di default (nessuna data
+       esplicita, vedi `SettlementService.run_settlement`): oggi-3 giorni ->
+       oggi - se questo bottone viene premuto con una cadenza regolare (anche
+       non quotidiana ma entro 3 giorni), nessuna partita conclusa resta mai
+       fuori dalla finestra.
 
-    Le due sotto-fasi restano loggate anche singolarmente in
+    Le tre sotto-fasi restano loggate anche singolarmente in
     `best_models/jobs_history.jsonl` (job_type `daily_refresh_played` /
-    `future_sync`, chiamando le funzioni manuali gia' esistenti) cosi' da
-    non perdere granularita' di debug in caso di fallimento parziale, oltre
-    alla riga "ombrello" `daily_refresh` con il riepilogo di entrambe.
+    `future_sync` / `settlement`, chiamando le funzioni manuali gia'
+    esistenti) cosi' da non perdere granularita' di debug in caso di
+    fallimento parziale, oltre alla riga "ombrello" `daily_refresh` con il
+    riepilogo di tutte e tre.
     """
     cfg = load_app_config()
     seasons = seasons or cfg.seasons
@@ -318,10 +329,15 @@ def run_daily_refresh(
                 seasons=seasons,
                 leagues=leagues,
             )
+            settlement_report = run_manual_settlement(
+                seasons=seasons,
+                leagues=leagues,
+            )
             summary = {
                 "played_date": yesterday,
                 "played_matches": played_report,
                 "upcoming_matches": upcoming_report,
+                "settlement": settlement_report,
                 "duration_seconds": time.perf_counter() - start,
             }
             history.mark_success(job_id=job_id, summary=summary)
