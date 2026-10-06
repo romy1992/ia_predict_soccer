@@ -423,11 +423,23 @@ class BettingSlipProposalSnapshot(Base):
         nullable=False,
         default=lambda: datetime.now(timezone.utc),
     )
+    # "Confermata dall'ultimo giro" (2026-10-06): a differenza di
+    # `generated_at` (toccato SOLO quando il payload di questa lineage
+    # cambia davvero), questo campo viene aggiornato ad OGNI giro di
+    # generazione che la riconferma, anche a payload invariato - vedi
+    # `BettingSlipProposalRepository.save_revision`. Serve a distinguere
+    # "proposta ancora nella lista corrente" da "proposta accumulata da un
+    # giro precedente e mai più rigenerata" SENZA toccare `is_latest`
+    # (che resta il solo campo che conta per liquidazione/ROI - mai
+    # hindsight: una proposta salvata va sempre liquidata al suo esito
+    # reale, anche se un giro successivo non la rigenera più).
+    last_confirmed_at = Column(DateTime(timezone=True), nullable=True)
 
     def to_dict(self):
         payload = {column.name: getattr(self, column.name) for column in self.__table__.columns}
-        if payload.get("generated_at") is not None:
-            payload["generated_at"] = payload["generated_at"].isoformat()
+        for key in ("generated_at", "last_confirmed_at"):
+            if payload.get(key) is not None:
+                payload[key] = payload[key].isoformat()
         return payload
 
 

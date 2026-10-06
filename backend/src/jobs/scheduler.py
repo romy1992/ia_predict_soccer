@@ -799,6 +799,17 @@ def run_prediction_snapshot_refresh(
             "proposals_unchanged": 0,
             "errors": [],
         }
+        # Mix mono-mercato (2026-10-06): report separato dal mix
+        # multi-mercato sopra - un fallimento su un singolo mercato
+        # (`by_market` nel report) non deve mai mescolarsi con i contatori
+        # del mix multi-mercato, ne' bloccare gli altri mercati.
+        mono_market_report = {
+            "dates_considered": 0,
+            "proposals_seen": 0,
+            "proposals_created": 0,
+            "proposals_unchanged": 0,
+            "by_market_errors": [],
+        }
         for proposal_date in sorted(
             {
                 datetime.fromisoformat(match.date_match).date()
@@ -821,6 +832,19 @@ def run_prediction_snapshot_refresh(
                 proposal_report["errors"].append(
                     {"reference_date": proposal_date.isoformat(), "message": str(exc)}
                 )
+
+            mono_market_report["dates_considered"] += 1
+            try:
+                by_market = BetslipService().generate_and_snapshot_mono_market_for_day(proposal_date)
+                for market_report in by_market.values():
+                    for key in ("proposals_seen", "proposals_created", "proposals_unchanged"):
+                        mono_market_report[key] += market_report[key]
+            except Exception as exc:
+                mono_market_report["by_market_errors"].append(
+                    {"reference_date": proposal_date.isoformat(), "message": str(exc)}
+                )
+
+        proposal_report["mono_market"] = mono_market_report
 
         summary = {
             "days_ahead": days_ahead,

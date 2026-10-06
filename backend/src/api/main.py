@@ -1510,12 +1510,24 @@ def betslip_generate_snapshot(
         max_odd=max_odd,
         min_ev=min_ev,
     )
+    parsed_date = _parse_iso_date(target_date)
+    service = BetslipService()
     try:
-        pool_result, generation, snapshot_report = BetslipService().generate_and_snapshot_for_day(
-            target_date=_parse_iso_date(target_date),
+        pool_result, generation, snapshot_report = service.generate_and_snapshot_for_day(
+            target_date=parsed_date,
             pool_policy=policy,
             markets=selected_markets,
         )
+        # Mix mono-mercato (2026-10-06): SOLO quando il chiamante non
+        # restringe esplicitamente `markets` (stesso principio gia' in uso
+        # per l'isolamento del mix multi-mercato, vedi
+        # `_default_multi_market_markets`) - una richiesta mono-mercato
+        # esplicita (es. un override puntuale su un solo mercato) resta un
+        # caso a se', mai mescolata al refresh regolare di TUTTI i mercati.
+        if selected_markets is None:
+            snapshot_report["mono_market"] = service.generate_and_snapshot_mono_market_for_day(
+                target_date=parsed_date,
+            )
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     payload = dataclasses.asdict(generation)
@@ -1529,13 +1541,21 @@ def betslip_generate_snapshot(
 def betslip_saved_proposals(
     reference_date: str,
     latest_only: bool = True,
+    current_only: bool = True,
     limit: int = 200,
 ) -> BetslipProposalListResponse:
-    """Consulta snapshot già salvati; non genera né modifica dati."""
+    """Consulta snapshot già salvati; non genera né modifica dati.
+
+    `current_only=True` (default, 2026-10-06): solo le proposte confermate
+    dall'ultimo giro di generazione per `reference_date` - non l'accumulo
+    di ogni combinazione mai proposta nel corso della giornata (append-only
+    per tracciabilità ROI, mai per la vista "schedine di oggi"). Passare
+    `current_only=false` per lo storico completo (debug)."""
     _parse_iso_date(reference_date)
     rows = BetslipProposalSnapshotService().list_saved(
         reference_date=reference_date,
         latest_only=latest_only,
+        current_only=current_only,
         limit=min(max(limit, 0), 2_000),
     )
     return BetslipProposalListResponse(total=len(rows), rows=rows)

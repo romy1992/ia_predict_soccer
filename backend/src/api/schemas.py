@@ -515,7 +515,11 @@ class BetslipGenerateResponse(BaseModel):
     profiles: dict[str, list[dict[str, Any]]] = {}
     decision_groups: dict[str, dict[str, list[dict[str, Any]]]] = {}
     warnings: list[str] = []
-    snapshot_report: Optional[dict[str, int]] = None
+    # dict[str, Any] (non piu' dict[str, int], 2026-10-06): include anche
+    # "mono_market", un report ANNIDATO per mercato (vedi
+    # BetslipService.generate_and_snapshot_mono_market_for_day) accanto ai
+    # contatori semplici del mix multi-mercato.
+    snapshot_report: Optional[dict[str, Any]] = None
 
 
 class OfficialBetslipListResponse(BaseModel):
