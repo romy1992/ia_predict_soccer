@@ -307,7 +307,18 @@ def _switch_market_name(bet_name: str, alternate_bet: str) -> Optional[str]:
             return 'cards'
         case 'Double Chance':
             return 'dc'
+        case 'Anytime Goal Scorer':
+            return 'player_anytime_goalscorer'
     return None
+
+
+# Mercati giocatore (cantiere "giocatori che segnano"): bet id API-Sports,
+# SOLO per gli snapshot (`map_odds_snapshots`), MAI aggiunti a `bet.json`/
+# `BET_BOOKMAKERS` - quella lista alimenta anche `map_odds`/`switch_bet`
+# (la riga piatta di features pre-match), dove 40+ giocatori per partita
+# diventerebbero colonne spazzatura. Id 92 = "Anytime Goal Scorer" (API-Sports
+# `base_bet.json`), confermato con dati reali (Bet365, Serie A) il 2026-10-06.
+PLAYER_MARKET_BET_IDS = {92}
 
 
 def _safe_float(raw_value) -> Optional[float]:
@@ -327,7 +338,9 @@ def map_odds_snapshots(id_match: str, id_fixture: int, fixture_bookmakers: list[
     captured_raw = fixture_bookmakers[0].get('update') if isinstance(fixture_bookmakers[0], dict) else None
     captured_at = _parse_iso_datetime(captured_raw) or datetime.now(timezone.utc)
 
-    allowed_bet_ids = {int(item['id']) for item in BET_BOOKMAKERS if isinstance(item, dict) and item.get('id') is not None}
+    allowed_bet_ids = {
+        int(item['id']) for item in BET_BOOKMAKERS if isinstance(item, dict) and item.get('id') is not None
+    } | PLAYER_MARKET_BET_IDS
     snapshots: list[OddsSnapshot] = []
 
     payload = fixture_bookmakers[0] if isinstance(fixture_bookmakers[0], dict) else {}
