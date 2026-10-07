@@ -13,11 +13,21 @@ class PlayerDataRepository:
     def save_events(self, events: list[PlayerMatchEvent]) -> None:
         """`session.merge` per id (deterministico, `player_event_id`): una
         fixture ri-processata nella finestra rolling del job regolare
-        aggiorna le righe esistenti sul posto invece di duplicarle."""
+        aggiorna le righe esistenti sul posto invece di duplicarle.
+
+        Dedup PRIMA del merge (bug reale, 2026-10-07): API-Sports puo'
+        restituire lo STESSO evento due volte nella stessa risposta
+        (osservato su una fixture reale, un cartellino a ridosso del 90'+6
+        ripetuto identico) - stesso id deterministico per entrambe le copie.
+        `session.merge` controlla solo il DB, non gli altri oggetti gia'
+        mersi in QUESTA sessione non ancora flushata: due eventi con lo
+        stesso id finiscono entrambi marcati per INSERT e il bulk insert
+        va in UniqueViolation su `id_event`."""
         if not events:
             return
+        deduped = list({event.id_event: event for event in events}.values())
         with SessionLocal() as session:
-            for event in events:
+            for event in deduped:
                 session.merge(event)
             session.commit()
 
