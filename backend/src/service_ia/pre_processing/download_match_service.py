@@ -16,9 +16,11 @@ from uuid import uuid4
 
 import pandas as pd
 
+from src.data.player.player_event_service import extract_player_event
 from src.repository.base.repository_db import SessionLocal
 from src.repository.match_repository import MatchRepository
 from src.repository.odds_snapshot_repository import OddsSnapshotRepository
+from src.repository.player_data_repository import PlayerDataRepository
 from src.service_ia.config.app_config import load_app_config
 from src.service_ia.mapper.statistic_mapper import get_attribute_statistics, form_last_5_tot
 from src.service_ia.model.match import Match, Statistics, Odds, OddsSnapshot
@@ -46,6 +48,7 @@ logging.basicConfig(level=logging.DEBUG)
 """
 repo_match = MatchRepository()
 repo_snapshot = OddsSnapshotRepository()
+repo_player = PlayerDataRepository()
 
 BASE_DIR = os.path.dirname(__file__)
 BET_FILE = os.path.join(BASE_DIR, '..', 'json', 'bet.json')
@@ -284,6 +287,13 @@ def _split_statuses(statuses: str | None) -> list[str]:
         if value:
             tokens.append(value)
     return tokens
+
+
+# Stessi stati di `status_list`, come insieme - usato per decidere se una
+# fixture e' conclusa e quindi idonea alla cattura storica degli eventi per
+# giocatore (Step 3b, cantiere "giocatori che segnano"): non ha senso
+# chiamare `fixtures/events` su una fixture non ancora finita.
+_FINISHED_STATUSES = set(_split_statuses(status_list))
 
 
 def _extract_line_value(raw_value: str) -> Optional[str]:
@@ -615,6 +625,19 @@ def download_import_matches(
                     dict_match['statistics'] = stats_objs
                     if odds_objs:
                         dict_match['odds'] = odds_objs
+
+                    # Step 3b (cantiere "giocatori che segnano"): cattura gli
+                    # eventi per giocatore di una fixture GIA' CONCLUSA, cosi'
+                    # lo storico si accumula da solo ad ogni giro del job
+                    # regolare, senza un backfill one-off da ripetere. Il
+                    # check `has_events_for_fixture` evita di ri-spendere una
+                    # chiamata ad ogni passaggio sulla finestra rolling di
+                    # "Aggiorna tutto" (stessa fixture conclusa rivista piu'
+                    # giorni di fila): una volta catturata, non cambia piu'.
+                    if status_short in _FINISHED_STATUSES and not repo_player.has_events_for_fixture(id_fix):
+                        raw_events = provider.get_fixture_events(id_fix)
+                        player_events = [extract_player_event(id_fix, raw_event) for raw_event in raw_events]
+                        repo_player.save_events(player_events)
 
                     # L'upsert ha già scritto le colonne base; questo `save`
                     # (merge) serve alle RELAZIONI statistics/odds, che con
