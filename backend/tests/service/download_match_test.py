@@ -30,6 +30,9 @@ class FakeProvider:
     def get_fixture_odds(self, fixture_id):
         return list(self._odds)
 
+    def get_fixture_events(self, fixture_id):
+        return []
+
 
 def _sample_fixture(fixture_id=1326590, status="FT"):
     return {
@@ -97,6 +100,7 @@ def _sample_odds_payload():
 
 
 class TestDownloadMatch(unittest.TestCase):
+    @patch("src.service_ia.pre_processing.download_match_service.repo_player.has_events_for_fixture", return_value=True)
     @patch("src.service_ia.pre_processing.download_match_service.BET_BOOKMAKERS", [{"id": 1}])
     @patch("src.service_ia.pre_processing.download_match_service.form_last_5_tot", return_value=None)
     @patch("src.service_ia.pre_processing.download_match_service.repo_snapshot.save_many")
@@ -112,6 +116,7 @@ class TestDownloadMatch(unittest.TestCase):
         mock_save_all,
         mock_snapshot_save,
         _mock_form,
+        _mock_has_events,
     ):
         """Bug fix 2026-09-15: una fixture NUOVA non viene piu' accodata in una
         lista scritta con `save_all` a fine job (invisibile per minuti a un
@@ -146,6 +151,7 @@ class TestDownloadMatch(unittest.TestCase):
         mock_save_all.assert_not_called()
         mock_snapshot_save.assert_called_once()
 
+    @patch("src.service_ia.pre_processing.download_match_service.repo_player.has_events_for_fixture", return_value=True)
     @patch("src.service_ia.pre_processing.download_match_service.BET_BOOKMAKERS", [{"id": 1}])
     @patch("src.service_ia.pre_processing.download_match_service.form_last_5_tot", return_value=None)
     @patch("src.service_ia.pre_processing.download_match_service.repo_snapshot.save_many")
@@ -153,7 +159,7 @@ class TestDownloadMatch(unittest.TestCase):
     @patch("src.service_ia.pre_processing.download_match_service.repo_match.upsert_base_by_fixture")
     @patch("src.service_ia.pre_processing.download_match_service.repo_match.filter_by")
     def test_snapshot_agganciati_all_id_restituito_dall_upsert(
-        self, mock_filter_by, mock_upsert, _mock_save, mock_snapshot_save, _mock_form,
+        self, mock_filter_by, mock_upsert, _mock_save, mock_snapshot_save, _mock_form, _mock_has_events,
     ):
         """Il cuore del fix sulle righe duplicate: quando un ALTRO processo ha
         vinto la corsa sull'insert, l'upsert restituisce l'`id_match_fk` DI
@@ -179,6 +185,7 @@ class TestDownloadMatch(unittest.TestCase):
         self.assertGreater(len(snapshots), 0)
         self.assertEqual({s.id_match for s in snapshots}, {"id-del-vincitore"})
 
+    @patch("src.service_ia.pre_processing.download_match_service.repo_player.has_events_for_fixture", return_value=True)
     @patch("src.service_ia.pre_processing.download_match_service.BET_BOOKMAKERS", [{"id": 1}])
     @patch("src.service_ia.pre_processing.download_match_service.form_last_5_tot", return_value=None)
     @patch("src.service_ia.pre_processing.download_match_service.repo_snapshot.save_many")
@@ -195,6 +202,7 @@ class TestDownloadMatch(unittest.TestCase):
         _mock_save_all,
         _mock_snapshot_save,
         _mock_form,
+        _mock_has_events,
     ):
         existing = Match(
             id_match_fk="existing-id",
@@ -231,6 +239,7 @@ class TestDownloadMatch(unittest.TestCase):
         self.assertEqual(report["failed"], 0)
         mock_save.assert_called_once()
 
+    @patch("src.service_ia.pre_processing.download_match_service.repo_player.has_events_for_fixture", return_value=True)
     @patch("src.service_ia.pre_processing.download_match_service.BET_BOOKMAKERS", [{"id": 1}])
     @patch("src.service_ia.pre_processing.download_match_service.form_last_5_tot", return_value=None)
     @patch("src.service_ia.pre_processing.download_match_service.repo_snapshot.save_many")
@@ -247,6 +256,7 @@ class TestDownloadMatch(unittest.TestCase):
         _mock_save_all,
         _mock_snapshot_save,
         _mock_form,
+        _mock_has_events,
     ):
         mock_filter_by.return_value.first.return_value = None
         broken_fixture = {"fixture": {"id": 999}, "league": {"id": 135}, "teams": {}}
@@ -604,6 +614,7 @@ class TestDownloadImportMatchesScoreWithoutStatistics(unittest.TestCase):
     minori) deve comunque finire a DB con `score_home`/`score_away`
     popolati - non piu' un punteggio "- - -" in Dashboard."""
 
+    @patch("src.service_ia.pre_processing.download_match_service.repo_player.has_events_for_fixture", return_value=True)
     @patch("src.service_ia.pre_processing.download_match_service.BET_BOOKMAKERS", [{"id": 1}])
     @patch("src.service_ia.pre_processing.download_match_service.form_last_5_tot", return_value=None)
     @patch("src.service_ia.pre_processing.download_match_service.repo_snapshot.save_many")
@@ -612,7 +623,7 @@ class TestDownloadImportMatchesScoreWithoutStatistics(unittest.TestCase):
            return_value=("nuovo-id", True))
     @patch("src.service_ia.pre_processing.download_match_service.repo_match.filter_by")
     def test_score_saved_even_when_statistics_endpoint_returns_nothing(
-        self, mock_filter_by, mock_upsert, mock_save, _mock_snapshot_save, _mock_form,
+        self, mock_filter_by, mock_upsert, mock_save, _mock_snapshot_save, _mock_form, _mock_has_events,
     ):
         mock_filter_by.return_value.first.return_value = None
         provider = FakeProvider(
@@ -647,6 +658,7 @@ class TestDownloadImportMatchesLegaNonDisponibile(unittest.TestCase):
     della quota giornaliera esaurita che invece ferma tutto perche'
     riguardera' identicamente ogni chiamata seguente."""
 
+    @patch("src.service_ia.pre_processing.download_match_service.repo_player.has_events_for_fixture", return_value=True)
     @patch("src.service_ia.pre_processing.download_match_service.BET_BOOKMAKERS", [{"id": 1}])
     @patch("src.service_ia.pre_processing.download_match_service.form_last_5_tot", return_value=None)
     @patch("src.service_ia.pre_processing.download_match_service.repo_snapshot.save_many")
@@ -655,7 +667,7 @@ class TestDownloadImportMatchesLegaNonDisponibile(unittest.TestCase):
            return_value=("nuovo-id", True))
     @patch("src.service_ia.pre_processing.download_match_service.repo_match.filter_by")
     def test_lega_non_disponibile_registrata_e_giro_continua(
-        self, mock_filter_by, _mock_upsert, _mock_save, _mock_snapshot_save, _mock_form,
+        self, mock_filter_by, _mock_upsert, _mock_save, _mock_snapshot_save, _mock_form, _mock_has_events,
     ):
         mock_filter_by.return_value.first.return_value = None
 
