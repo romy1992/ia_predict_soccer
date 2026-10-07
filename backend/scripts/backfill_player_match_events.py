@@ -68,9 +68,20 @@ def backfill(seasons: list[int], leagues: list[int], max_requests: int) -> dict[
     repository = PlayerDataRepository()
     fixture_ids = _candidate_fixtures(seasons, leagues)
 
+    # UNA query per sapere quali fixture sono gia' catturate (giri precedenti
+    # dello stesso backfill), non una per fixture (`has_events_for_fixture`
+    # in loop impiegava minuti solo per scartare le migliaia gia' fatte,
+    # prima di toccare anche una sola fixture nuova - bug di performance
+    # osservato in produzione, 2026-10-07).
+    already_captured_ids = repository.captured_fixture_ids(fixture_ids)
+    logging.info(
+        "Candidati: %s totali, %s gia' catturati, %s da processare",
+        len(fixture_ids), len(already_captured_ids), len(fixture_ids) - len(already_captured_ids),
+    )
+
     report = {
         "candidates": len(fixture_ids),
-        "already_captured": 0,
+        "already_captured": len(already_captured_ids),
         "requests_used": 0,
         "fixtures_captured": 0,
         "goal_events_saved": 0,
@@ -84,8 +95,7 @@ def backfill(seasons: list[int], leagues: list[int], max_requests: int) -> dict[
                 logging.info("Budget richieste esaurito (%s), stop backfill", max_requests)
                 break
 
-            if repository.has_events_for_fixture(fixture_id):
-                report["already_captured"] += 1
+            if fixture_id in already_captured_ids:
                 continue
 
             try:

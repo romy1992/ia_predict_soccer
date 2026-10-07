@@ -44,6 +44,26 @@ class PlayerDataRepository:
                 is not None
             )
 
+    def captured_fixture_ids(self, fixture_ids: list[int]) -> set[int]:
+        """Sottoinsieme di `fixture_ids` gia' catturato - UNA query, non una
+        per fixture (a differenza di `has_events_for_fixture`, pensato per
+        il singolo controllo nel job regolare). Il backfill storico deve
+        scartare migliaia di fixture gia' processate nei giri precedenti:
+        farlo con `has_events_for_fixture` in loop costava un round-trip di
+        rete per ciascuna, anche solo per scartarla - con l'andare avanti
+        del backfill, la sola fase di skip arrivava a richiedere minuti
+        prima di toccare anche una sola fixture nuova."""
+        if not fixture_ids:
+            return set()
+        with SessionLocal() as session:
+            rows = (
+                session.query(PlayerMatchEvent.fixture_id)
+                .filter(PlayerMatchEvent.fixture_id.in_(fixture_ids))
+                .distinct()
+                .all()
+            )
+        return {row[0] for row in rows}
+
     def list_events_for_fixture(self, fixture_id: int) -> list[PlayerMatchEvent]:
         with SessionLocal() as session:
             return (

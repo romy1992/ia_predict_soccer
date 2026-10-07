@@ -122,6 +122,22 @@ class TestPlayerDataRepositoryWithDb(unittest.TestCase):
         rows = self.repo.list_events_for_fixture(100)
         self.assertEqual(len(rows), 1)
 
+    def test_captured_fixture_ids_bulk_check(self):
+        """Performance fix 2026-10-07: il backfill deve poter scartare
+        migliaia di fixture gia' catturate con UNA query, non una per
+        fixture (`has_events_for_fixture` in loop impiegava minuti solo
+        per lo skip, prima di toccare anche una sola fixture nuova)."""
+        event_100 = extract_player_event(100, _raw_event(player_id=1, player_name="Player X"))
+        event_200 = extract_player_event(200, _raw_event(player_id=2, player_name="Player Y"))
+        self.repo.save_events([event_100, event_200])
+
+        captured = self.repo.captured_fixture_ids([100, 200, 300])
+
+        self.assertEqual(captured, {100, 200})
+
+    def test_captured_fixture_ids_empty_input(self):
+        self.assertEqual(self.repo.captured_fixture_ids([]), set())
+
 
 if __name__ == "__main__":
     unittest.main()
