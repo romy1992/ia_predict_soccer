@@ -51,6 +51,7 @@ from src.api.schemas import (
     JobStatusResponse,
     JobTeamRatingRefreshRequest,
     JobTodayUpdateRequest,
+    JobsDailySummaryResponse,
     JobsHistoryResponse,
     LiveFixtureEventsResponse,
     LiveFixtureStatisticsResponse,
@@ -107,6 +108,7 @@ from src.repository.odds_snapshot_repository import OddsSnapshotRepository
 from src.data.live.live_sync_job import run_manual_live_sync
 from src.repository.live_data_repository import LiveDataRepository
 from src.jobs.api_quota_state import get_quota_snapshot
+from src.jobs.job_daily_summary_service import JobDailySummaryService
 from src.jobs.job_history import JobHistory
 from src.jobs.job_settings import (
     JOB_DEFINITIONS,
@@ -1232,6 +1234,16 @@ def odds_snapshots(fixture_id: int) -> dict[str, Any]:
 def jobs_history(limit: int = 100, job_type: Optional[str] = None, status: Optional[str] = None) -> JobsHistoryResponse:
     rows = JobHistory().tail(limit=limit, job_type=job_type, status=status)
     return JobsHistoryResponse(rows=rows)
+
+
+@app.get("/jobs/daily-summary", response_model=JobsDailySummaryResponse)
+def jobs_daily_summary(days: int = 30, job_type: Optional[str] = None) -> JobsDailySummaryResponse:
+    """Storico giorno-per-giorno di fixture prese/fallite dai job di
+    import (import/daily_refresh/today_update/future_sync/settlement) -
+    a differenza di `/data/quality` (stato ATTUALE cumulativo del DB),
+    qui si vede l'andamento nel tempo delle singole esecuzioni."""
+    payload = JobDailySummaryService().build_report(days=days, job_type=job_type)
+    return JobsDailySummaryResponse(**payload)
 
 
 @app.get("/jobs/{job_id}", response_model=JobStatusResponse)
