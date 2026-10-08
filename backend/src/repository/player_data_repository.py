@@ -1,14 +1,16 @@
 from __future__ import annotations
 
+from src.data.player.player_lineup_models import PlayerLineup
 from src.data.player.player_models import PlayerMatchEvent
 from src.repository.base.repository_db import SessionLocal
 
 
 class PlayerDataRepository:
-    """Accesso allo storico eventi-per-giocatore (`player_match_event`) -
-    pattern dedicato, stesso approccio di `LiveDataRepository`/
-    `OddsSnapshotRepository` (query non coperte dal `CrudRepository`
-    generico, qui un semplice check di presenza per fixture)."""
+    """Accesso ai dati storici per giocatore - eventi (`player_match_event`)
+    e formazioni (`player_lineup`) - pattern dedicato, stesso approccio di
+    `LiveDataRepository`/`OddsSnapshotRepository` (query non coperte dal
+    `CrudRepository` generico, qui un semplice check di presenza per
+    fixture)."""
 
     def save_events(self, events: list[PlayerMatchEvent]) -> None:
         """`session.merge` per id (deterministico, `player_event_id`): una
@@ -70,5 +72,52 @@ class PlayerDataRepository:
                 session.query(PlayerMatchEvent)
                 .filter(PlayerMatchEvent.fixture_id == int(fixture_id))
                 .order_by(PlayerMatchEvent.elapsed_minute.asc().nullslast())
+                .all()
+            )
+
+    # -- Formazioni (PlayerLineup) -------------------------------------
+    # Stesso repository degli eventi (dominio "dati giocatore" unico),
+    # stesso principio di `LiveDataRepository` che gestisce piu' tabelle
+    # LIVE in una sola classe.
+
+    def save_lineups(self, lineups: list[PlayerLineup]) -> None:
+        """`session.merge` su PK composita (fixture_id, player_id): una
+        fixture ri-processata aggiorna la riga sul posto, mai duplicata."""
+        if not lineups:
+            return
+        with SessionLocal() as session:
+            for lineup in lineups:
+                session.merge(lineup)
+            session.commit()
+
+    def has_lineup_for_fixture(self, fixture_id: int) -> bool:
+        with SessionLocal() as session:
+            return (
+                session.query(PlayerLineup.player_id)
+                .filter(PlayerLineup.fixture_id == int(fixture_id))
+                .first()
+                is not None
+            )
+
+    def captured_lineup_fixture_ids(self, fixture_ids: list[int]) -> set[int]:
+        """Stesso motivo/pattern di `captured_fixture_ids`: UNA query per
+        scartare in blocco le fixture gia' catturate nel backfill, non una
+        per fixture."""
+        if not fixture_ids:
+            return set()
+        with SessionLocal() as session:
+            rows = (
+                session.query(PlayerLineup.fixture_id)
+                .filter(PlayerLineup.fixture_id.in_(fixture_ids))
+                .distinct()
+                .all()
+            )
+        return {row[0] for row in rows}
+
+    def list_lineup_for_fixture(self, fixture_id: int) -> list[PlayerLineup]:
+        with SessionLocal() as session:
+            return (
+                session.query(PlayerLineup)
+                .filter(PlayerLineup.fixture_id == int(fixture_id))
                 .all()
             )
