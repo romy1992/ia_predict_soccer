@@ -17,6 +17,7 @@ from uuid import uuid4
 import pandas as pd
 
 from src.data.player.player_event_service import extract_player_event
+from src.data.player.player_lineup_service import extract_lineup_players
 from src.repository.base.repository_db import SessionLocal
 from src.repository.match_repository import MatchRepository
 from src.repository.odds_snapshot_repository import OddsSnapshotRepository
@@ -638,6 +639,23 @@ def download_import_matches(
                         raw_events = provider.get_fixture_events(id_fix)
                         player_events = [extract_player_event(id_fix, raw_event) for raw_event in raw_events]
                         repo_player.save_events(player_events)
+
+                    # Step 4 (cantiere "giocatori che segnano"): cattura la
+                    # formazione (titolari + panchina) di una fixture GIA'
+                    # CONCLUSA - l'universo completo di chi ha giocato, senza
+                    # il quale un dataset "ha segnato si/no" vedrebbe solo i
+                    # giocatori con eventi (gol/cartellini), mai gli esempi
+                    # negativi puliti (vedi player_lineup_models.py). Stesso
+                    # principio di guardia di Step 3b: una fixture catturata
+                    # non cambia piu', non va ri-richiesta.
+                    if status_short in _FINISHED_STATUSES and not repo_player.has_lineup_for_fixture(id_fix):
+                        raw_lineups = provider.get_fixture_lineups(id_fix)
+                        lineup_rows = [
+                            player_row
+                            for raw_team_lineup in raw_lineups
+                            for player_row in extract_lineup_players(id_fix, raw_team_lineup)
+                        ]
+                        repo_player.save_lineups(lineup_rows)
 
                     # L'upsert ha già scritto le colonne base; questo `save`
                     # (merge) serve alle RELAZIONI statistics/odds, che con

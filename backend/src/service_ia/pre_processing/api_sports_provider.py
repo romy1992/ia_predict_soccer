@@ -392,5 +392,8 @@ class ApiSportsProvider:
     def get_fixture_events(self, fixture_id: int) -> list[dict[str, Any]]:
         return self.request(path="fixtures/events", params={"fixture": int(fixture_id)})
 
+    def get_fixture_lineups(self, fixture_id: int) -> list[dict[str, Any]]:
+        return self.request(path="fixtures/lineups", params={"fixture": int(fixture_id)})
+
     def get_predictions(self, fixture_id: int) -> list[dict[str, Any]]:
         return self.request(path="predictions", params={"fixture": int(fixture_id)})
