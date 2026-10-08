@@ -19,9 +19,22 @@ def _not_found_error(key: str) -> ClientError:
     )
 
 
+def _access_denied_error(key: str) -> ClientError:
+    return ClientError(
+        {"Error": {"Code": "AccessDenied", "Message": key}, "ResponseMetadata": {"HTTPStatusCode": 403}},
+        "GetObject",
+    )
+
+
 class FakeS3Client:
     def __init__(self):
         self._objects: dict[str, bytes] = {}
+        # Chiavi che devono rispondere AccessDenied su get_object, pur
+        # esistendo (`put_object` le scrive comunque) - simula il caso
+        # reale osservato in produzione: un oggetto presente ma non
+        # leggibile (permessi/credito), gli altri sotto lo stesso prefisso
+        # restano leggibili normalmente.
+        self.deny_read_keys: set[str] = set()
 
     def head_object(self, Bucket: str, Key: str):
         if Key not in self._objects:
@@ -29,6 +42,8 @@ class FakeS3Client:
         return {}
 
     def get_object(self, Bucket: str, Key: str):
+        if Key in self.deny_read_keys:
+            raise _access_denied_error(Key)
         if Key not in self._objects:
             raise _not_found_error(Key)
         return {"Body": io.BytesIO(self._objects[Key])}

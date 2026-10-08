@@ -60,6 +60,30 @@ class TestBucketStore(unittest.TestCase):
         bucket_store.delete("x.json")
         self.assertFalse(bucket_store.exists("x.json"))
 
+    def test_list_json_reads_all_values_under_prefix(self):
+        bucket_store.put_json("registry/runs/a.json", {"id": "a"})
+        bucket_store.put_json("registry/runs/b.json", {"id": "b"})
+
+        rows = bucket_store.list_json("registry/runs/")
+
+        self.assertEqual({row["id"] for row in rows}, {"a", "b"})
+
+    def test_list_json_isolates_single_key_failure(self):
+        """Bug reale 2026-10-08: un oggetto rispondeva 403 AccessDenied
+        mentre tutti gli altri sotto lo stesso prefisso rispondevano 200 -
+        PRIMA del fix, `list_json` propagava quella singola eccezione e
+        faceva fallire l'intera lettura (quindi l'intera dashboard, che
+        passa da qui per calcolare i mercati attivi). Ora la chiave rotta
+        viene scartata, le altre restano leggibili."""
+        bucket_store.put_json("registry/runs/good_1.json", {"id": "good_1"})
+        bucket_store.put_json("registry/runs/broken.json", {"id": "broken"})
+        bucket_store.put_json("registry/runs/good_2.json", {"id": "good_2"})
+        self.fake.deny_read_keys.add("registry/runs/broken.json")
+
+        rows = bucket_store.list_json("registry/runs/")  # non deve sollevare
+
+        self.assertEqual({row["id"] for row in rows}, {"good_1", "good_2"})
+
 
 if __name__ == "__main__":
     unittest.main()
