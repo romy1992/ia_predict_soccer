@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { formatEdge, formatNumber, formatOdd, formatPercent, marketLabel, severityClass } from "../shared/formatters";
 
 function ratioPercent(value) {
@@ -14,6 +15,16 @@ function ratioPercent(value) {
 function SeverityBadge({ severity }) {
   return <span className={`value-badge ${severityClass(severity)}`}>{severity}</span>;
 }
+
+// Le tre decisioni reali del motore (`betslip_builder.situation_rank`) +
+// "ALL" ("Generale", le tre insieme) - stesse chiavi usate dal backend in
+// `officialPerformance.by_decision` (OfficialPerformanceService).
+const DECISION_TABS = [
+  { key: "PLAY", label: "PLAY" },
+  { key: "BORDERLINE", label: "BORDERLINE" },
+  { key: "NO BET", label: "NO BET" },
+  { key: "ALL", label: "Generale" },
+];
 
 /**
  * OPS-03: Monitoring performance modello e data drift. Mostra SOLO dati
@@ -38,6 +49,18 @@ export default function MonitoringPage({
   const volumeSeries = (report?.prediction_volume?.series || []).slice(-14);
   const featureRows = report?.feature_coverage?.per_feature || [];
   const calibration = report?.calibration_drift;
+
+  const [performanceDecision, setPerformanceDecision] = useState("PLAY");
+  // `by_decision` e' sempre presente dal backend aggiornato; fallback su
+  // overall/breakdowns (storicamente SOLO-PLAY) se un payload piu' vecchio
+  // dovesse mancarne (cache stantia).
+  const decisionView = officialPerformance?.by_decision?.[performanceDecision] || {
+    overall: officialPerformance?.overall,
+    breakdowns: officialPerformance?.breakdowns,
+  };
+  const decisionOverall = decisionView.overall;
+  const decisionMarketBreakdown = decisionView.breakdowns?.market || {};
+  const decisionDayBreakdown = decisionView.breakdowns?.day || {};
 
   return (
     <section className="stack">
@@ -84,51 +107,65 @@ export default function MonitoringPage({
           <h3>Performance ufficiale / Paper</h3>
           <span className="value-badge value-play">UFFICIALE/PAPER</span>
         </div>
-        {!officialPerformance || officialPerformance.sample_size === 0 ? (
+        <div className="tabs">
+          {DECISION_TABS.map((tab) => (
+            <button
+              key={tab.key}
+              type="button"
+              className={performanceDecision === tab.key ? "tab active" : "tab"}
+              onClick={() => setPerformanceDecision(tab.key)}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+        {!officialPerformance || decisionOverall?.sample_size === 0 ? (
           <div className="empty-state">
-            Nessuna PLAY ufficiale ancora registrata · <strong>DATI INSUFFICIENTI</strong>
+            Nessuna prediction ufficiale {performanceDecision === "ALL" ? "" : performanceDecision + " "}
+            ancora registrata · <strong>DATI INSUFFICIENTI</strong>
           </div>
         ) : (
           <>
             <p className="muted">
-              Solo PLAY catturate automaticamente prima del kickoff. Edge ed EV sono ex-ante; ROI e profitto
-              sono osservati; CLV confronta la quota presa con la chiusura.
+              {performanceDecision === "ALL"
+                ? "PLAY + BORDERLINE + NO BET insieme."
+                : `Solo decisioni ${performanceDecision}.`}{" "}
+              Catturate automaticamente prima del kickoff. Edge ed EV sono ex-ante; ROI e profitto sono
+              osservati{performanceDecision === "PLAY" ? "; CLV confronta la quota presa con la chiusura." : "."}
             </p>
             <div className="stats-grid">
               {[
-                ["PLAY", officialPerformance.overall?.plays],
-                ["Vinte", officialPerformance.overall?.wins],
-                ["Perse", officialPerformance.overall?.losses],
-                ["VOID", officialPerformance.overall?.void],
-                ["Pending", officialPerformance.overall?.pending],
-                ["Profitto", formatNumber(officialPerformance.overall?.total_profit, 2)],
+                [performanceDecision === "ALL" ? "Totali" : performanceDecision, decisionOverall?.plays],
+                ["Vinte", decisionOverall?.wins],
+                ["Perse", decisionOverall?.losses],
+                ["VOID", decisionOverall?.void],
+                ["Pending", decisionOverall?.pending],
+                ["Profitto", formatNumber(decisionOverall?.total_profit, 2)],
                 [
                   "ROI",
-                  officialPerformance.overall?.roi == null
-                    ? "Dati insufficienti"
-                    : formatPercent(officialPerformance.overall.roi),
+                  decisionOverall?.roi == null ? "Dati insufficienti" : formatPercent(decisionOverall.roi),
                 ],
                 [
                   "Hit rate",
-                  officialPerformance.overall?.hit_rate == null
+                  decisionOverall?.hit_rate == null
                     ? "Dati insufficienti"
-                    : formatPercent(officialPerformance.overall.hit_rate),
+                    : formatPercent(decisionOverall.hit_rate),
                 ],
-                ["Quota media", formatOdd(officialPerformance.overall?.avg_odd)],
-                ["Edge probabilistico (p.p.)", formatPercent(officialPerformance.overall?.avg_prob_edge)],
-                ["EV teorico", formatPercent(officialPerformance.overall?.avg_ev)],
-                ["Max drawdown", formatNumber(officialPerformance.overall?.max_drawdown, 2)],
+                ["Quota media", formatOdd(decisionOverall?.avg_odd)],
+                ["Edge probabilistico (p.p.)", formatPercent(decisionOverall?.avg_prob_edge)],
+                ["EV teorico", formatPercent(decisionOverall?.avg_ev)],
+                ["Max drawdown", formatNumber(decisionOverall?.max_drawdown, 2)],
                 [
                   "CLV medio",
-                  officialPerformance.overall?.avg_clv_odd_pct == null
+                  decisionOverall?.avg_clv_odd_pct == null
                     ? "Dati insufficienti"
-                    : formatPercent(officialPerformance.overall.avg_clv_odd_pct),
+                    : formatPercent(decisionOverall.avg_clv_odd_pct),
                 ],
                 [
                   "Copertura CLV",
-                  officialPerformance.overall?.clv_coverage == null
+                  decisionOverall?.clv_coverage == null
                     ? "Dati insufficienti"
-                    : formatPercent(officialPerformance.overall.clv_coverage),
+                    : formatPercent(decisionOverall.clv_coverage),
                 ],
               ].map(([label, value]) => (
                 <article className="stat-card" key={label}>
@@ -138,10 +175,10 @@ export default function MonitoringPage({
               ))}
             </div>
             <p className="muted">
-              Gross stake {formatNumber(officialPerformance.overall?.gross_stake, 2)} · Stake VOID restituito{" "}
-              {formatNumber(officialPerformance.overall?.void_stake, 2)} · Active stake{" "}
-              {formatNumber(officialPerformance.overall?.active_stake, 2)} · Campione{" "}
-              {officialPerformance.sample_size}
+              Gross stake {formatNumber(decisionOverall?.gross_stake, 2)} · Stake VOID restituito{" "}
+              {formatNumber(decisionOverall?.void_stake, 2)} · Active stake{" "}
+              {formatNumber(decisionOverall?.active_stake, 2)} · Campione{" "}
+              {decisionOverall?.sample_size ?? 0}
             </p>
           </>
         )}
@@ -149,17 +186,17 @@ export default function MonitoringPage({
 
       <section className="panel">
         <div className="panel-header">
-          <h3>Performance per mercato</h3>
+          <h3>Performance per mercato ({performanceDecision === "ALL" ? "Generale" : performanceDecision})</h3>
         </div>
-        {!officialPerformance || Object.keys(officialPerformance.breakdowns?.market || {}).length === 0 ? (
-          <div className="empty-state">Nessuna PLAY ufficiale ancora registrata.</div>
+        {!officialPerformance || Object.keys(decisionMarketBreakdown).length === 0 ? (
+          <div className="empty-state">Nessuna prediction ufficiale ancora registrata.</div>
         ) : (
           <div className="table-wrap">
             <table>
               <thead>
                 <tr>
                   <th>Mercato</th>
-                  <th>PLAY</th>
+                  <th>{performanceDecision === "ALL" ? "Totali" : performanceDecision}</th>
                   <th>Vinte</th>
                   <th>Perse</th>
                   <th>Pending</th>
@@ -170,7 +207,7 @@ export default function MonitoringPage({
                 </tr>
               </thead>
               <tbody>
-                {Object.entries(officialPerformance.breakdowns?.market || {}).map(([marketKey, metrics]) => (
+                {Object.entries(decisionMarketBreakdown).map(([marketKey, metrics]) => (
                   <tr key={`market-row-${marketKey}`}>
                     <td>{marketKey === "unknown" ? "n/d" : marketLabel(marketKey)}</td>
                     <td>{metrics.plays}</td>
@@ -191,17 +228,17 @@ export default function MonitoringPage({
 
       <section className="panel">
         <div className="panel-header">
-          <h3>Andamento per giorno</h3>
+          <h3>Andamento per giorno ({performanceDecision === "ALL" ? "Generale" : performanceDecision})</h3>
         </div>
-        {!officialPerformance || Object.keys(officialPerformance.breakdowns?.day || {}).length === 0 ? (
-          <div className="empty-state">Nessuna PLAY ufficiale ancora registrata.</div>
+        {!officialPerformance || Object.keys(decisionDayBreakdown).length === 0 ? (
+          <div className="empty-state">Nessuna prediction ufficiale ancora registrata.</div>
         ) : (
           <div className="table-wrap">
             <table>
               <thead>
                 <tr>
                   <th>Data</th>
-                  <th>PLAY</th>
+                  <th>{performanceDecision === "ALL" ? "Totali" : performanceDecision}</th>
                   <th>Risolte</th>
                   <th>Vinte</th>
                   <th>Perse</th>
@@ -213,7 +250,7 @@ export default function MonitoringPage({
                 </tr>
               </thead>
               <tbody>
-                {Object.entries(officialPerformance.breakdowns?.day || {})
+                {Object.entries(decisionDayBreakdown)
                   .sort((a, b) => (a[0] < b[0] ? 1 : -1))
                   .map(([day, metrics]) => (
                     <tr key={`day-row-${day}`}>
