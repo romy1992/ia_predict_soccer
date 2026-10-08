@@ -142,6 +142,23 @@ def list_keys(prefix: str) -> list[str]:
     return keys
 
 
+def _get_json_isolated(key: str) -> Any:
+    """Wrapper per `list_json`: un errore del provider (AccessDenied,
+    timeout...) su UNA chiave non deve far fallire l'intera lettura del
+    prefisso - stesso principio "errori isolati" gia' usato per le
+    chiamate API-Sports (`download_match_service.py`/`live_data_service.py`).
+    Bug reale osservato in produzione (2026-10-08): un singolo file del
+    registry rispondeva 403 AccessDenied (tutti gli altri 200) e mandava
+    in 500 l'intera dashboard, perche' `pool.map` propagava la prima
+    eccezione incontrata interrompendo la lettura di TUTTI gli altri
+    file, gia' validi."""
+    try:
+        return get_json(key)
+    except Exception:
+        logging.exception("list_json: chiave %s illeggibile, la salto", key)
+        return None
+
+
 def list_json(prefix: str) -> list[Any]:
     """`list_keys` + `get_json` in parallelo per ogni chiave - un oggetto
     per record (job, run, evento di promozione...) sotto `prefix` invece
@@ -153,7 +170,7 @@ def list_json(prefix: str) -> list[Any]:
     if not keys:
         return []
     with ThreadPoolExecutor(max_workers=min(16, len(keys))) as pool:
-        results = list(pool.map(get_json, keys))
+        results = list(pool.map(_get_json_isolated, keys))
     return [item for item in results if item]
 
 
