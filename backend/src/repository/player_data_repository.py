@@ -82,11 +82,25 @@ class PlayerDataRepository:
 
     def save_lineups(self, lineups: list[PlayerLineup]) -> None:
         """`session.merge` su PK composita (fixture_id, player_id): una
-        fixture ri-processata aggiorna la riga sul posto, mai duplicata."""
+        fixture ri-processata aggiorna la riga sul posto, mai duplicata.
+
+        Dedup PRIMA del merge - stesso bug/fix gia' visto su `save_events`
+        (2026-10-07). Causa reale osservata in produzione (2026-10-08,
+        fixture 1601534): NON lo stesso giocatore ripetuto, ma un errore
+        di qualita' dati lato API-Sports - due giocatori DIVERSI ("M.
+        Curado" in startXI, "M. A. Chakir" in substitutes) con lo STESSO
+        player_id. La PK composita (fixture_id, player_id) non puo'
+        rappresentare entrambi: qui si tiene l'ultimo (comportamento gia'
+        accettato per i duplicati veri degli eventi). `session.merge`
+        controlla solo il DB, non gli altri oggetti gia' mersi in QUESTA
+        sessione non ancora flushata - due righe con la stessa PK finiscono
+        entrambe marcate per INSERT e il bulk insert va in UniqueViolation
+        su `player_lineup_pkey`."""
         if not lineups:
             return
+        deduped = list({(lineup.fixture_id, lineup.player_id): lineup for lineup in lineups}.values())
         with SessionLocal() as session:
-            for lineup in lineups:
+            for lineup in deduped:
                 session.merge(lineup)
             session.commit()
 
