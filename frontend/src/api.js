@@ -136,6 +136,13 @@ export function getJob(jobId) {
   return request(`/jobs/${encodeURIComponent(jobId)}`);
 }
 
+export function getJobsDailySummary({ days = 30, jobType } = {}) {
+  const params = new URLSearchParams();
+  params.set("days", String(days));
+  if (jobType) params.set("job_type", jobType);
+  return request(`/jobs/daily-summary?${params.toString()}`);
+}
+
 export function getOracleMatchDetail(fixtureId, { markets } = {}) {
   const params = new URLSearchParams();
   if (markets && markets.length > 0) {

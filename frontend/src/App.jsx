@@ -13,6 +13,7 @@ import {
   getHealth,
   getJob,
   getJobs,
+  getJobsDailySummary,
   getJobSettings,
   getMarkets,
   getModelDiagnostics,
@@ -99,6 +100,9 @@ export default function App() {
   const [qualityReport, setQualityReport] = useState(null);
   const [qualityLoading, setQualityLoading] = useState(false);
   const [qualityError, setQualityError] = useState("");
+  const [jobStatsReport, setJobStatsReport] = useState(null);
+  const [jobStatsLoading, setJobStatsLoading] = useState(false);
+  const [jobStatsError, setJobStatsError] = useState("");
   const [betslipDate, setBetslipDate] = useState(todayIso());
   const [betslipReport, setBetslipReport] = useState(null);
   const [betslipLoading, setBetslipLoading] = useState(false);
@@ -320,6 +324,24 @@ export default function App() {
       setQualityLoading(false);
     }
   }, [refreshJobs]);
+  const loadJobStats = useCallback(async ({ days = 30, jobType } = {}) => {
+    // A differenza di Data Quality, qui e' una semplice lettura aggregata
+    // (nessun job da triggerare: `/jobs/daily-summary` legge solo lo
+    // storico gia' salvato da `JobHistory`, nessuna chiamata API-Sports).
+    setJobStatsLoading(true);
+    setJobStatsError("");
+    try {
+      const payload = await getJobsDailySummary({ days, jobType });
+      setJobStatsReport(payload);
+      return payload;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setJobStatsError(message);
+      throw err;
+    } finally {
+      setJobStatsLoading(false);
+    }
+  }, []);
   const loadBetslip = useCallback(
     async (overrides = {}) => {
       setBetslipLoading(true);
@@ -997,6 +1019,15 @@ export default function App() {
     loadDataQuality({ topN: 20 }).catch(() => {});
   }, [activePage, qualityReport, loadDataQuality]);
   useEffect(() => {
+    if (activePage !== "job-stats") {
+      return;
+    }
+    if (jobStatsReport) {
+      return;
+    }
+    loadJobStats({ days: 30 }).catch(() => {});
+  }, [activePage, jobStatsReport, loadJobStats]);
+  useEffect(() => {
     if (activePage !== "betslip") {
       return;
     }
@@ -1173,6 +1204,12 @@ export default function App() {
       isLoading: qualityLoading,
       error: qualityError,
       onLoadReport: loadDataQuality,
+    },
+    jobStats: {
+      report: jobStatsReport,
+      isLoading: jobStatsLoading,
+      error: jobStatsError,
+      onLoadReport: loadJobStats,
     },
     betslip: {
       targetDate: betslipDate,

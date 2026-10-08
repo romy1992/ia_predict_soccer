@@ -1,6 +1,7 @@
 import DashboardFeaturePage from "../dashboard/DashboardFeaturePage";
 import DataCenterPage from "../data-center/DataCenterPage";
 import DataQualityPage from "../data-quality/DataQualityPage";
+import JobStatsPage from "../job-stats/JobStatsPage";
 import BetslipPage from "../betslip/BetslipPage";
 import MlLabPage from "../ml-lab/MlLabPage";
 import ModelDiagnosticsPage from "../model-diagnostics/ModelDiagnosticsPage";
@@ -23,6 +24,9 @@ export default function AppRouter({ activePage, props }) {
   }
   if (activePage === "data-quality") {
     return <DataQualityPage {...props.dataQuality} />;
+  }
+  if (activePage === "job-stats") {
+    return <JobStatsPage {...props.jobStats} />;
   }
   if (activePage === "ml-lab") {
     return <MlLabPage {...props.mlLab} />;

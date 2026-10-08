@@ -289,6 +289,15 @@ class JobsHistoryResponse(BaseModel):
     rows: list[dict[str, Any]]
 
 
+class JobsDailySummaryResponse(BaseModel):
+    """Storico giorno-per-giorno dei report di import (`JobDailySummaryService`) -
+    payload loosely-typed come `DataQualityResponse`/`JobsHistoryResponse`:
+    ogni riga di `days` ha una forma variabile (`by_job_type` e' un dict
+    libero), non un modello Pydantic annidato."""
+
+    days: list[dict[str, Any]]
+
+
 class PredictionLogResponse(BaseModel):
     rows: list[dict[str, Any]]
 

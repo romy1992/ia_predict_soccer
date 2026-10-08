@@ -30,6 +30,12 @@ export const MENU_ITEMS = [
       "Audit di sola lettura sulla qualità dei dati a DB: coverage odds, anomalie, duplicati. Es: 'BTTS' copertura odds 13% su 6392 fixture.",
   },
   {
+    id: "job-stats",
+    label: "Storico Import",
+    description:
+      "Andamento giorno per giorno dei job di import (fixture prese/aggiornate/fallite), diverso dallo snapshot cumulativo di Data Quality. Es: 681 fixture inserite il 7/10, 3 job saltati per lock.",
+  },
+  {
     id: "ml-lab",
     label: "ML Lab",
     description:
