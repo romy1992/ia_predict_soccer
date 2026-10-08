@@ -149,6 +149,94 @@ export default function MonitoringPage({
 
       <section className="panel">
         <div className="panel-header">
+          <h3>Performance per mercato</h3>
+        </div>
+        {!officialPerformance || Object.keys(officialPerformance.breakdowns?.market || {}).length === 0 ? (
+          <div className="empty-state">Nessuna PLAY ufficiale ancora registrata.</div>
+        ) : (
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Mercato</th>
+                  <th>PLAY</th>
+                  <th>Vinte</th>
+                  <th>Perse</th>
+                  <th>Pending</th>
+                  <th>Hit rate</th>
+                  <th>Quota media</th>
+                  <th>Profitto</th>
+                  <th>ROI</th>
+                </tr>
+              </thead>
+              <tbody>
+                {Object.entries(officialPerformance.breakdowns?.market || {}).map(([marketKey, metrics]) => (
+                  <tr key={`market-row-${marketKey}`}>
+                    <td>{marketKey === "unknown" ? "n/d" : marketLabel(marketKey)}</td>
+                    <td>{metrics.plays}</td>
+                    <td>{metrics.wins}</td>
+                    <td>{metrics.losses}</td>
+                    <td>{metrics.pending}</td>
+                    <td>{metrics.hit_rate == null ? "n/d" : formatPercent(metrics.hit_rate)}</td>
+                    <td>{formatOdd(metrics.avg_odd)}</td>
+                    <td>{formatNumber(metrics.total_profit, 2)}</td>
+                    <td>{metrics.roi == null ? "n/d" : formatPercent(metrics.roi)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      <section className="panel">
+        <div className="panel-header">
+          <h3>Andamento per giorno</h3>
+        </div>
+        {!officialPerformance || Object.keys(officialPerformance.breakdowns?.day || {}).length === 0 ? (
+          <div className="empty-state">Nessuna PLAY ufficiale ancora registrata.</div>
+        ) : (
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Data</th>
+                  <th>PLAY</th>
+                  <th>Risolte</th>
+                  <th>Vinte</th>
+                  <th>Perse</th>
+                  <th>Pending</th>
+                  <th>Hit rate</th>
+                  <th>Quota media</th>
+                  <th>Profitto</th>
+                  <th>ROI</th>
+                </tr>
+              </thead>
+              <tbody>
+                {Object.entries(officialPerformance.breakdowns?.day || {})
+                  .sort((a, b) => (a[0] < b[0] ? 1 : -1))
+                  .map(([day, metrics]) => (
+                    <tr key={`day-row-${day}`}>
+                      <td>{day}</td>
+                      <td>{metrics.plays}</td>
+                      <td>{metrics.settled}</td>
+                      <td>{metrics.wins}</td>
+                      <td>{metrics.losses}</td>
+                      <td>{metrics.pending}</td>
+                      <td>{metrics.hit_rate == null ? "n/d" : formatPercent(metrics.hit_rate)}</td>
+                      <td>{formatOdd(metrics.avg_odd)}</td>
+                      <td>{formatNumber(metrics.total_profit, 2)}</td>
+                      <td>{metrics.roi == null ? "n/d" : formatPercent(metrics.roi)}</td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      <section className="panel">
+        <div className="panel-header">
           <h3>Alert ({(alerts || []).length})</h3>
         </div>
         {(alerts || []).length === 0 && <div className="empty-state">Nessun alert attivo.</div>}
