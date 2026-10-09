@@ -10,13 +10,16 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any, Optional
 
 import numpy as np
-from fastapi import BackgroundTasks, FastAPI, HTTPException
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
+from src.api import auth
 from src.api.dashboard_service import DashboardService
 from src.api.model_diagnostics_service import ModelDiagnosticsService
 from src.api.oracle_match_detail_service import OracleMatchDetailService
 from src.api.schemas import (
+    AuthMeResponse,
     DataQualityResponse,
     DatabaseHealthResponse,
     ApiQuotaResponse,
@@ -55,6 +58,8 @@ from src.api.schemas import (
     LiveFixtureEventsResponse,
     LiveFixtureStatisticsResponse,
     LiveFixturesResponse,
+    LoginRequest,
+    LoginResponse,
     MetricsResponse,
     ModelConsensusResponse,
     ModelDiagnosticsResponse,
@@ -157,13 +162,57 @@ def _cors_origins() -> list[str]:
         "http://127.0.0.1:5173",
     ]
 
+@app.middleware("http")
+async def _require_auth_cookie(request: Request, call_next):
+    """Allowlist esplicita (`auth.PUBLIC_PATHS`) + nega tutto il resto:
+    cosi' ogni nuovo endpoint futuro resta protetto di default, senza
+    bisogno di ricordarsi di aggiungere una dependency per route (nessun
+    pattern Depends() esisteva nel progetto prima di questo)."""
+    if request.url.path not in auth.PUBLIC_PATHS:
+        token = request.cookies.get(auth.AUTH_COOKIE_NAME)
+        username = auth.decode_token(token) if token else None
+        if username is None:
+            return JSONResponse(status_code=401, content={"detail": "Non autenticato"})
+    return await call_next(request)
+
+
+# Registrato DOPO il middleware di auth: Starlette avvolge i middleware in
+# ordine inverso di registrazione (l'ultimo aggiunto diventa il piu'
+# esterno), quindi CORS deve essere l'ultimo `add_middleware` per restare
+# fuori e gestire sia il preflight OPTIONS sia gli header sulle risposte
+# 401 ritornate dal middleware di auth - altrimenti un 401 su un preflight
+# arriverebbe al browser senza header CORS e verrebbe letto come errore
+# CORS generico invece che come "non autenticato".
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins(),
-    allow_credentials=False,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.post("/auth/login", response_model=LoginResponse)
+def login(payload: LoginRequest, response: Response) -> LoginResponse:
+    if payload.username != auth.ADMIN_USERNAME or not auth.verify_password(
+        payload.password, auth.ADMIN_PASSWORD_HASH
+    ):
+        raise HTTPException(status_code=401, detail="Credenziali non valide")
+    token = auth.create_access_token(payload.username)
+    response.set_cookie(auth.AUTH_COOKIE_NAME, token, **auth.cookie_kwargs())
+    return LoginResponse(username=payload.username)
+
+
+@app.post("/auth/logout")
+def logout(response: Response) -> dict[str, bool]:
+    response.delete_cookie(auth.AUTH_COOKIE_NAME)
+    return {"ok": True}
+
+
+@app.get("/auth/me", response_model=AuthMeResponse)
+def auth_me(request: Request) -> AuthMeResponse:
+    username = auth.decode_token(request.cookies.get(auth.AUTH_COOKIE_NAME))
+    return AuthMeResponse(username=username)
 
 
 def _project_root() -> str:
