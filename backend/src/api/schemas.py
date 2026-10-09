@@ -9,6 +9,19 @@ class HealthResponse(BaseModel):
     status: str
 
 
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class LoginResponse(BaseModel):
+    username: str
+
+
+class AuthMeResponse(BaseModel):
+    username: str
+
+
 class DatabaseHealthResponse(BaseModel):
     status: str
     database_url: str

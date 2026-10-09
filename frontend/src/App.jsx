@@ -1,6 +1,9 @@
 ﻿import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   API_BASE_URL,
+  fetchMe,
+  logout,
+  setUnauthorizedHandler,
   getApiQuota,
   getDashboardAvailableDates,
   getDashboardBundle,
@@ -37,6 +40,7 @@ import {
   updateJobSettings,
   resetJobSchedule,
 } from "./api";
+import LoginPage from "./features/auth/LoginPage";
 import AppRouter from "./features/layout/AppRouter";
 import Sidebar from "./features/layout/Sidebar";
 import TopFilters from "./features/layout/TopFilters";
@@ -61,6 +65,16 @@ function _pageFromUrl() {
 }
 
 export default function App() {
+  // "checking" -> "authenticated" | "anonymous" dopo /auth/me al mount.
+  // Un 401 su QUALUNQUE fetch successiva (sessione scaduta) richiama
+  // setUnauthorizedHandler e riporta qui ad "anonymous" (vedi effect sotto).
+  const [authState, setAuthState] = useState("checking");
+  useEffect(() => {
+    setUnauthorizedHandler(() => setAuthState("anonymous"));
+    fetchMe()
+      .then(() => setAuthState("authenticated"))
+      .catch(() => setAuthState("anonymous"));
+  }, []);
   // Letto dalla query string (`?page=...`) invece di un fisso "dashboard":
   // senza, un refresh (F5) su qualunque pagina diversa dalla Dashboard
   // riportava sempre li', perche' `activePage` era un puro stato React
@@ -932,21 +946,22 @@ export default function App() {
     setOracleFixtureId(null);
   }, []);
   useEffect(() => {
-    if (initialLoadStartedRef.current) {
+    if (initialLoadStartedRef.current || authState !== "authenticated") {
       return;
     }
     initialLoadStartedRef.current = true;
     loadEverything(false);
-    // Solo al mount, con manual=false: NON deve comparire "Aggiornamento in
-    // corso..." sul bottone Sidebar al semplice reload della pagina (quello
-    // deve partire SOLO se l'utente clicca esplicitamente - richiesto
-    // 2026-09-05). NON dipendere da `loadEverything` (la sua reference
-    // cambia ad ogni cambio di selectedDate/searchFilter tramite
-    // loadDashboardData) altrimenti ogni cambio data/ricerca rilancerebbe
-    // l'intero refresh pesante. phaseFilter/selectedMarket NON toccano piu'
-    // `loadDashboardData` (filtrati client-side, vedi `dashboardDayData`).
+    // Solo al mount (una volta autenticati), con manual=false: NON deve
+    // comparire "Aggiornamento in corso..." sul bottone Sidebar al semplice
+    // reload della pagina (quello deve partire SOLO se l'utente clicca
+    // esplicitamente - richiesto 2026-09-05). NON dipendere da
+    // `loadEverything` (la sua reference cambia ad ogni cambio di
+    // selectedDate/searchFilter tramite loadDashboardData) altrimenti ogni
+    // cambio data/ricerca rilancerebbe l'intero refresh pesante.
+    // phaseFilter/selectedMarket NON toccano piu' `loadDashboardData`
+    // (filtrati client-side, vedi `dashboardDayData`).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [authState]);
   useEffect(() => {
     if (activePage !== "dashboard") {
       return undefined;
@@ -1216,6 +1231,9 @@ export default function App() {
       onRefresh: () => loadModelDiagnostics({ forceRefresh: true }).catch(() => {}),
     },
     settings: {
+      onLogout: () => {
+        logout().finally(() => setAuthState("anonymous"));
+      },
       jobs: jobSettingsRows,
       isLoading: jobSettingsLoading,
       error: jobSettingsError,
@@ -1240,6 +1258,12 @@ export default function App() {
       quotaPausedSince,
     },
   };
+  if (authState === "checking") {
+    return <div className="empty-state">Caricamento...</div>;
+  }
+  if (authState === "anonymous") {
+    return <LoginPage onLoginSuccess={() => setAuthState("authenticated")} />;
+  }
   return (
     <div className="layout">
       <Sidebar
