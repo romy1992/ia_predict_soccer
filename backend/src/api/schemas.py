@@ -469,6 +469,11 @@ class OfficialPerformanceResponse(BaseModel):
     pending_count: int
     overall: dict[str, Any]
     breakdowns: dict[str, Any]
+    # Stessi "overall"/"breakdowns" sopra, ma ripetuti per ciascuna decisione
+    # del motore (PLAY/BORDERLINE/"NO BET") + "ALL" (le tre insieme) - "overall"/
+    # "breakdowns" restano SOLO-PLAY per compatibilita' con i chiamanti esistenti,
+    # qui l'operatore vede anche cosa sarebbe successo su BORDERLINE/NO BET.
+    by_decision: dict[str, Any] = {}
 
 
 class OfficialClvResponse(BaseModel):
