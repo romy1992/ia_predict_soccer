@@ -104,8 +104,8 @@ def test_official_capture_settlement_roi_and_clv_end_to_end():
         first = capture.capture(now=now, cutoff_minutes=60, matches=[match])
         second = capture.capture(now=now, cutoff_minutes=60, matches=[match])
 
-        assert first["plays_created"] == 1
-        assert second["plays_created"] == 0
+        assert first["decisions_created"] == 1
+        assert second["decisions_created"] == 0
         assert second["duplicates"] == 1
         rows = ledger_repo.list_all(cohort="official_paper")
         assert len(rows) == 1
