@@ -187,6 +187,7 @@ function BatchRunProgress({ batchRun, currentJobLabel, onStop }) {
 }
 
 export default function SettingsPage({
+  onLogout,
   jobs = [],
   isLoading,
   error,
@@ -217,6 +218,15 @@ export default function SettingsPage({
 
   return (
     <section className="stack">
+      <section className="panel">
+        <div className="panel-header">
+          <h3>Account</h3>
+          <button className="btn-secondary" onClick={onLogout}>
+            Logout
+          </button>
+        </div>
+      </section>
+
       <section className="panel">
         <div className="panel-header">
           <h3>Quota giornaliera API-Sports</h3>

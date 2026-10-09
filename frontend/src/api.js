@@ -1,8 +1,14 @@
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
 
+let unauthorizedHandler = () => {};
+
+export function setUnauthorizedHandler(handler) {
+  unauthorizedHandler = handler;
+}
+
 async function request(path, options) {
-  const response = await fetch(`${API_BASE_URL}${path}`, options);
+  const response = await fetch(`${API_BASE_URL}${path}`, { ...options, credentials: "include" });
   const text = await response.text();
 
   let payload;
@@ -13,6 +19,9 @@ async function request(path, options) {
   }
 
   if (!response.ok) {
+    if (response.status === 401) {
+      unauthorizedHandler();
+    }
     const detail = typeof payload === "string" ? payload : JSON.stringify(payload);
     throw new Error(detail);
   }
@@ -22,6 +31,22 @@ async function request(path, options) {
 
 export function getHealth() {
   return request("/health");
+}
+
+export function login(username, password) {
+  return request("/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, password }),
+  });
+}
+
+export function logout() {
+  return request("/auth/logout", { method: "POST" });
+}
+
+export function fetchMe() {
+  return request("/auth/me");
 }
 
 export function getMarkets() {
