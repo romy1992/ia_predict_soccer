@@ -6,6 +6,7 @@ from datetime import date, time
 from types import SimpleNamespace
 from unittest import mock
 
+import pandas as pd
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -1150,6 +1151,71 @@ class TestApplyMonotonicProjection(unittest.TestCase):
         payload = self._payload(goal_no_goal={"prediction": 1, "probability": 0.55, "model_name": "m", "run_id": "r5"})
         DashboardService._apply_monotonic_projection(payload)
         self.assertEqual(payload["goal_no_goal"]["probability"], 0.55)
+
+
+class TestApplyTrue1x2(unittest.TestCase):
+    """Nuovo blocco multiclasse Home/Draw/Away vero (`market_1x2.py`) accanto
+    (mai in sostituzione) ai mercati binari legacy h2h/dc - vedi analisi del
+    bug report BFF Sport IApperò: senza questo, `predictions["1x2"]` non
+    esiste mai su `/dashboard/match/{id}` e il blocco multiclasse di
+    `_build_decision_cards` resta codice morto."""
+
+    def _match(self):
+        match = Match(id_match_fk=str(uuid.uuid4()), id_fixture=1, id_team_home=10, id_team_away=20)
+        match.statistics = []
+        match.odds = []
+        return match
+
+    def test_adds_1x2_probabilities_next_to_legacy_markets(self):
+        expert = mock.Mock(run_id="run-1x2")
+        expert.predict_proba_dict.return_value = [{"HOME": 0.55, "DRAW": 0.20, "AWAY": 0.25}]
+        payload = {"h2h": {"prediction": 1, "probability": 0.7, "model_name": "m", "run_id": "r1"}}
+
+        with mock.patch.object(DashboardService, "_load_1x2_expert", return_value=expert), mock.patch.object(
+            dashboard_service_module, "build_1x2_prediction_frame", return_value=pd.DataFrame([{"x": 1}])
+        ):
+            DashboardService()._apply_true_1x2(payload, self._match())
+
+        self.assertEqual(
+            payload["1x2"],
+            {"probabilities": {"HOME": 0.55, "DRAW": 0.20, "AWAY": 0.25}, "model_name": "market_1x2", "run_id": "run-1x2"},
+        )
+        # Il mercato binario legacy resta intatto - compatibilita' col BFF.
+        self.assertEqual(payload["h2h"], {"prediction": 1, "probability": 0.7, "model_name": "m", "run_id": "r1"})
+
+    def test_noop_when_no_production_model(self):
+        payload = {"h2h": {"prediction": 1, "probability": 0.7, "model_name": "m", "run_id": "r1"}}
+        with mock.patch.object(DashboardService, "_load_1x2_expert", return_value=None):
+            DashboardService()._apply_true_1x2(payload, self._match())
+        self.assertNotIn("1x2", payload)
+
+    def test_noop_when_db_match_missing(self):
+        expert = mock.Mock(run_id="run-1x2")
+        payload = {}
+        with mock.patch.object(DashboardService, "_load_1x2_expert", return_value=expert):
+            DashboardService()._apply_true_1x2(payload, None)
+        self.assertNotIn("1x2", payload)
+        expert.predict_proba_dict.assert_not_called()
+
+    def test_noop_when_frame_is_empty(self):
+        expert = mock.Mock(run_id="run-1x2")
+        payload = {}
+        with mock.patch.object(DashboardService, "_load_1x2_expert", return_value=expert), mock.patch.object(
+            dashboard_service_module, "build_1x2_prediction_frame", return_value=None
+        ):
+            DashboardService()._apply_true_1x2(payload, self._match())
+        self.assertNotIn("1x2", payload)
+        expert.predict_proba_dict.assert_not_called()
+
+    def test_noop_when_probabilities_do_not_sum_to_one(self):
+        expert = mock.Mock(run_id="run-1x2")
+        expert.predict_proba_dict.return_value = [{"HOME": 0.5, "DRAW": 0.2, "AWAY": 0.2}]
+        payload = {}
+        with mock.patch.object(DashboardService, "_load_1x2_expert", return_value=expert), mock.patch.object(
+            dashboard_service_module, "build_1x2_prediction_frame", return_value=pd.DataFrame([{"x": 1}])
+        ):
+            DashboardService()._apply_true_1x2(payload, self._match())
+        self.assertNotIn("1x2", payload)
 
 
 class TestApplyLineMarketsMonotonicProjection(unittest.TestCase):
