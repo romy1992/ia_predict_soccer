@@ -1166,3 +1166,123 @@ th {
     min-height: 0;
   }
 }
+
+/* =====================================================================
+   Dettaglio partita e Oracle: navigazione a chip, metriche richiudibili
+   ===================================================================== */
+
+.jump-nav {
+  display: none;
+}
+
+.decision-more summary {
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+
+.decision-more .decision-metrics {
+  margin-top: 4px;
+}
+
+@media (max-width: 760px) {
+  .jump-nav {
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    padding-bottom: 4px;
+    scrollbar-width: none;
+  }
+
+  .jump-nav::-webkit-scrollbar {
+    display: none;
+  }
+
+  .jump-nav .tab {
+    flex: 0 0 auto;
+  }
+
+  /* dettaglio partita (modale a schermo intero): intestazione fissa */
+  .detail-panel {
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    background: transparent;
+  }
+
+  .detail-panel > .panel-header {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    flex-direction: column;
+    align-items: stretch;
+    margin: 0 0 12px;
+    padding: 12px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--line);
+  }
+
+  .detail-panel > .panel-header h3 {
+    font-size: 17px;
+  }
+
+  .detail-panel > .panel-header .panel-header-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+
+  .detail-panel > .panel-header .panel-header-actions button:last-child {
+    grid-column: 1 / -1;
+  }
+
+  .detail-panel > .jump-nav,
+  .detail-panel > .detail-head-meta,
+  .detail-panel > .detail-grid,
+  .detail-panel > .detail-block {
+    margin-left: 12px;
+    margin-right: 12px;
+  }
+
+  .detail-panel .detail-block {
+    background: var(--surface);
+    border-radius: var(--radius-lg);
+    padding: 14px;
+    scroll-margin-top: 150px;
+  }
+
+  .detail-panel .detail-block h4 {
+    font-size: 17px;
+  }
+
+  /* odds: le card per mercato diventano liste etichetta-valore */
+  .odds-market-card {
+    padding: 12px;
+  }
+
+  .odds-market-card .table-wrap {
+    overflow: visible;
+  }
+
+  .odds-market-card table {
+    min-width: 0;
+  }
+
+  /* Oracle */
+  .stack > section.panel {
+    scroll-margin-top: 80px;
+  }
+
+  .decision-metrics {
+    font-size: 13px;
+  }
+
+  .metric-row {
+    font-size: 14px;
+  }
+}
