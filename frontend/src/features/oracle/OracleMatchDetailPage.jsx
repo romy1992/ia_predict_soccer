@@ -1,3 +1,4 @@
+import JumpNav from "../shared/JumpNav";
 import { useEffect, useState } from "react";
 import { getOracleMatchDetail } from "../../api";
 import {
@@ -102,7 +103,7 @@ function OddsMovementTable({ rows }) {
 
   return (
     <div className="table-wrap">
-      <table>
+      <table className="table-cards">
         <thead>
           <tr>
             <th>Bookmaker</th>
@@ -116,12 +117,12 @@ function OddsMovementTable({ rows }) {
         <tbody>
           {rows.map((row, idx) => (
             <tr key={`movement-${idx}`}>
-              <td>{row.bookmaker}</td>
-              <td>{marketLabel(row.market)}{row.line ? ` (${row.line})` : ""}</td>
-              <td>{row.outcome}</td>
-              <td>{formatOdd(row.opening?.odd)}</td>
-              <td>{formatOdd(row.latest?.odd)}</td>
-              <td>{row.closing ? formatOdd(row.closing.odd) : "N/D"}</td>
+              <td data-label="Bookmaker">{row.bookmaker}</td>
+              <td data-label="Mercato">{marketLabel(row.market)}{row.line ? ` (${row.line})` : ""}</td>
+              <td data-label="Outcome">{row.outcome}</td>
+              <td data-label="Apertura">{formatOdd(row.opening?.odd)}</td>
+              <td data-label="Ultima">{formatOdd(row.latest?.odd)}</td>
+              <td data-label="Chiusura">{row.closing ? formatOdd(row.closing.odd) : "N/D"}</td>
             </tr>
           ))}
         </tbody>
@@ -217,7 +218,7 @@ export default function OracleMatchDetailPage({ fixtureId, onBack }) {
 
   return (
     <section className="stack">
-      <div className="panel-header">
+      <div className="panel-header oracle-header">
         <h3>Oracle Match Detail</h3>
         <button className="btn-secondary" onClick={onBack}>Chiudi</button>
       </div>
@@ -227,6 +228,15 @@ export default function OracleMatchDetailPage({ fixtureId, onBack }) {
 
       {!loading && !error && detail && (
         <>
+          <JumpNav
+            items={[
+              ["or-value", "Value bet"],
+              ["or-team", "Team"],
+              ["or-xg", "xG"],
+              ["or-odds", "Quote"],
+              ["or-consensus", "Consensus"],
+            ]}
+          />
           {/* 1. Overview */}
           <section className="panel">
             {fixture ? (
@@ -259,7 +269,7 @@ export default function OracleMatchDetailPage({ fixtureId, onBack }) {
           </section>
 
           {/* 2/3. Probabilities + Value Bets */}
-          <section className="panel">
+          <section className="panel" id="or-value">
             <div className="panel-header">
               <h4>Value Bets</h4>
               <span className="pill">{detail.value_bets?.length || 0} su {detail.probabilities?.length || 0} mercati</span>
@@ -290,7 +300,7 @@ export default function OracleMatchDetailPage({ fixtureId, onBack }) {
           </section>
 
           {/* 4. Team Strength */}
-          <section className="panel">
+          <section className="panel" id="or-team">
             <div className="panel-header"><h4>Team Strength</h4></div>
             {detail.team_strength ? (
               <div className="detail-grid">
@@ -303,7 +313,7 @@ export default function OracleMatchDetailPage({ fixtureId, onBack }) {
           </section>
 
           {/* 5/6. Expected Goals + Score Matrix */}
-          <section className="panel">
+          <section className="panel" id="or-xg">
             <div className="panel-header"><h4>Expected Goals &amp; Score Matrix</h4></div>
             {detail.expected_goals ? (
               <>
@@ -325,13 +335,13 @@ export default function OracleMatchDetailPage({ fixtureId, onBack }) {
           </section>
 
           {/* 7. Odds Movement */}
-          <section className="panel">
+          <section className="panel" id="or-odds">
             <div className="panel-header"><h4>Odds Movement</h4></div>
             <OddsMovementTable rows={detail.odds_movement} />
           </section>
 
           {/* 8. Model Consensus */}
-          <section className="panel">
+          <section className="panel" id="or-consensus">
             <div className="panel-header"><h4>Model Consensus</h4></div>
             <ModelConsensusSection consensusByMarket={detail.model_consensus} />
           </section>
