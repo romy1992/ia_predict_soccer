@@ -216,8 +216,8 @@ JOB_DEFINITIONS: dict[str, dict[str, Any]] = {
         "schedule_kind": "interval_minutes",
         "job_history_type": "scorer_predictions",
         "cfg_fields": {"interval_minutes": "scorer_predictions_interval_minutes"},
-        "run_all_priority": 80,
-        "run_all_included": False,
+        "run_all_priority": 85,
+        "run_all_included": True,
     },
     "scorer_training": {
         "label": "Retrain modello marcatori",
@@ -233,8 +233,10 @@ JOB_DEFINITIONS: dict[str, dict[str, Any]] = {
         "schedule_kind": "daily",
         "job_history_type": "scorer_training",
         "cfg_fields": {"hour": "scorer_training_hour", "minute": "scorer_training_minute"},
-        "run_all_priority": 999,
-        "run_all_included": False,
+        # Prima delle predizioni (85): il retrain puo' promuovere un modello nuovo che le predizioni usano.
+        # Dura 2-3 minuti, molto meno del retrain dei mercati di partita (che resta escluso).
+        "run_all_priority": 84,
+        "run_all_included": True,
     },
 }
 
