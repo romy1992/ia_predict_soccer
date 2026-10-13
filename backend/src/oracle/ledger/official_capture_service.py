@@ -1,4 +1,9 @@
-"""Cattura server-side, idempotente e pre-kickoff delle sole decisioni PLAY."""
+"""Cattura server-side, idempotente e pre-kickoff della decisione MIGLIORE
+per fixture+mercato (PLAY, BORDERLINE o NO BET) - stessa card che l'operatore
+vede sulla riga del match in Dashboard, mai scartata solo perche' non e'
+PLAY (richiesta esplicita, 2026-10-09: prima si fermavano le statistiche
+ufficiali alle sole PLAY, non c'era modo di sapere "quanto buone sono le
+BORDERLINE/NO BET che mostriamo" nel tempo)."""
 
 from __future__ import annotations
 
@@ -7,7 +12,7 @@ from typing import Any, Optional
 
 from sqlalchemy.orm import selectinload
 
-from src.api.dashboard_service import DashboardService
+from src.api.dashboard_service import DashboardService, _DECISION_LABEL_PRIORITY
 from src.ml.baselines.bookmaker_baseline import build_fixture_baseline, get_market_outcome_baseline
 from src.ml.markets.market_1x2 import (
     Market1x2Expert,
@@ -15,7 +20,7 @@ from src.ml.markets.market_1x2 import (
 )
 from src.ml.markets.market_double_chance import derive_double_chance_from_dict
 from src.ml.serving.prediction_snapshot_service import PredictionSnapshotService
-from src.oracle.decision_engine.decision_policy import PLAY, evaluate_decision
+from src.oracle.decision_engine.decision_policy import Decision, evaluate_decision
 from src.oracle.ledger.ledger_service import PredictionLedgerService
 from src.oracle.ledger.official_performance_service import OFFICIAL_COHORT, OFFICIAL_SOURCE
 from src.repository.base.repository_db import SessionLocal
@@ -26,6 +31,31 @@ from src.service_ia.utility.utils import convert_orm_match_to_dict
 
 def _aware(value: datetime) -> datetime:
     return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+
+def _best_decision(decisions: list[Decision]) -> Optional[Decision]:
+    """Sceglie UNA sola decisione tra piu' esiti dello STESSO mercato (es.
+    Casa/Pareggio/Trasferta per 1x2) - stessa priorita' PLAY > BORDERLINE >
+    NO BET, poi EV/probabilita' piu' alta, gia' usata da
+    `DashboardService._decision_card_sort_key`/`_mark_best_cards_by_market`
+    per scegliere la card "is_market_best" mostrata sulla riga del match.
+
+    SENZA questa selezione, catturare ogni esito regardless della
+    decisione finirebbe per registrare combinazioni MAI mostrate
+    all'operatore (es. sia Pareggio CHE Trasferta come BORDERLINE
+    insieme) - gonfierebbe le statistiche con scelte che nessuno ha mai
+    visto in Dashboard (richiesta esplicita, 2026-10-09)."""
+    if not decisions:
+        return None
+
+    def sort_key(decision: Decision) -> tuple[int, float]:
+        metric = decision.p_model if decision.decision == "NO BET" else decision.expected_roi_percent
+        return (
+            _DECISION_LABEL_PRIORITY.get(decision.decision, 99),
+            -(float(metric) if metric is not None else float("-inf")),
+        )
+
+    return min(decisions, key=sort_key)
 
 
 def _kickoff(value: Any) -> Optional[datetime]:
@@ -170,6 +200,7 @@ class OfficialPredictionCaptureService:
         baseline = build_fixture_baseline({"h2h": h2h_rows})
         captured = duplicates = 0
         errors: list[str] = []
+        h2h_candidates: list[tuple[Decision, dict[str, Any]]] = []
         for model_outcome, outcome in (("HOME", "Home"), ("DRAW", "Draw"), ("AWAY", "Away")):
             odds_row = self._row_for_outcome(h2h_rows, outcome)
             baseline_row = get_market_outcome_baseline(baseline, "h2h", outcome)
@@ -184,17 +215,22 @@ class OfficialPredictionCaptureService:
                 odd=odds_row.get("avg_odd"),
                 samples=int(odds_row.get("bookmakers") or 0),
             )
-            if decision.decision != PLAY:
-                continue
+            h2h_candidates.append((decision, odds_row, baseline_row))
+
+        best_h2h = _best_decision([decision for decision, _, _ in h2h_candidates])
+        if best_h2h is not None:
+            _, best_odds_row, best_baseline_row = next(
+                item for item in h2h_candidates if item[0] is best_h2h
+            )
             _, created = self._save_decision(
                 match=match,
                 kickoff_at=kickoff_at,
                 captured_at=captured_at,
-                decision=decision,
+                decision=best_h2h,
                 model_run_id=expert.run_id,
                 model_name="market_1x2",
-                odds_row=odds_row,
-                p_market_raw=baseline_row.get("raw_probability"),
+                odds_row=best_odds_row,
+                p_market_raw=best_baseline_row.get("raw_probability"),
                 cutoff_minutes=cutoff_minutes,
             )
             captured += int(created)
@@ -217,6 +253,7 @@ class OfficialPredictionCaptureService:
                     for item in ("Draw", "Away")
                 ),
             }
+            dc_candidates: list[tuple[Decision, dict[str, Any]]] = []
             for outcome, p_model in dc_probabilities.items():
                 odds_row = self._row_for_outcome(dc_rows, outcome)
                 if odds_row is None:
@@ -230,17 +267,22 @@ class OfficialPredictionCaptureService:
                     odd=odds_row.get("avg_odd"),
                     samples=int(odds_row.get("bookmakers") or 0),
                 )
-                if decision.decision != PLAY:
-                    continue
+                dc_candidates.append((decision, odds_row))
+
+            best_dc = _best_decision([decision for decision, _ in dc_candidates])
+            if best_dc is not None:
+                _, best_dc_odds_row = next(item for item in dc_candidates if item[0] is best_dc)
                 _, created = self._save_decision(
                     match=match,
                     kickoff_at=kickoff_at,
                     captured_at=captured_at,
-                    decision=decision,
+                    decision=best_dc,
                     model_run_id=expert.run_id,
                     model_name="market_1x2_derived_dc",
-                    odds_row=odds_row,
-                    p_market_raw=(1.0 / float(odds_row["avg_odd"])) if odds_row.get("avg_odd") else None,
+                    odds_row=best_dc_odds_row,
+                    p_market_raw=(
+                        (1.0 / float(best_dc_odds_row["avg_odd"])) if best_dc_odds_row.get("avg_odd") else None
+                    ),
                     cutoff_minutes=cutoff_minutes,
                 )
                 captured += int(created)
@@ -262,7 +304,7 @@ class OfficialPredictionCaptureService:
             "captured_at": captured_at.isoformat(),
             "cutoff_minutes": cutoff_minutes,
             "fixtures_considered": 0,
-            "plays_created": 0,
+            "decisions_created": 0,
             "duplicates": 0,
             "skipped_missing_odd": 0,
             "errors": [],
@@ -283,7 +325,7 @@ class OfficialPredictionCaptureService:
                 created, duplicates, messages = self._capture_true_1x2(
                     match, match_dict, odds_summary, captured_at, kickoff_at, cutoff_minutes
                 )
-                report["plays_created"] += created
+                report["decisions_created"] += created
                 report["duplicates"] += duplicates
                 report["skipped_missing_odd"] += sum(message.startswith("skipped_missing_odd") for message in messages)
 
@@ -294,6 +336,14 @@ class OfficialPredictionCaptureService:
                     status=match.status,
                 )
                 baseline = build_fixture_baseline(odds_summary)
+                # `_build_decision_cards` produce GIA' una sola card per
+                # mercato "standard" (binario: prediction=0/1 -> un solo
+                # pick, mai Over+Under insieme) - a differenza di 1x2/dc
+                # (gestiti sopra in `_capture_true_1x2`, multiclasse, dove
+                # la selezione "migliore" serve davvero). Qui ogni card E'
+                # gia' l'unica mostrata in Dashboard per quel mercato:
+                # catturarla regardless della decisione non rischia di
+                # salvare esiti mai visti.
                 cards = self.dashboard._build_decision_cards(
                     row_context={"home": match.name_home, "away": match.name_away},
                     predictions=predictions,
@@ -301,8 +351,6 @@ class OfficialPredictionCaptureService:
                     bookmaker_baseline=baseline,
                 )
                 for card in cards:
-                    if card.get("value_label") != PLAY:
-                        continue
                     outcome = card.get("outcome") or card.get("pick")
                     odds_row = self._row_for_outcome(odds_summary.get(card["market"]) or [], str(outcome))
                     if odds_row is None or card.get("odd") is None:
@@ -327,7 +375,7 @@ class OfficialPredictionCaptureService:
                         p_market_raw=card.get("bookmaker_implied_raw"),
                         cutoff_minutes=cutoff_minutes,
                     )
-                    report["plays_created"] += int(was_created)
+                    report["decisions_created"] += int(was_created)
                     report["duplicates"] += int(not was_created)
             except Exception as exc:
                 report["errors"].append({"fixture_id": match.id_fixture, "message": str(exc)})
