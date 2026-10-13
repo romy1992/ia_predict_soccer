@@ -43,6 +43,7 @@ from src.api.schemas import (
     JobLiveSyncRequest,
     JobModelConsensusRefreshRequest,
     JobOfficialCaptureRequest,
+    JobScorerRequest,
     JobPredictionSnapshotRefreshRequest,
     JobResponse,
     JobRetrainRequest,
@@ -134,6 +135,8 @@ from src.jobs.scheduler import (
     run_manual_today_update,
     run_model_consensus_refresh,
     run_official_prediction_capture,
+    run_scorer_predictions,
+    run_scorer_training,
     run_prediction_snapshot_refresh,
     run_team_rating_refresh,
 )
@@ -1197,6 +1200,63 @@ def trigger_official_capture(payload: JobOfficialCaptureRequest, background_task
 
     report = run_official_prediction_capture()
     return JobResponse(queued=False, message="Official capture job completed", details=report)
+
+
+@app.post("/jobs/scorer-predictions", response_model=JobResponse)
+def trigger_scorer_predictions(payload: JobScorerRequest, background_tasks: BackgroundTasks) -> JobResponse:
+    """"Esegui ora" del job 'Predizioni marcatori' (formazioni ufficiali + probabilita' pre-partita)."""
+    if payload.async_run:
+        row = JobHistory().queue_job(job_type="scorer_predictions", params={})
+        background_tasks.add_task(run_scorer_predictions, job_id=row["job_id"])
+        return JobResponse(queued=True, message="Scorer predictions job queued", details={"job_id": row["job_id"]})
+    return JobResponse(queued=False, message="Scorer predictions job completed", details=run_scorer_predictions())
+
+
+@app.post("/jobs/scorer-training", response_model=JobResponse)
+def trigger_scorer_training(payload: JobScorerRequest, background_tasks: BackgroundTasks) -> JobResponse:
+    """"Esegui ora" del job 'Retrain modello marcatori': registra un CANDIDATE, non lo promuove."""
+    if payload.async_run:
+        row = JobHistory().queue_job(job_type="scorer_training", params={})
+        background_tasks.add_task(run_scorer_training, job_id=row["job_id"])
+        return JobResponse(queued=True, message="Scorer training job queued", details={"job_id": row["job_id"]})
+    return JobResponse(queued=False, message="Scorer training job completed", details=run_scorer_training())
+
+
+def _scorer_registry() -> ModelRegistry:
+    from src.service_ia.scorer import model_store
+
+    return model_store.registry()
+
+
+@app.get("/scorers/model/registry", response_model=ModelRegistryOverviewResponse)
+def scorer_model_registry(limit: int = 50) -> ModelRegistryOverviewResponse:
+    """Lifecycle del modello marcatori (latest / production / storico), stesso formato dei mercati."""
+    from src.service_ia.scorer.model_store import MARKET
+
+    reg = _scorer_registry()
+    return ModelRegistryOverviewResponse(
+        market=MARKET, latest=reg.get_latest(market=MARKET), production=reg.get_production(market=MARKET),
+        history=reg.tail(limit=limit, market=MARKET))
+
+
+@app.get("/scorers/model/promotion/evaluate", response_model=PromotionEvaluationResponse)
+def scorer_model_evaluate(run_id: str, to_stage: str = "production") -> PromotionEvaluationResponse:
+    result = _scorer_registry().evaluate_promotion(run_id=run_id, to_stage=to_stage, policy=DEFAULT_PROMOTION_POLICY)
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"Run non trovato: {run_id}")
+    return PromotionEvaluationResponse(**result)
+
+
+@app.post("/scorers/model/promote", response_model=PromotionResponse)
+def scorer_model_promote(payload: PromotionRequest) -> PromotionResponse:
+    """Promozione CONTROLLATA (gate metriche + confronto con production), come `POST /models/{market}/promote`."""
+    try:
+        result = _scorer_registry().promote_with_policy(
+            run_id=payload.run_id, to_stage=payload.to_stage, reason=payload.reason,
+            actor=payload.actor or "manual", force=payload.force)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return PromotionResponse(**result)
 
 
 @app.post("/jobs/team-rating-refresh", response_model=JobResponse)

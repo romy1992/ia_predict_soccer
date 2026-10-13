@@ -149,28 +149,20 @@ def predict_upcoming(session: Session, bundle: dict, *, leagues: Iterable[int] =
                 player_name=nm["player_name"], team_id=int(r.team_id), team_name=nm["team_name"],
                 position=("F" if r.pos_F else "M" if r.pos_M else "D"), league=int(r.league),
                 kickoff=kick.get(fid), probability=float(r.probability), lineup_type="official",
-                model_version=bundle["version"]))
+                model_version=bundle.get("run_id") or bundle["version"]))
         predicted += 1
     session.commit()
     return {"fixtures": len(ids), "predicted": predicted, "skipped_same_lineup": skipped,
-            "no_lineup": len(ids) - len(ready_ids), "model_version": bundle["version"]}
+            "no_lineup": len(ids) - len(ready_ids), "model_version": bundle.get("run_id") or bundle["version"]}
 
 
-def ensure_bundle(session: Session, *, leagues: Iterable[int] = TOP5_LEAGUES,
-                  finished_statuses: Iterable[str] = ("FT", "AET", "PEN", "ABD")) -> dict:
-    """Modello corrente dal bucket; se manca (o e' incompatibile) lo addestra sui dati a DB e lo salva."""
-    bundle = model_store.load_bundle()
-    if bundle is not None:
-        return bundle
+def dataset_for_training(session: Session, *, leagues: Iterable[int] = TOP5_LEAGUES,
+                         finished_statuses: Iterable[str] = ("FT", "AET", "PEN", "ABD")) -> pd.DataFrame:
     from src.data.player.scoring_dataset import build_from_session
 
     year = datetime.now(timezone.utc).year
-    ds = build_from_session(session, list(leagues), list(range(year - HISTORY_SEASONS_BACK, year + 1)),
-                            finished_statuses)
-    bundle = model_store.train_bundle(ds)
-    model_store.save_bundle(bundle)
-    logger.info("Scorer: addestrato nuovo modello %s su %s righe", bundle["version"], bundle["n_rows"])
-    return bundle
+    return build_from_session(session, list(leagues), list(range(year - HISTORY_SEASONS_BACK, year + 1)),
+                              finished_statuses)
 
 
 def settle_predictions(session: Session, finished_statuses: Iterable[str] = ("FT", "AET", "PEN", "ABD")) -> dict:
