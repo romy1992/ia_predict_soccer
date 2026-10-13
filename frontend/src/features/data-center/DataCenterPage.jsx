@@ -14,6 +14,14 @@ function parseCsvInts(value) {
   return values.length > 0 ? values : undefined;
 }
 
+function jobStatusClass(status) {
+  const value = String(status || "").toLowerCase();
+  if (["success", "completed", "ok", "done"].includes(value)) return "value-play";
+  if (["failed", "error"].includes(value)) return "value-no-bet";
+  if (["running", "queued", "pending"].includes(value)) return "value-borderline";
+  return "value-unavailable";
+}
+
 export default function DataCenterPage({
   asyncRun,
   onChangeAsyncRun,
@@ -257,7 +265,10 @@ export default function DataCenterPage({
           <h3>Stato servizio</h3>
           <button className="btn-secondary" onClick={onRefreshJobs}>Aggiorna jobs</button>
         </div>
-        <pre className="code-block">{JSON.stringify(health, null, 2)}</pre>
+        <details className="service-details">
+          <summary>Mostra dettaglio (JSON)</summary>
+          <pre className="code-block">{JSON.stringify(health, null, 2)}</pre>
+        </details>
       </section>
 
       <section className="panel">
@@ -267,7 +278,7 @@ export default function DataCenterPage({
         </div>
 
         <div className="table-wrap">
-          <table>
+          <table className="table-cards">
             <thead>
               <tr>
                 <th>Timestamp</th>
@@ -280,11 +291,11 @@ export default function DataCenterPage({
             <tbody>
               {jobsRows.map((row, idx) => (
                 <tr key={`${row.job_id || "job"}-${idx}`}>
-                  <td>{row.timestamp || "-"}</td>
-                  <td>{row.job_id || "-"}</td>
-                  <td>{row.job_type || "-"}</td>
-                  <td>{row.status || "-"}</td>
-                  <td>{Number(row.duration_seconds || 0).toFixed(2)}</td>
+                  <td data-label="Timestamp">{row.timestamp || "-"}</td>
+                  <td data-label="Job id">{row.job_id || "-"}</td>
+                  <td data-label="Tipo">{row.job_type || "-"}</td>
+                  <td data-label="Stato"><span className={`value-badge ${jobStatusClass(row.status)}`}>{row.status || "-"}</span></td>
+                  <td data-label="Durata (s)">{Number(row.duration_seconds || 0).toFixed(2)}</td>
                 </tr>
               ))}
             </tbody>
