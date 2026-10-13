@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from src.data.player.player_lineup_models import PlayerLineup
 from src.data.player.player_models import PlayerMatchEvent
+from src.data.player.player_stats_models import PlayerMatchStats
 from src.repository.base.repository_db import SessionLocal
 
 
@@ -133,5 +134,53 @@ class PlayerDataRepository:
             return (
                 session.query(PlayerLineup)
                 .filter(PlayerLineup.fixture_id == int(fixture_id))
+                .all()
+            )
+
+    # -- Statistiche per giocatore (PlayerMatchStats) --------------------
+
+    def save_player_stats(self, stats: list[PlayerMatchStats]) -> None:
+        """`session.merge` su PK composita (fixture_id, player_id): idempotente
+        come `save_lineups`, con dedup PRIMA del merge (stesso motivo: player_id
+        duplicato nella stessa risposta API -> UniqueViolation)."""
+        if not stats:
+            return
+        deduped = list({(row.fixture_id, row.player_id): row for row in stats}.values())
+        with SessionLocal() as session:
+            for row in deduped:
+                session.merge(row)
+            session.commit()
+
+    def has_stats_for_fixture(self, fixture_id: int) -> bool:
+        with SessionLocal() as session:
+            return (
+                session.query(PlayerMatchStats.player_id)
+                .filter(PlayerMatchStats.fixture_id == int(fixture_id))
+                .first()
+                is not None
+            )
+
+    def captured_stats_fixture_ids(self, fixture_ids: list[int]) -> set[int]:
+        """Una query per scartare in blocco le fixture gia' con stats (backfill)."""
+        if not fixture_ids:
+            return set()
+        captured: set[int] = set()
+        with SessionLocal() as session:
+            for start in range(0, len(fixture_ids), 5000):
+                chunk = fixture_ids[start:start + 5000]
+                rows = (
+                    session.query(PlayerMatchStats.fixture_id)
+                    .filter(PlayerMatchStats.fixture_id.in_(chunk))
+                    .distinct()
+                    .all()
+                )
+                captured.update(row[0] for row in rows)
+        return captured
+
+    def list_stats_for_fixture(self, fixture_id: int) -> list[PlayerMatchStats]:
+        with SessionLocal() as session:
+            return (
+                session.query(PlayerMatchStats)
+                .filter(PlayerMatchStats.fixture_id == int(fixture_id))
                 .all()
             )

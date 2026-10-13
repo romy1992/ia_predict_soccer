@@ -203,6 +203,21 @@ JOB_DEFINITIONS: dict[str, dict[str, Any]] = {
         "run_all_priority": 60,
         "run_all_included": True,
     },
+    "scorer_predictions": {
+        "label": "Predizioni marcatori",
+        "description": (
+            "Per le partite delle prime 5 leghe in partenza a breve scarica la formazione ufficiale "
+            "(poche chiamate API-Sports) e calcola la probabilita' che ogni titolare segni, salvando "
+            "una revisione append-only prima del kickoff. Se manca il modello lo addestra sui dati a DB."
+        ),
+        "default_enabled": True,
+        "calls_api_sports": True,
+        "schedule_kind": "interval_minutes",
+        "job_history_type": "scorer_predictions",
+        "cfg_fields": {"interval_minutes": "scorer_predictions_interval_minutes"},
+        "run_all_priority": 80,
+        "run_all_included": False,
+    },
 }
 
 # Limiti di validazione per ciascun `schedule_kind` (Impostazioni, editor
