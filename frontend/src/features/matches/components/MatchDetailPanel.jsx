@@ -1,3 +1,4 @@
+import JumpNav from "../../shared/JumpNav";
 import {
   formatOdd,
   formatPercent,
@@ -87,8 +88,17 @@ export default function MatchDetailPanel({
         <span>Fonte: {fixture.source || "-"}</span>
       </div>
 
+      <JumpNav
+        items={[
+          ["md-value", "Valore"],
+          ["md-events", "Eventi"],
+          ...(linePredictions.length > 0 ? [["md-lines", "Corners/Cards"]] : []),
+          ["md-odds", "Quote"],
+        ]}
+      />
+
       <div className="detail-grid">
-        <article className="detail-block">
+        <article className="detail-block" id="md-value">
           <h4>Consiglio valore (PLAY / BORDERLINE / NO BET)</h4>
           {decisionCards.length === 0 ? (
             <div className="empty-panel">Nessun modello disponibile o feature non ancora presenti per questo fixture.</div>
@@ -112,16 +122,21 @@ export default function MatchDetailPanel({
                   <div className="decision-metrics">
                     <span>Conf.: {formatPercent(card.predicted_probability)}</span>
                     <span>Quota mercato: {formatOdd(card.market_odd)}</span>
+                    <span title={`Edge percentuale: ${formatPercentagePoints(card.odds_edge_percent)}`}>Edge quota: {formatSignedNumber(card.odds_edge_absolute)}</span>
+                  </div>
+                  <details className="decision-more">
+                    <summary>Altre metriche</summary>
+                    <div className="decision-metrics">
                     <span title="Quota di pareggio economico ricavata dalla probabilità IA.">Quota void IA: {formatOdd(card.model_void_odd)}</span>
                     <span>Quota fair mercato: {formatOdd(card.market_fair_odd)}</span>
-                    <span title={`Edge percentuale: ${formatPercentagePoints(card.odds_edge_percent)}`}>Edge quota: {formatSignedNumber(card.odds_edge_absolute)}</span>
                     <span>Edge probabilistico: {formatPercent(card.prob_edge)}</span>
                     <span title="Rendimento teorico della singola selezione; non è il ROI realmente ottenuto.">ROI atteso: {formatPercentagePoints(card.expected_roi_percent)}</span>
                     <span>Soglia PLAY: {formatOdd(card.play_threshold_odd)}</span>
                     <span>Bookmaker: {card.bookmakers_count ?? "-"}</span>
                     {card.is_official && <span title="Stato di settlement, distinto dalla quota void IA.">Esito: {card.official_outcome}</span>}
                     {card.is_official && card.pnl != null && <span>PnL: {formatSignedNumber(card.pnl)}</span>}
-                  </div>
+                    </div>
+                  </details>
                   <small>{card.value_reason} · Policy {card.policy_version || "N/D"}</small>
                 </div>
               ))}
@@ -129,7 +144,7 @@ export default function MatchDetailPanel({
           )}
         </article>
 
-        <article className="detail-block">
+        <article className="detail-block" id="md-events">
           <h4>Timeline eventi</h4>
           {timeline.length === 0 ? (
             <div className="empty-panel">Nessun evento disponibile per questo match.</div>
@@ -155,7 +170,7 @@ export default function MatchDetailPanel({
       </div>
 
       {linePredictions.length > 0 && (
-        <article className="detail-block">
+        <article className="detail-block" id="md-lines">
           <h4>Corners / Cards (linee)</h4>
           <div className="decision-grid">
             {linePredictions.map(([marketKey, payload]) => (
@@ -182,7 +197,7 @@ export default function MatchDetailPanel({
         </article>
       )}
 
-      <article className="detail-block">
+      <article className="detail-block" id="md-odds">
         <h4>Quote medie bookmaker</h4>
         {oddsMarkets.length === 0 ? (
           <div className="empty-panel">Nessuna quota disponibile al momento.</div>
@@ -192,7 +207,7 @@ export default function MatchDetailPanel({
               <div className="odds-market-card" key={`odds-${marketKey}`}>
                 <h5>{marketLabel(marketKey)}</h5>
                 <div className="table-wrap">
-                  <table>
+                  <table className="table-cards">
                     <thead>
                       <tr>
                         <th>Outcome</th>
@@ -205,11 +220,11 @@ export default function MatchDetailPanel({
                     <tbody>
                       {(oddsSummary[marketKey] || []).map((odd, idx) => (
                         <tr key={`${marketKey}-${idx}`}>
-                          <td>{odd.outcome}</td>
-                          <td>{formatOdd(odd.avg_odd)}</td>
-                          <td>{formatOdd(odd.min_odd)}</td>
-                          <td>{formatOdd(odd.max_odd)}</td>
-                          <td>{odd.bookmakers ?? "-"}</td>
+                          <td data-label="Outcome">{odd.outcome}</td>
+                          <td data-label="Avg">{formatOdd(odd.avg_odd)}</td>
+                          <td data-label="Min">{formatOdd(odd.min_odd)}</td>
+                          <td data-label="Max">{formatOdd(odd.max_odd)}</td>
+                          <td data-label="Book">{odd.bookmakers ?? "-"}</td>
                         </tr>
                       ))}
                     </tbody>
