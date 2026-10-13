@@ -77,6 +77,29 @@ class ScoringDatasetTest(unittest.TestCase):
         r = self.ds[(self.ds.fixture_id == fixture) & (self.ds.player_id == player)]
         return r.iloc[0] if len(r) else None
 
+    def test_v2_features(self):
+        # Fixture 2: giocatore 110 (squadra 1) ha giocato F1 e segnato 1 gol; squadra 1 ha fatto 3 gol (110,109,... 108 e' supplementare)
+        r = self.row(2, 110)
+        # F1: gol squadra 1 in 90' = 110 (20'), 109 (90') -> 2; il giocatore 110 ne ha 1 -> quota 0.5
+        self.assertAlmostEqual(r.goal_share_last10, 0.5)
+        self.assertAlmostEqual(r.rest_days, 7.0)
+        self.assertEqual(r.pen_taker_share_last20, 0.0)  # nessun rigore in partite precedenti
+        # F3: 110 ha battuto 1 rigore in F2 su 1 totale della squadra -> quota 1
+        self.assertAlmostEqual(self.row(3, 110).pen_taker_share_last20, 1.0)
+        # Nessun valore infinito
+        self.assertFalse(self.ds[FEATURE_COLUMNS].isin([float("inf"), float("-inf")]).any().any())
+
+    def test_v2_no_future_leak(self):
+        extra = (_ev(4, "Goal", "Normal Goal", 10, 1, 110), _ev(4, "Goal", "Penalty", 30, 2, 210))
+        ds2 = build_dataset(self.matches, self.lineups, _events(extra_f4=extra))
+        base = self.ds[self.ds.fixture_id <= 4].set_index(["fixture_id", "player_id"])
+        new = ds2[ds2.fixture_id <= 4].set_index(["fixture_id", "player_id"])
+        cols = ["goal_share_last10", "pen_taker_share_last20", "rest_days",
+                "rate_samevenue_shrunk", "opp_conc_role10", "teammates_rate_sum"]
+        # le righe di F1..F4 non cambiano se si aggiungono gol in F4 (la riga F4 usa solo il passato)
+        assert_frame_equal(base.loc[(slice(None), slice(None)), cols].sort_index(),
+                           new.loc[base.index, cols].sort_index())
+
     def test_target_rules(self):
         self.assertEqual(self.row(1, 110)[TARGET], 1)      # gol normale
         self.assertEqual(self.row(1, 109)[TARGET], 1)      # gol al 90'
