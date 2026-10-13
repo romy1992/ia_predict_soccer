@@ -16,6 +16,7 @@ from sqlalchemy.exc import OperationalError, ProgrammingError
 from sqlalchemy.orm import load_only, noload, selectinload
 
 from src.ml.baselines.bookmaker_baseline import build_fixture_baseline, get_market_outcome_baseline
+from src.ml.markets.market_1x2 import Market1x2Expert, build_1x2_prediction_frame
 from src.ml.markets.totals.totals_market import enforce_monotonic_over_probabilities
 from src.ml.serving.prediction_snapshot_service import PredictionSnapshotService
 from src.jobs.api_quota_state import is_quota_exhausted_today
@@ -35,8 +36,10 @@ from src.repository.prediction_ledger_repository import PredictionLedgerReposito
 from src.service_ia.config.app_config import load_app_config
 from src.service_ia.model.match import Match, MatchPredictionSnapshot, Statistics
 from src.service_ia.training.market_service.filter_market_service import FilterMarketService
+from src.service_ia.training.model_paths import resolve_model_key
 from src.service_ia.training.model_registry import ModelRegistry
 from src.service_ia.utility.request_api import base_api_statistics
+from src.service_ia.utility.utils import convert_orm_match_to_dict
 from src.storage import bucket_store
 
 FINAL_STATUSES = {"FT", "AET", "PEN", "ABD", "CANC", "PST", "WO"}
@@ -1446,6 +1449,74 @@ class DashboardService:
         self._prediction_cache[cache_key] = payload
         return payload
 
+    def _load_1x2_expert(self) -> Optional[Market1x2Expert]:
+        """Carica il vero motore multiclasse Home/Draw/Away (`market_1x2.py`,
+        gia' usato in produzione da `OfficialPredictionCaptureService` per le
+        Catture ufficiali) riusando la cache di `PredictionSnapshotService`
+        (`_load_model`, class-level, keyed by model_key) invece di
+        `Market1x2Expert.load_production`/`load_expert_estimator`, che fa una
+        `bucket_store.get_joblib` di rete ad OGNI chiamata senza cache -
+        inaccettabile se richiamato per fixture nel dettaglio match. La sola
+        lettura metadati (`registry.get_production`) resta sempre fresca
+        (costo trascurabile, stesso principio di `_latest_model_for_market`),
+        solo il binario del modello e' cached."""
+        try:
+            run = self.registry.get_production(market="1x2")
+        except Exception:
+            return None
+        if run is None:
+            return None
+        model_key = resolve_model_key(run.get("model_path"))
+        if not model_key:
+            return None
+        try:
+            estimator = self._snapshot_service._load_model(model_key)
+            return Market1x2Expert(
+                estimator=estimator,
+                feature_names=list(run.get("feature_names") or []),
+                run_id=run.get("run_id"),
+                stage=run.get("current_stage") or run.get("stage"),
+            )
+        except Exception:
+            return None
+
+    def _apply_true_1x2(self, payload: dict[str, Any], db_match: Optional[Match]) -> None:
+        """Aggiunge `predictions["1x2"] = {"probabilities": {HOME/DRAW/AWAY}}`
+        con le probabilita' REALI a 3 esiti, accanto (mai in sostituzione,
+        vedi `predictions["h2h"]`/`predictions["dc"]`) ai mercati binari
+        legacy - il BFF che consuma gia' h2h/dc binari non si rompe.
+
+        SOLO nel dettaglio match (`get_match_detail`, `allow_compute=True`
+        per costruzione): mai chiamato dalla lista `/dashboard/day`
+        (`allow_compute=False`), che legge SOLO snapshot gia' cache su
+        `match_prediction_snapshot` - quella tabella ha solo colonne
+        scalari (`prediction`/`probability`), non c'e' posto per 3
+        probabilita', quindi qui il risultato non viene MAI persistito e va
+        ricalcolato ad ogni lettura (stesso principio di
+        `_apply_monotonic_projection`) - costo accettabile per una singola
+        fixture, non per centinaia di righe di lista."""
+        if db_match is None or "1x2" in payload:
+            return
+        expert = self._load_1x2_expert()
+        if expert is None:
+            return
+        match_dict = convert_orm_match_to_dict([db_match])[0]
+        frame = build_1x2_prediction_frame(match_dict)
+        if frame is None or frame.empty:
+            return
+        X = frame.drop(columns=["market", "id_fixture", "season", "league", "prediction_at"], errors="ignore")
+        try:
+            probabilities = expert.predict_proba_dict(X)[0]
+        except Exception:
+            return
+        if abs(sum(probabilities.values()) - 1.0) > 1e-6:
+            return
+        payload["1x2"] = {
+            "probabilities": {str(key).upper(): float(value) for key, value in probabilities.items()},
+            "model_name": "market_1x2",
+            "run_id": expert.run_id,
+        }
+
     @staticmethod
     def _apply_line_markets_monotonic_projection(payload: dict[str, Any], markets: list[str], lines: tuple[float, ...]) -> None:
         """Come `_apply_monotonic_projection`, generalizzata a Corners/Cards
@@ -1993,6 +2064,8 @@ class DashboardService:
             if with_predictions
             else {}
         )
+        if with_predictions:
+            self._apply_true_1x2(predictions, db_match)
         if with_predictions and fixture_row.get("phase") == "finished":
             stat_home, stat_away, has_full_stats = self._resolve_final_stat_dicts(db_match)
             self._annotate_prediction_correctness(predictions, stat_home, stat_away, has_full_stats)

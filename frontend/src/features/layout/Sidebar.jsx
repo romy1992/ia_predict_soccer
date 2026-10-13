@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { MENU_ITEMS } from "../shared/menu";
 
 // Riepilogo esito job "Aggiorna tutto" (run_daily_refresh: ieri + prossimi
@@ -54,12 +55,33 @@ export default function Sidebar({
   refreshJobRow,
   quotaExhausted,
 }) {
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  function handleNavigate(id) {
+    setMenuOpen(false);
+    onNavigate(id);
+  }
+
   return (
-    <aside className="sidebar">
-      <div className="brand">
-        <h2>soccer_oracle</h2>
-        <p>Live center + predizioni</p>
+    <aside className={menuOpen ? "sidebar sidebar-open" : "sidebar"}>
+      <div className="sidebar-bar">
+        <div className="brand">
+          <h2>soccer_oracle</h2>
+          <p>Live center + predizioni</p>
+        </div>
+        <button
+          type="button"
+          className="sidebar-toggle"
+          aria-label={menuOpen ? "Chiudi menu" : "Apri menu"}
+          aria-expanded={menuOpen}
+          aria-controls="sidebar-body"
+          onClick={() => setMenuOpen((open) => !open)}
+        >
+          <span className="sidebar-toggle-icon" aria-hidden="true" />
+        </button>
       </div>
+
+      <div className="sidebar-body" id="sidebar-body">
 
       <button className="btn-primary full" onClick={onRefreshAll} disabled={isRefreshing || quotaExhausted}>
         {isRefreshing ? (
@@ -98,12 +120,13 @@ export default function Sidebar({
           <button
             key={item.id}
             className={activePage === item.id ? "menu-item active" : "menu-item"}
-            onClick={() => onNavigate(item.id)}
+            onClick={() => handleNavigate(item.id)}
           >
             {item.label}
           </button>
         ))}
       </nav>
+      </div>
     </aside>
   );
 }

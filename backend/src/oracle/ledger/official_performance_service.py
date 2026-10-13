@@ -31,11 +31,20 @@ def _odd_bucket(odd: Optional[float]) -> str:
     return ">=3.00"
 
 
-def _metric_row(rows: list[Any]) -> dict[str, Any]:
+def _metric_row(rows: list[Any], decision_values: Optional[frozenset[str]] = frozenset({"PLAY"})) -> dict[str, Any]:
+    """`decision_values=None` accetta QUALSIASI decisione (usato per la
+    vista "Generale" che aggrega PLAY+BORDERLINE+NO BET) - il default
+    resta `{"PLAY"}` per non cambiare il comportamento di NESSUNO dei
+    chiamanti esistenti (questa funzione era scritta solo per le PLAY
+    ufficiali)."""
+
+    def _decision_matches(row: Any) -> bool:
+        return decision_values is None or _value(row, "decision") in decision_values
+
     placed = [
         row
         for row in rows
-        if _value(row, "decision") == "PLAY"
+        if _decision_matches(row)
         and _value(row, "odd") is not None
         and not str(_value(row, "settlement_status") or "").startswith(("not_placed", "skipped"))
     ]
@@ -52,7 +61,7 @@ def _metric_row(rows: list[Any]) -> dict[str, Any]:
         row
         for row in rows
         if str(_value(row, "settlement_status") or "").startswith(("not_placed", "skipped"))
-        or _value(row, "decision") != "PLAY"
+        or not _decision_matches(row)
         or _value(row, "odd") is None
     ]
 
@@ -110,37 +119,68 @@ def _metric_row(rows: list[Any]) -> dict[str, Any]:
     }
 
 
+_DIMENSIONS = {
+    "day": lambda row: (
+        _value(row, "kickoff_at").date().isoformat()
+        if isinstance(_value(row, "kickoff_at"), datetime)
+        else str(_value(row, "kickoff_at") or _value(row, "created_at") or "unknown")[:10]
+    ),
+    "market": lambda row: _value(row, "market") or "unknown",
+    "outcome": lambda row: _value(row, "outcome") or "unknown",
+    "league": lambda row: str(_value(row, "league") or "unknown"),
+    "model": lambda row: _value(row, "model_name") or "unknown",
+    "model_run_id": lambda row: _value(row, "model_run_id") or "unknown",
+    "policy_version": lambda row: _value(row, "policy_version") or "unknown",
+    "cohort": lambda row: _value(row, "cohort") or "unknown",
+    "period": lambda row: _value(row, "period") or "unknown",
+    "edge_bucket": lambda row: edge_bucket_label(_value(row, "prob_edge")),
+    "odd_bucket": lambda row: _odd_bucket(_value(row, "odd")),
+}
+
+# Le tre decisioni reali del motore (`betslip_builder.situation_rank`) + None
+# per "Generale" (qualunque decisione, PLAY+BORDERLINE+NO BET insieme) -
+# richiesto dall'operatore: la vista UFFICIALE/PAPER parlava solo di PLAY,
+# mancavano BORDERLINE/NO BET e un aggregato su tutte e tre.
+_DECISION_BUCKETS: dict[str, Optional[frozenset[str]]] = {
+    "PLAY": frozenset({"PLAY"}),
+    "BORDERLINE": frozenset({"BORDERLINE"}),
+    "NO BET": frozenset({"NO BET"}),
+    "ALL": None,
+}
+
+
+def _build_breakdowns(rows: list[Any], decision_values: Optional[frozenset[str]]) -> dict[str, dict[str, dict[str, Any]]]:
+    breakdowns: dict[str, dict[str, dict[str, Any]]] = {}
+    for name, key_fn in _DIMENSIONS.items():
+        groups: dict[str, list[Any]] = {}
+        for row in rows:
+            groups.setdefault(str(key_fn(row)), []).append(row)
+        breakdowns[name] = {
+            key: _metric_row(value, decision_values=decision_values) for key, value in sorted(groups.items())
+        }
+    return breakdowns
+
+
 def compute_official_performance(rows: Iterable[Any]) -> dict[str, Any]:
     official_rows = [
         row
         for row in rows
         if _value(row, "source") == OFFICIAL_SOURCE and _value(row, "cohort") == OFFICIAL_COHORT
     ]
-    dimensions = {
-        "day": lambda row: (
-            _value(row, "kickoff_at").date().isoformat()
-            if isinstance(_value(row, "kickoff_at"), datetime)
-            else str(_value(row, "kickoff_at") or _value(row, "created_at") or "unknown")[:10]
-        ),
-        "market": lambda row: _value(row, "market") or "unknown",
-        "outcome": lambda row: _value(row, "outcome") or "unknown",
-        "league": lambda row: str(_value(row, "league") or "unknown"),
-        "model": lambda row: _value(row, "model_name") or "unknown",
-        "model_run_id": lambda row: _value(row, "model_run_id") or "unknown",
-        "policy_version": lambda row: _value(row, "policy_version") or "unknown",
-        "cohort": lambda row: _value(row, "cohort") or "unknown",
-        "period": lambda row: _value(row, "period") or "unknown",
-        "edge_bucket": lambda row: edge_bucket_label(_value(row, "prob_edge")),
-        "odd_bucket": lambda row: _odd_bucket(_value(row, "odd")),
-    }
-    breakdowns: dict[str, dict[str, dict[str, Any]]] = {}
-    for name, key_fn in dimensions.items():
-        groups: dict[str, list[Any]] = {}
-        for row in official_rows:
-            groups.setdefault(str(key_fn(row)), []).append(row)
-        breakdowns[name] = {key: _metric_row(value) for key, value in sorted(groups.items())}
 
-    return {"overall": _metric_row(official_rows), "breakdowns": breakdowns}
+    by_decision = {
+        label: {
+            "overall": _metric_row(official_rows, decision_values=decision_values),
+            "breakdowns": _build_breakdowns(official_rows, decision_values),
+        }
+        for label, decision_values in _DECISION_BUCKETS.items()
+    }
+
+    return {
+        "overall": by_decision["PLAY"]["overall"],
+        "breakdowns": by_decision["PLAY"]["breakdowns"],
+        "by_decision": by_decision,
+    }
 
 
 class OfficialPerformanceService:
