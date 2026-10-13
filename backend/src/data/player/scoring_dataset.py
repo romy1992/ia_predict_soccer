@@ -173,7 +173,8 @@ def _player_features(played: pd.DataFrame) -> pd.DataFrame:
     return p
 
 
-def _team_form(matches: pd.DataFrame, events: pd.DataFrame) -> pd.DataFrame:
+def _team_form(matches: pd.DataFrame, events: pd.DataFrame,
+               extra_fixture_ids: Iterable[int] = ()) -> pd.DataFrame:
     """Gol fatti/subiti (non autogol) nelle 10 partite precedenti, per squadra. Solo partite con eventi."""
     typ = events["event_type"].fillna("").str.lower()
     det = events["event_detail"].fillna("")
@@ -182,7 +183,7 @@ def _team_form(matches: pd.DataFrame, events: pd.DataFrame) -> pd.DataFrame:
     goal = events[(typ == "goal") & (~det.isin(["Own Goal", "Missed Penalty"])) & (com != "Penalty Shootout")
                   & (elapsed <= REGULATION_END)]
     by_team = goal.groupby(["fixture_id", "team_id"]).size().rename("gf")
-    with_events = set(events["fixture_id"].unique())
+    with_events = set(events["fixture_id"].unique()) | set(extra_fixture_ids)
     m = matches[matches["fixture_id"].isin(with_events)].copy()
     m["match_date"] = pd.to_datetime(m["date_match"], utc=True, errors="coerce")
     rows = []
@@ -215,14 +216,20 @@ def _opp_conceded_by_role(played: pd.DataFrame, form_pairs: pd.DataFrame) -> pd.
     return grid[["fixture_id", "team_id", "position", "opp_conc_role10"]].rename(columns={"team_id": "opp_id"})
 
 
-def build_dataset(matches: pd.DataFrame, lineups: pd.DataFrame, events: pd.DataFrame) -> pd.DataFrame:
-    """Dataset finale: META + FEATURE + TARGET, ordinato per data."""
+def build_dataset(matches: pd.DataFrame, lineups: pd.DataFrame, events: pd.DataFrame,
+                  upcoming_fixture_ids: Iterable[int] = ()) -> pd.DataFrame:
+    """Dataset finale: META + FEATURE + TARGET, ordinato per data.
+
+    `upcoming_fixture_ids`: partite NON ancora giocate (nessun evento) di cui si vuole la riga di
+    previsione per i soli titolari della formazione ufficiale. Le feature restano point-in-time
+    (usano solo il passato); `scored` vale 0 e non va usato."""
+    upcoming = set(int(x) for x in upcoming_fixture_ids)
     if matches.empty or lineups.empty:
         return pd.DataFrame(columns=META_COLUMNS + FEATURE_COLUMNS + [TARGET])
     a = _appearances(matches, lineups, events)
     played = a[a["played"]].copy()
     feats = _player_features(played)
-    form = _team_form(matches, events)
+    form = _team_form(matches, events, upcoming)
     pairs = (feats[["fixture_id", "team_id", "opp_id", "match_date"]].drop_duplicates())
     conc = _opp_conceded_by_role(played, pairs)
     feats = feats.merge(conc, on=["fixture_id", "opp_id", "position"], how="left")
@@ -237,7 +244,7 @@ def build_dataset(matches: pd.DataFrame, lineups: pd.DataFrame, events: pd.DataF
 
     # Fixture ammesse: eventi presenti e 22 titolari.
     starters = lineups[lineups["is_starter"].astype(bool)].groupby("fixture_id").size()
-    ok = set(starters[starters == 22].index) & set(events["fixture_id"].unique())
+    ok = set(starters[starters == 22].index) & (set(events["fixture_id"].unique()) | upcoming)
     out = feats[feats["fixture_id"].isin(ok) & feats["position"].isin(["F", "M", "D"])].copy()
     for pos in ("F", "M", "D"):
         out[f"pos_{pos}"] = (out["position"] == pos).astype(int)

@@ -1355,6 +1355,28 @@ def list_prediction_ledger(
     return PredictionLedgerResponse(rows=rows, total=len(rows))
 
 
+@app.get("/scorers/fixture/{fixture_id}")
+def scorers_for_fixture(fixture_id: int) -> dict:
+    """Probabilita' "il giocatore segna" (ultima revisione) per i titolari della partita."""
+    from src.repository.base.repository_db import SessionLocal
+    from src.service_ia.scorer.prediction_service import latest_predictions
+
+    with SessionLocal() as session:
+        rows = latest_predictions(session, fixture_id=fixture_id)
+    return {"fixture_id": fixture_id, "rows": rows, "total": len(rows)}
+
+
+@app.get("/scorers/day")
+def scorers_for_day(date: str, limit: int = 2000) -> dict:
+    """Probabilita' marcatori delle partite del giorno `date` (YYYY-MM-DD, ora del kickoff in UTC)."""
+    from src.repository.base.repository_db import SessionLocal
+    from src.service_ia.scorer.prediction_service import latest_predictions
+
+    with SessionLocal() as session:
+        rows = latest_predictions(session, day=date, limit=limit)
+    return {"date": date, "rows": rows, "total": len(rows)}
+
+
 @app.get("/predictions/ledger/fixture/{fixture_id}", response_model=PredictionLedgerResponse)
 def list_prediction_ledger_for_fixture(fixture_id: int, market: Optional[str] = None) -> PredictionLedgerResponse:
     rows = [row.to_dict() for row in PredictionLedgerService().repo.list_for_fixture(fixture_id=fixture_id, market=market)]

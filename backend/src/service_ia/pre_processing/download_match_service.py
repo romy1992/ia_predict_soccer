@@ -18,6 +18,7 @@ import pandas as pd
 
 from src.data.player.player_event_service import extract_player_event
 from src.data.player.player_lineup_service import extract_lineup_players
+from src.data.player.player_stats_service import extract_player_stats
 from src.repository.base.repository_db import SessionLocal
 from src.repository.match_repository import MatchRepository
 from src.repository.odds_snapshot_repository import OddsSnapshotRepository
@@ -656,6 +657,24 @@ def download_import_matches(
                             for player_row in extract_lineup_players(id_fix, raw_team_lineup)
                         ]
                         repo_player.save_lineups(lineup_rows)
+
+                    # Step 4b: statistiche individuali (minuti, tiri, rigori,
+                    # rating) di una fixture CONCLUSA, da `fixtures/players`.
+                    # Best effort: un errore qui NON deve rompere l'import
+                    # della partita (la quota esaurita invece si propaga).
+                    if status_short in _FINISHED_STATUSES and not repo_player.has_stats_for_fixture(id_fix):
+                        try:
+                            raw_players = provider.get_fixture_players(id_fix)
+                            stats_rows = [
+                                stats_row
+                                for raw_team_block in raw_players
+                                for stats_row in extract_player_stats(id_fix, raw_team_block)
+                            ]
+                            repo_player.save_player_stats(stats_rows)
+                        except ApiSportsQuotaExceededError:
+                            raise
+                        except Exception:
+                            logging.exception('Statistiche giocatori fixture %s non salvate (ignorato)', id_fix)
 
                     # L'upsert ha già scritto le colonne base; questo `save`
                     # (merge) serve alle RELAZIONI statistics/odds, che con
