@@ -327,6 +327,8 @@ const JOB_RUN_ENDPOINTS = {
   official_prediction_capture: "/jobs/official-capture",
   team_rating_refresh: "/jobs/team-rating-refresh",
   model_consensus_refresh: "/jobs/model-consensus-refresh",
+  scorer_predictions: "/jobs/scorer-predictions",
+  scorer_training: "/jobs/scorer-training",
 };
 
 export function runJobNow(jobId) {

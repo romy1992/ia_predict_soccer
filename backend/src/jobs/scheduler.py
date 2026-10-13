@@ -465,7 +465,7 @@ def run_scorer_predictions(job_id: Optional[str] = None) -> dict:
     """Formazioni ufficiali in arrivo + predizioni marcatori (vedi `service_ia/scorer/prediction_service`)."""
     from src.repository.base.repository_db import SessionLocal
     from src.repository.player_data_repository import PlayerDataRepository
-    from src.service_ia.scorer import prediction_service
+    from src.service_ia.scorer import model_store, prediction_service
     from src.service_ia.utility.request_api import get_api_sports_provider
 
     history = JobHistory()
@@ -490,10 +490,51 @@ def run_scorer_predictions(job_id: Optional[str] = None) -> dict:
                 report = prediction_service.fetch_official_lineups(
                     session, get_api_sports_provider(), PlayerDataRepository(), now=now
                 )
-                bundle = prediction_service.ensure_bundle(session)
-                report.update(prediction_service.predict_upcoming(session, bundle, now=now))
+                bundle = model_store.load_production_bundle()
+                if bundle is None:
+                    report["note"] = "nessun modello production: addestra e promuovi 'player_anytime_goalscorer'"
+                    report["predicted"] = 0
+                else:
+                    report.update(prediction_service.predict_upcoming(session, bundle, now=now))
             report.update(prediction_service.settle_predictions(session))
         report["duration_seconds"] = time.perf_counter() - start
+        history.mark_success(job_id=job_id, summary=report)
+        return {"job_id": job_id, **report}
+    except Exception as exc:
+        history.mark_failed(
+            job_id=job_id,
+            error={"message": str(exc), "duration_seconds": time.perf_counter() - start, "params": params},
+        )
+        raise
+
+
+def run_scorer_training(job_id: Optional[str] = None) -> dict:
+    """Addestra il modello marcatori, lo valuta su holdout temporale e lo registra come CANDIDATE.
+    Non promuove mai: la promozione resta esplicita (gate metriche + confronto con production)."""
+    from src.repository.base.repository_db import SessionLocal
+    from src.service_ia.scorer import model_store, prediction_service
+
+    history = JobHistory()
+    params: dict = {"market": model_store.MARKET}
+    if job_id:
+        history.mark_running(job_id=job_id, params=params)
+    else:
+        started = history.create_job(
+            job_type="scorer_training", status="running", params=params, started_at=JobHistory._now_iso()
+        )
+        job_id = started["job_id"]
+    start = time.perf_counter()
+    try:
+        with SessionLocal() as session:
+            dataset = prediction_service.dataset_for_training(session)
+        run = model_store.train_candidate(dataset)
+        metrics = run.get("metrics") or {}
+        report = {
+            "run_id": run["run_id"], "stage": run["stage"], "rows": len(dataset),
+            "log_loss": metrics.get("log_loss"), "baseline_log_loss": metrics.get("baseline_log_loss"),
+            "brier": metrics.get("brier"), "ece": metrics.get("ece"), "auc": metrics.get("auc"),
+            "duration_seconds": time.perf_counter() - start,
+        }
         history.mark_success(job_id=job_id, summary=report)
         return {"job_id": job_id, **report}
     except Exception as exc:
@@ -1339,6 +1380,14 @@ def build_scheduler(cfg: Optional[AppConfig] = None) -> BlockingScheduler:
         functools.partial(_run_if_due, "scorer_predictions", run_scorer_predictions, cfg=cfg),
         trigger=heartbeat,
         job_id="scorer_predictions",
+        misfire_grace_time=_MISFIRE_GRACE_SECONDS,
+    )
+
+    _add_job(
+        scheduler,
+        functools.partial(_run_if_due, "scorer_training", run_scorer_training, cfg=cfg),
+        trigger=heartbeat,
+        job_id="scorer_training",
         misfire_grace_time=_MISFIRE_GRACE_SECONDS,
     )
 
