@@ -1,4 +1,5 @@
 import JumpNav from "../shared/JumpNav";
+import ScorersPanel from "./ScorersPanel";
 import { useEffect, useState } from "react";
 import { getOracleMatchDetail } from "../../api";
 import {
@@ -235,6 +236,7 @@ export default function OracleMatchDetailPage({ fixtureId, onBack }) {
               ["or-xg", "xG"],
               ["or-odds", "Quote"],
               ["or-consensus", "Consensus"],
+              ["or-scorers", "Marcatori"],
             ]}
           />
           {/* 1. Overview */}
@@ -345,6 +347,16 @@ export default function OracleMatchDetailPage({ fixtureId, onBack }) {
             <div className="panel-header"><h4>Model Consensus</h4></div>
             <ModelConsensusSection consensusByMarket={detail.model_consensus} />
           </section>
+
+          {/* 9. Possibili marcatori */}
+          <ScorersPanel
+            fixtureId={fixtureId}
+            home={fixture?.home}
+            away={fixture?.away}
+            homeXg={detail.expected_goals?.home_lambda}
+            awayXg={detail.expected_goals?.away_lambda}
+            finished={fixture?.phase === "finished"}
+          />
 
           {(detail.warnings || []).length > 0 && (
             <div className="info-box">
