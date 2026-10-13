@@ -222,10 +222,11 @@ JOB_DEFINITIONS: dict[str, dict[str, Any]] = {
     "scorer_training": {
         "label": "Retrain modello marcatori",
         "description": (
-            "Riaddestra il modello 'il giocatore segna' sui dati a DB (prime 5 leghe), lo valuta su un "
-            "holdout temporale (log loss, Brier, ECE, AUC) e lo registra come CANDIDATE. Non lo promuove "
-            "mai da solo: la promozione passa dal gate metriche + confronto con production, come per gli "
-            "altri mercati. Lavora solo su dati gia' a DB."
+            "Riaddestra il modello 'il giocatore segna' sui dati a DB (prime 5 leghe): confronta logistica, "
+            "gradient boosting, random forest e voting su un holdout temporale (log loss, Brier, ECE, AUC), "
+            "registra la migliore come CANDIDATE e la promuove a production solo se batte la baseline, e' "
+            "calibrata e supera gate metriche + confronto con l'attuale production (mai forzato, tutto "
+            "nell'audit). Lavora solo su dati gia' a DB."
         ),
         "default_enabled": True,
         "calls_api_sports": False,

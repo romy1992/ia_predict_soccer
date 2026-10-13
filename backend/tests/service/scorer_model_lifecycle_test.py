@@ -31,7 +31,7 @@ def _synthetic(n: int = 40_000) -> pd.DataFrame:
 
 
 def _small():
-    return mock.patch.object(model_store, "_estimator", lambda: make_pipeline(StandardScaler(), LogisticRegression()))
+    return mock.patch.object(model_store, "_estimator", lambda family="voting": make_pipeline(StandardScaler(), LogisticRegression()))
 
 
 class ScorerLifecycleTest(unittest.TestCase):
@@ -67,6 +67,25 @@ class ScorerLifecycleTest(unittest.TestCase):
         reg.promote_with_policy(run["run_id"], to_stage="production")
         with mock.patch.object(model_store.sklearn, "__version__", "0.0.0"):
             self.assertIsNone(model_store.load_production_bundle())
+
+    def test_auto_promote_requires_checks_and_policy(self):
+        with _small():
+            run = model_store.train_candidate(_synthetic())
+        out = model_store.auto_promote(run)
+        self.assertTrue(out["promoted"], out)
+        self.assertEqual(model_store.load_production_bundle()["run_id"], run["run_id"])
+        # candidate con calibrazione pessima: non promosso, production invariata
+        bad = dict(run, run_id="x", metrics=dict(run["metrics"], ece=0.2))
+        self.assertFalse(model_store.auto_promote(bad)["promoted"])
+        # nessun guadagno sulla baseline
+        flat = dict(run, metrics=dict(run["metrics"], log_loss=run["metrics"]["baseline_log_loss"]))
+        self.assertIn("baseline", " ".join(model_store.auto_promote(flat)["reasons"]))
+
+    def test_holdout_compares_all_families_and_keeps_the_best(self):
+        with _small():
+            m = model_store.holdout_metrics(_synthetic())
+        self.assertEqual(set(m["families"]), set(model_store.FAMILIES))
+        self.assertEqual(m["log_loss"], min(f["log_loss"] for f in m["families"].values()))
 
     def test_holdout_is_temporal(self):
         with _small():
