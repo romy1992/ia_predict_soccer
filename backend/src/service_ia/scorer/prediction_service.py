@@ -27,6 +27,10 @@ from src.service_ia.scorer import model_store
 
 logger = logging.getLogger(__name__)
 
+# Competizioni coperte dal mercato marcatori: solo quelle con eventi+formazioni storici verificati
+# (vedi `copertura.md`). Una partita di un'altra competizione non avra' mai predizioni.
+SCORER_LEAGUES = list(TOP5_LEAGUES)
+
 LINEUP_FETCH_MINUTES = 75     # la formazione ufficiale esce ~60' prima: da qui in poi la cerchiamo
 PREDICT_HORIZON_HOURS = 6     # non predire partite lontane: la formazione non c'e' ancora
 HISTORY_SEASONS_BACK = 3
@@ -53,7 +57,7 @@ def upcoming_matches(session: Session, leagues: Iterable[int], now: datetime, ho
     return out
 
 
-def fetch_official_lineups(session: Session, provider, repo_player, *, leagues: Iterable[int] = TOP5_LEAGUES,
+def fetch_official_lineups(session: Session, provider, repo_player, *, leagues: Iterable[int] = SCORER_LEAGUES,
                            now: Optional[datetime] = None, minutes_before: int = LINEUP_FETCH_MINUTES) -> dict:
     """Scarica le formazioni ufficiali mancanti per le partite in partenza a breve. Idempotente."""
     now = now or datetime.now(timezone.utc)
@@ -95,7 +99,7 @@ def _latest_revisions(session: Session, fixture_ids: list[int]) -> dict[int, tup
     return out
 
 
-def predict_upcoming(session: Session, bundle: dict, *, leagues: Iterable[int] = TOP5_LEAGUES,
+def predict_upcoming(session: Session, bundle: dict, *, leagues: Iterable[int] = SCORER_LEAGUES,
                      now: Optional[datetime] = None, hours: float = PREDICT_HORIZON_HOURS,
                      finished_statuses: Iterable[str] = ("FT", "AET", "PEN", "ABD")) -> dict:
     """Calcola e salva le predizioni per le partite in arrivo con formazione completa."""
@@ -156,7 +160,7 @@ def predict_upcoming(session: Session, bundle: dict, *, leagues: Iterable[int] =
             "no_lineup": len(ids) - len(ready_ids), "model_version": bundle.get("run_id") or bundle["version"]}
 
 
-def dataset_for_training(session: Session, *, leagues: Iterable[int] = TOP5_LEAGUES,
+def dataset_for_training(session: Session, *, leagues: Iterable[int] = SCORER_LEAGUES,
                          finished_statuses: Iterable[str] = ("FT", "AET", "PEN", "ABD")) -> pd.DataFrame:
     from src.data.player.scoring_dataset import build_from_session
 
@@ -197,6 +201,14 @@ def settle_predictions(session: Session, finished_statuses: Iterable[str] = ("FT
         settled += 1
     session.commit()
     return {"settled_fixtures": settled}
+
+
+def fixture_league(session: Session, fixture_id: int) -> Optional[int]:
+    return session.execute(select(Match.league_match).where(Match.id_fixture == fixture_id)).scalar()
+
+
+def is_supported_fixture(session: Session, fixture_id: int) -> bool:
+    return fixture_league(session, fixture_id) in SCORER_LEAGUES
 
 
 def latest_predictions(session: Session, *, fixture_id: Optional[int] = None, day: Optional[str] = None,
