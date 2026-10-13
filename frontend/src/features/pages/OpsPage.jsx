@@ -50,7 +50,7 @@ export default function OpsPage({
           <button className="btn-secondary" onClick={onRefreshJobs}>Aggiorna jobs</button>
         </div>
         <div className="table-wrap">
-          <table>
+          <table className="table-cards">
             <thead>
               <tr>
                 <th>Timestamp</th>
@@ -62,10 +62,10 @@ export default function OpsPage({
             <tbody>
               {jobsRows.map((row, idx) => (
                 <tr key={`job-${idx}`}>
-                  <td>{row.timestamp || "-"}</td>
-                  <td>{row.job_type || "-"}</td>
-                  <td>{row.status || "-"}</td>
-                  <td>{Number(row.duration_seconds || 0).toFixed(2)}</td>
+                  <td data-label="Timestamp">{row.timestamp || "-"}</td>
+                  <td data-label="Tipo job">{row.job_type || "-"}</td>
+                  <td data-label="Stato">{row.status || "-"}</td>
+                  <td data-label="Durata (s)">{Number(row.duration_seconds || 0).toFixed(2)}</td>
                 </tr>
               ))}
             </tbody>
