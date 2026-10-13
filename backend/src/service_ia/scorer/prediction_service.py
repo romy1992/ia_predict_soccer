@@ -24,12 +24,18 @@ from src.data.player.scorer_prediction_models import PlayerScorerPrediction
 from src.data.player.scoring_dataset import build_dataset, load_raw
 from src.service_ia.model.match import Match
 from src.service_ia.scorer import model_store
+from src.service_ia.scorer.model_store import EURO_CUPS
 
 logger = logging.getLogger(__name__)
 
 # Competizioni coperte dal mercato marcatori: solo quelle con eventi+formazioni storici verificati
 # (vedi `copertura.md`). Una partita di un'altra competizione non avra' mai predizioni.
-SCORER_LEAGUES = list(TOP5_LEAGUES)
+# Cinque campionati + Champions/Europa/Conference League: validati sull'holdout temporale (calibrazione e
+# guadagno sulla baseline anche sulle sole partite di coppa, vedi scripts/analysis/eval_scorer_v3.py).
+SCORER_LEAGUES = list(TOP5_LEAGUES) + EURO_CUPS
+# Campionati usati SOLO per lo storico dei giocatori e per l'addestramento (squadre delle coppe che
+# giocano fuori dai 5 campionati: Portogallo, Olanda, Turchia, Belgio). Non hanno predizioni proprie.
+SCORER_HISTORY_LEAGUES = SCORER_LEAGUES + [94, 88, 203, 144]
 
 LINEUP_FETCH_MINUTES = 75     # la formazione ufficiale esce ~60' prima: da qui in poi la cerchiamo
 PREDICT_HORIZON_HOURS = 6     # non predire partite lontane: la formazione non c'e' ancora
@@ -100,6 +106,7 @@ def _latest_revisions(session: Session, fixture_ids: list[int]) -> dict[int, tup
 
 
 def predict_upcoming(session: Session, bundle: dict, *, leagues: Iterable[int] = SCORER_LEAGUES,
+                     history_leagues: Optional[Iterable[int]] = None,
                      now: Optional[datetime] = None, hours: float = PREDICT_HORIZON_HOURS,
                      finished_statuses: Iterable[str] = ("FT", "AET", "PEN", "ABD")) -> dict:
     """Calcola e salva le predizioni per le partite in arrivo con formazione completa."""
@@ -122,7 +129,9 @@ def predict_upcoming(session: Session, bundle: dict, *, leagues: Iterable[int] =
 
     year = now.year
     seasons = list(range(year - HISTORY_SEASONS_BACK, year + 1))
-    hist_matches, hist_lineups, hist_events = load_raw(session, leagues, seasons, finished_statuses)
+    hist_matches, hist_lineups, hist_events = load_raw(
+        session, list(history_leagues) if history_leagues is not None else SCORER_HISTORY_LEAGUES,
+        seasons, finished_statuses)
     up = pd.DataFrame([(int(m.id_fixture), m.date_match, m.league_match, m.season, m.id_team_home, m.id_team_away)
                        for m in cand if int(m.id_fixture) in ready_ids], columns=hist_matches.columns)
     up_lineups = lineups[lineups["fixture_id"].isin(ready_ids)][hist_lineups.columns]
@@ -160,7 +169,7 @@ def predict_upcoming(session: Session, bundle: dict, *, leagues: Iterable[int] =
             "no_lineup": len(ids) - len(ready_ids), "model_version": bundle.get("run_id") or bundle["version"]}
 
 
-def dataset_for_training(session: Session, *, leagues: Iterable[int] = SCORER_LEAGUES,
+def dataset_for_training(session: Session, *, leagues: Iterable[int] = SCORER_HISTORY_LEAGUES,
                          finished_statuses: Iterable[str] = ("FT", "AET", "PEN", "ABD")) -> pd.DataFrame:
     from src.data.player.scoring_dataset import build_from_session
 

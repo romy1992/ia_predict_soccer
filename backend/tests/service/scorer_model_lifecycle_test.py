@@ -26,6 +26,7 @@ def _synthetic(n: int = 40_000) -> pd.DataFrame:
     logit = -2.6 + 0.9 * df["pos_F"] + 0.6 * df["rate_last20_shrunk"]
     df[TARGET] = (rng.random(n) < 1 / (1 + np.exp(-logit))).astype(int)
     df["fixture_id"] = np.arange(n) // 22
+    df["league"] = np.where(np.arange(n) % 5 == 0, 2, 135)  # un quinto delle righe in Champions League
     df["match_date"] = pd.Timestamp("2025-01-01", tz="UTC") + pd.to_timedelta(df["fixture_id"] // 8, unit="D")
     return df
 
@@ -103,6 +104,18 @@ class ScorerLifecycleTest(unittest.TestCase):
             m = model_store.holdout_metrics(_synthetic())
         self.assertEqual(set(m["families"]), set(model_store.FAMILIES))
         self.assertEqual(m["log_loss"], min(f["log_loss"] for f in m["families"].values()))
+
+    def test_groups_are_evaluated_and_a_bad_cup_group_blocks_promotion(self):
+        with _small():
+            m = model_store.holdout_metrics(_synthetic())
+        self.assertEqual(set(m["groups"]), {"top5", "cup"})
+        with _small():
+            run = model_store.train_candidate(_synthetic())
+        bad = dict(run, metrics=dict(run["metrics"], groups=dict(
+            run["metrics"]["groups"], cup=dict(run["metrics"]["groups"]["cup"], ece=0.2))))
+        out = model_store.auto_promote(bad)
+        self.assertFalse(out["promoted"])
+        self.assertIn("gruppo cup: calibrazione (ECE) sopra soglia", out["reasons"])
 
     def test_holdout_is_temporal(self):
         with _small():
