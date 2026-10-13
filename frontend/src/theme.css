@@ -1286,3 +1286,117 @@ th {
     font-size: 14px;
   }
 }
+
+/* ---------- Possibili marcatori ---------- */
+
+.scorers-meta {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.scorers-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+}
+
+.scorers-team {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.scorers-team-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.scorers-row {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) 44px;
+  gap: 4px 8px;
+  align-items: center;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 14px;
+}
+
+.scorers-row-low {
+  opacity: 0.6;
+}
+
+.scorers-role {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.scorers-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scorers-pct {
+  text-align: right;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.scorers-bar {
+  grid-column: 2 / 4;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--line);
+  overflow: hidden;
+}
+
+.scorers-bar i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+
+.scorers-mark {
+  font-weight: 700;
+}
+
+.scorers-mark-yes {
+  color: var(--accent);
+}
+
+.scorers-mark-no {
+  color: var(--muted);
+}
+
+.scorers-sum {
+  padding-top: 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.scorers-sum b {
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.scorers-note {
+  margin: 12px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+@media (max-width: 760px) {
+  .scorers-grid {
+    grid-template-columns: 1fr;
+  }
+}

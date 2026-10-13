@@ -161,6 +161,10 @@ export function getJob(jobId) {
   return request(`/jobs/${encodeURIComponent(jobId)}`);
 }
 
+export function getScorersForFixture(fixtureId) {
+  return request(`/scorers/fixture/${encodeURIComponent(fixtureId)}`);
+}
+
 export function getOracleMatchDetail(fixtureId, { markets } = {}) {
   const params = new URLSearchParams();
   if (markets && markets.length > 0) {
