@@ -21,6 +21,13 @@ function ratioPercent(value) {
   return `${(num * 100).toFixed(2)}%`;
 }
 
+function coverageClass(value) {
+  const num = Number(value);
+  if (num >= 0.8) return "ok";
+  if (num >= 0.4) return "warning";
+  return "danger";
+}
+
 export default function DataQualityPage({ report, isLoading, error, onLoadReport }) {
   const [topN, setTopN] = useState("20");
   const [seasonsInput, setSeasonsInput] = useState("");
@@ -119,7 +126,7 @@ export default function DataQualityPage({ report, isLoading, error, onLoadReport
           <h3>Coverage per mercato</h3>
         </div>
         <div className="table-wrap">
-          <table>
+          <table className="table-cards">
             <thead>
               <tr>
                 <th>Mercato</th>
@@ -130,9 +137,17 @@ export default function DataQualityPage({ report, isLoading, error, onLoadReport
             <tbody>
               {marketRows.map((row) => (
                 <tr key={`coverage-${row.market}`}>
-                  <td>{row.market}</td>
-                  <td>{row.fixtures}</td>
-                  <td>{ratioPercent(row.coverageRatio)}</td>
+                  <td data-label="Mercato">{row.market}</td>
+                  <td data-label="Fixtures">{row.fixtures}</td>
+                  <td data-label="Coverage">
+                    {ratioPercent(row.coverageRatio)}
+                    <div className="coverage-bar" aria-hidden="true">
+                      <i
+                        className={coverageClass(row.coverageRatio)}
+                        style={{ width: `${Math.min(100, Math.max(0, Number(row.coverageRatio) * 100 || 0))}%` }}
+                      />
+                    </div>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -172,7 +187,7 @@ export default function DataQualityPage({ report, isLoading, error, onLoadReport
           <article className="detail-block">
             <h4>Per stagione</h4>
             <div className="table-wrap">
-              <table>
+              <table className="table-cards">
                 <thead>
                   <tr>
                     <th>Season</th>
@@ -182,8 +197,8 @@ export default function DataQualityPage({ report, isLoading, error, onLoadReport
                 <tbody>
                   {(report?.distribution?.by_season || []).map((row) => (
                     <tr key={`season-${row.season}`}>
-                      <td>{row.season}</td>
-                      <td>{row.count}</td>
+                      <td data-label="Season">{row.season}</td>
+                      <td data-label="Count">{row.count}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -194,7 +209,7 @@ export default function DataQualityPage({ report, isLoading, error, onLoadReport
           <article className="detail-block">
             <h4>Per lega</h4>
             <div className="table-wrap">
-              <table>
+              <table className="table-cards">
                 <thead>
                   <tr>
                     <th>Lega</th>
@@ -204,8 +219,8 @@ export default function DataQualityPage({ report, isLoading, error, onLoadReport
                 <tbody>
                   {(report?.distribution?.by_league || []).map((row) => (
                     <tr key={`league-${row.league}`}>
-                      <td>{row.league}</td>
-                      <td>{row.count}</td>
+                      <td data-label="Lega">{row.league}</td>
+                      <td data-label="Count">{row.count}</td>
                     </tr>
                   ))}
                 </tbody>

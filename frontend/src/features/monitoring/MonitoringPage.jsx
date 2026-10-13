@@ -192,7 +192,7 @@ export default function MonitoringPage({
           <div className="empty-state">Nessuna prediction ufficiale ancora registrata.</div>
         ) : (
           <div className="table-wrap">
-            <table>
+            <table className="table-cards">
               <thead>
                 <tr>
                   <th>Mercato</th>
@@ -209,15 +209,15 @@ export default function MonitoringPage({
               <tbody>
                 {Object.entries(decisionMarketBreakdown).map(([marketKey, metrics]) => (
                   <tr key={`market-row-${marketKey}`}>
-                    <td>{marketKey === "unknown" ? "n/d" : marketLabel(marketKey)}</td>
-                    <td>{metrics.plays}</td>
-                    <td>{metrics.wins}</td>
-                    <td>{metrics.losses}</td>
-                    <td>{metrics.pending}</td>
-                    <td>{metrics.hit_rate == null ? "n/d" : formatPercent(metrics.hit_rate)}</td>
-                    <td>{formatOdd(metrics.avg_odd)}</td>
-                    <td>{formatNumber(metrics.total_profit, 2)}</td>
-                    <td>{metrics.roi == null ? "n/d" : formatPercent(metrics.roi)}</td>
+                    <td data-label="Mercato">{marketKey === "unknown" ? "n/d" : marketLabel(marketKey)}</td>
+                    <td data-label={performanceDecision === "ALL" ? "Totali" : performanceDecision}>{metrics.plays}</td>
+                    <td data-label="Vinte">{metrics.wins}</td>
+                    <td data-label="Perse">{metrics.losses}</td>
+                    <td data-label="Pending">{metrics.pending}</td>
+                    <td data-label="Hit rate">{metrics.hit_rate == null ? "n/d" : formatPercent(metrics.hit_rate)}</td>
+                    <td data-label="Quota media">{formatOdd(metrics.avg_odd)}</td>
+                    <td data-label="Profitto">{formatNumber(metrics.total_profit, 2)}</td>
+                    <td data-label="ROI">{metrics.roi == null ? "n/d" : formatPercent(metrics.roi)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -234,7 +234,7 @@ export default function MonitoringPage({
           <div className="empty-state">Nessuna prediction ufficiale ancora registrata.</div>
         ) : (
           <div className="table-wrap">
-            <table>
+            <table className="table-cards">
               <thead>
                 <tr>
                   <th>Data</th>
@@ -254,16 +254,16 @@ export default function MonitoringPage({
                   .sort((a, b) => (a[0] < b[0] ? 1 : -1))
                   .map(([day, metrics]) => (
                     <tr key={`day-row-${day}`}>
-                      <td>{day}</td>
-                      <td>{metrics.plays}</td>
-                      <td>{metrics.settled}</td>
-                      <td>{metrics.wins}</td>
-                      <td>{metrics.losses}</td>
-                      <td>{metrics.pending}</td>
-                      <td>{metrics.hit_rate == null ? "n/d" : formatPercent(metrics.hit_rate)}</td>
-                      <td>{formatOdd(metrics.avg_odd)}</td>
-                      <td>{formatNumber(metrics.total_profit, 2)}</td>
-                      <td>{metrics.roi == null ? "n/d" : formatPercent(metrics.roi)}</td>
+                      <td data-label="Data">{day}</td>
+                      <td data-label={performanceDecision === "ALL" ? "Totali" : performanceDecision}>{metrics.plays}</td>
+                      <td data-label="Risolte">{metrics.settled}</td>
+                      <td data-label="Vinte">{metrics.wins}</td>
+                      <td data-label="Perse">{metrics.losses}</td>
+                      <td data-label="Pending">{metrics.pending}</td>
+                      <td data-label="Hit rate">{metrics.hit_rate == null ? "n/d" : formatPercent(metrics.hit_rate)}</td>
+                      <td data-label="Quota media">{formatOdd(metrics.avg_odd)}</td>
+                      <td data-label="Profitto">{formatNumber(metrics.total_profit, 2)}</td>
+                      <td data-label="ROI">{metrics.roi == null ? "n/d" : formatPercent(metrics.roi)}</td>
                     </tr>
                   ))}
               </tbody>
@@ -279,7 +279,7 @@ export default function MonitoringPage({
         {(alerts || []).length === 0 && <div className="empty-state">Nessun alert attivo.</div>}
         {(alerts || []).length > 0 && (
           <div className="table-wrap">
-            <table>
+            <table className="table-cards">
               <thead>
                 <tr>
                   <th>Severity</th>
@@ -292,13 +292,13 @@ export default function MonitoringPage({
               <tbody>
                 {alerts.map((alert, index) => (
                   <tr key={`${alert.code}-${index}`}>
-                    <td>
+                    <td data-label="Severity">
                       <SeverityBadge severity={alert.severity} />
                     </td>
-                    <td>{alert.code}</td>
-                    <td>{alert.message}</td>
-                    <td>{alert.observed ?? "n/d"}</td>
-                    <td>{alert.threshold ?? "n/d"}</td>
+                    <td data-label="Codice">{alert.code}</td>
+                    <td data-label="Messaggio">{alert.message}</td>
+                    <td data-label="Osservato">{alert.observed ?? "n/d"}</td>
+                    <td data-label="Soglia">{alert.threshold ?? "n/d"}</td>
                   </tr>
                 ))}
               </tbody>
@@ -322,7 +322,7 @@ export default function MonitoringPage({
           </article>
         </div>
         <div className="table-wrap">
-          <table>
+          <table className="table-cards">
             <thead>
               <tr>
                 <th>Data</th>
@@ -332,8 +332,8 @@ export default function MonitoringPage({
             <tbody>
               {volumeSeries.map((row) => (
                 <tr key={row.date}>
-                  <td>{row.date}</td>
-                  <td>{row.count}</td>
+                  <td data-label="Data">{row.date}</td>
+                  <td data-label="Count">{row.count}</td>
                 </tr>
               ))}
             </tbody>
@@ -361,7 +361,7 @@ export default function MonitoringPage({
           Policy né il gate di promozione.
         </p>
         <div className="table-wrap">
-          <table>
+          <table className="table-cards">
             <thead>
               <tr>
                 <th>Finestra</th>
@@ -378,13 +378,13 @@ export default function MonitoringPage({
                 const overall = payload?.overall || {};
                 return (
                   <tr key={days}>
-                    <td>{days}gg</td>
-                    <td>{overall.bets ?? 0}</td>
-                    <td>{formatPercent(overall.hit_rate)}</td>
-                    <td>{formatEdge(overall.roi)}</td>
-                    <td>{formatNumber(overall.profit)}</td>
-                    <td>{formatOdd(overall.avg_odds)}</td>
-                    <td>{formatNumber(overall.max_drawdown)}</td>
+                    <td data-label="Finestra">{days}gg</td>
+                    <td data-label="Bet piazzate">{overall.bets ?? 0}</td>
+                    <td data-label="Hit rate">{formatPercent(overall.hit_rate)}</td>
+                    <td data-label="ROI">{formatEdge(overall.roi)}</td>
+                    <td data-label="Profit">{formatNumber(overall.profit)}</td>
+                    <td data-label="Avg odd">{formatOdd(overall.avg_odds)}</td>
+                    <td data-label="Max drawdown">{formatNumber(overall.max_drawdown)}</td>
                   </tr>
                 );
               })}
@@ -462,7 +462,7 @@ export default function MonitoringPage({
               </article>
             </div>
             <div className="table-wrap">
-              <table>
+              <table className="table-cards">
                 <thead>
                   <tr>
                     <th>Feature</th>
@@ -472,8 +472,8 @@ export default function MonitoringPage({
                 <tbody>
                   {featureRows.map((row) => (
                     <tr key={row.feature}>
-                      <td>{row.feature}</td>
-                      <td>{ratioPercent(row.column_presence_ratio)}</td>
+                      <td data-label="Feature">{row.feature}</td>
+                      <td data-label="Presenza">{ratioPercent(row.column_presence_ratio)}</td>
                     </tr>
                   ))}
                 </tbody>

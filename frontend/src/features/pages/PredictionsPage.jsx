@@ -42,7 +42,7 @@ export default function PredictionsPage({
         </div>
 
         <div className="table-wrap">
-          <table>
+          <table className="table-cards">
             <thead>
               <tr>
                 <th>Timestamp</th>
@@ -55,11 +55,11 @@ export default function PredictionsPage({
             <tbody>
               {predictionRows.map((row, idx) => (
                 <tr key={`prediction-${idx}`}>
-                  <td>{row.timestamp || "-"}</td>
-                  <td>{row.fixture_id}</td>
-                  <td>{marketLabel(row.market)}</td>
-                  <td>{String(row.prediction)}</td>
-                  <td>{formatPercent(row.probability)}</td>
+                  <td data-label="Timestamp">{row.timestamp || "-"}</td>
+                  <td data-label="Fixture">{row.fixture_id}</td>
+                  <td data-label="Mercato">{marketLabel(row.market)}</td>
+                  <td data-label="Prediction">{String(row.prediction)}</td>
+                  <td data-label="Probabilita">{formatPercent(row.probability)}</td>
                 </tr>
               ))}
             </tbody>
