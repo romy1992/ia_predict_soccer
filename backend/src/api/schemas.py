@@ -146,6 +146,12 @@ class JobOfficialCaptureRequest(BaseModel):
     async_run: bool = True
 
 
+class JobScorerRequest(BaseModel):
+    """"Esegui ora" dei job marcatori (`scorer_predictions` / `scorer_training`)."""
+
+    async_run: bool = True
+
+
 class JobTeamRatingRefreshRequest(BaseModel):
     """Bottone "Esegui ora" di Impostazioni per il job 'Aggiorna rating
     squadre': stessa funzione del job schedulato omonimo

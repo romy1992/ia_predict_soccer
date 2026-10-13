@@ -208,7 +208,8 @@ JOB_DEFINITIONS: dict[str, dict[str, Any]] = {
         "description": (
             "Per le partite delle prime 5 leghe in partenza a breve scarica la formazione ufficiale "
             "(poche chiamate API-Sports) e calcola la probabilita' che ogni titolare segni, salvando "
-            "una revisione append-only prima del kickoff. Se manca il modello lo addestra sui dati a DB."
+            "una revisione append-only prima del kickoff. Usa il modello in stage 'production' del "
+            "mercato 'player_anytime_goalscorer': se nessuno e' stato promosso non predice."
         ),
         "default_enabled": True,
         "calls_api_sports": True,
@@ -216,6 +217,22 @@ JOB_DEFINITIONS: dict[str, dict[str, Any]] = {
         "job_history_type": "scorer_predictions",
         "cfg_fields": {"interval_minutes": "scorer_predictions_interval_minutes"},
         "run_all_priority": 80,
+        "run_all_included": False,
+    },
+    "scorer_training": {
+        "label": "Retrain modello marcatori",
+        "description": (
+            "Riaddestra il modello 'il giocatore segna' sui dati a DB (prime 5 leghe), lo valuta su un "
+            "holdout temporale (log loss, Brier, ECE, AUC) e lo registra come CANDIDATE. Non lo promuove "
+            "mai da solo: la promozione passa dal gate metriche + confronto con production, come per gli "
+            "altri mercati. Lavora solo su dati gia' a DB."
+        ),
+        "default_enabled": True,
+        "calls_api_sports": False,
+        "schedule_kind": "daily",
+        "job_history_type": "scorer_training",
+        "cfg_fields": {"hour": "scorer_training_hour", "minute": "scorer_training_minute"},
+        "run_all_priority": 999,
         "run_all_included": False,
     },
 }
