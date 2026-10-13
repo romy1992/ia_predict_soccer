@@ -38,6 +38,14 @@ MODEL_NAME = "voting_logreg_hgb_rf"
 REGISTRY_DIR = "best_models/registry_scorer"
 BUNDLE_PREFIX = "best_models/player_anytime_scorer"
 HOLDOUT_FRACTION = 0.2
+EURO_CUPS = [2, 3, 848]
+MIN_GROUP_ROWS = 1000  # sotto questa soglia il controllo per gruppo e' troppo rumoroso per decidere
+
+
+def league_group(league: Any) -> str:
+    from src.data.player.coverage_report import TOP5_LEAGUES
+
+    return "cup" if league in EURO_CUPS else "top5" if league in TOP5_LEAGUES else "other"
 SEED = 42
 MIN_TRAIN_ROWS = 20_000
 
@@ -110,6 +118,23 @@ def registry() -> ModelRegistry:
     return ModelRegistry(registry_dir=REGISTRY_DIR)
 
 
+def _group_metrics(test: pd.DataFrame, p: np.ndarray, base: float) -> dict[str, Any]:
+    """Metriche separate per gruppo di competizioni (cinque campionati / coppe europee / altri)."""
+    groups = test["league"].map(league_group).to_numpy()
+    out: dict[str, Any] = {}
+    for name in ("top5", "cup", "other"):
+        mask = groups == name
+        if mask.sum() < MIN_GROUP_ROWS or test[TARGET].to_numpy()[mask].min() == test[TARGET].to_numpy()[mask].max():
+            continue
+        y = test[TARGET].to_numpy()[mask]
+        m = compute_probability_metrics(y, p[mask])
+        out[name] = {
+            "n": int(mask.sum()), "log_loss": m["log_loss"], "ece": m["ece"], "auc": m["auc"],
+            "baseline_log_loss": float(-np.mean(y * np.log(base) + (1 - y) * np.log(1 - base))),
+        }
+    return out
+
+
 def holdout_metrics(dataset: pd.DataFrame, families: tuple[str, ...] = FAMILIES) -> dict[str, Any]:
     """Addestra ogni famiglia sul passato e la misura sulle partite piu' recenti (ultimo 20% delle DATE,
     mai una partita spezzata tra train e test). Ritorna le metriche della famiglia VINCENTE (log loss piu'
@@ -139,6 +164,7 @@ def holdout_metrics(dataset: pd.DataFrame, families: tuple[str, ...] = FAMILIES)
     metrics["holdout_from"] = str(cut)
     metrics["families"] = {f: {k: results[f][k] for k in ("log_loss", "brier", "ece", "auc")} for f in results}
     p = probs[best]
+    metrics["groups"] = _group_metrics(test, p, float(train[TARGET].mean()))
     metrics["by_role"] = {
         role: {"n": int(m.sum()), "observed": float(test[TARGET][m].mean()), "predicted": float(p[m.to_numpy()].mean())}
         for role in ("F", "M", "D") if (m := test[f"pos_{role}"] == 1).any()
@@ -190,6 +216,13 @@ def auto_promote(run: dict[str, Any], *, reg: Optional[ModelRegistry] = None) ->
     for role, r in (m.get("by_role") or {}).items():
         if abs(r["predicted"] - r["observed"]) > MAX_ROLE_GAP:
             reasons.append(f"ruolo {role}: probabilita' media lontana dalla realta'")
+    # Ogni gruppo con abbastanza partite nell'holdout deve reggere da solo (le coppe non devono essere
+    # coperte dal risultato dei campionati).
+    for name, g in (m.get("groups") or {}).items():
+        if g["baseline_log_loss"] - g["log_loss"] < MIN_GAIN_OVER_BASELINE:
+            reasons.append(f"gruppo {name}: log_loss non abbastanza sotto la baseline")
+        if g["ece"] > MAX_ECE:
+            reasons.append(f"gruppo {name}: calibrazione (ECE) sopra soglia")
     if reasons:
         return {"promoted": False, "reasons": reasons}
     policy = dataclasses.replace(DEFAULT_PROMOTION_POLICY, min_improvement_over_production=-REFRESH_TOLERANCE)

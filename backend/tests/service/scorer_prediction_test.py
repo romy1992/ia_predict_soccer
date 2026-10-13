@@ -143,8 +143,11 @@ class ScorerPredictionTest(unittest.TestCase):
         self.assertTrue(prediction_service.is_supported_fixture(self.s, 99))  # lega 135
         self.s.add(Match(id_fixture=500, date_match="2026-10-13T19:00:00+00:00", league_match=2, season=2026,
                          id_team_home=1, id_team_away=2, status="NS"))
+        self.s.add(Match(id_fixture=501, date_match="2026-10-13T19:00:00+00:00", league_match=137, season=2026,
+                         id_team_home=1, id_team_away=2, status="NS"))
         self.s.commit()
-        self.assertFalse(prediction_service.is_supported_fixture(self.s, 500))  # Champions League
+        self.assertTrue(prediction_service.is_supported_fixture(self.s, 500))   # Champions League: coperta
+        self.assertFalse(prediction_service.is_supported_fixture(self.s, 501))  # Coppa Italia: fuori
         self.assertIsNone(prediction_service.fixture_league(self.s, 12345))
 
     def test_model_store_rejects_tiny_datasets(self):

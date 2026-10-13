@@ -1,0 +1,260 @@
+{
+ "A_top5_only/logreg": {
+  "top5": {
+   "log_loss": 0.2639,
+   "brier": 0.0733,
+   "ece": 0.0042,
+   "sample_size": 28702,
+   "auc": 0.7418,
+   "baseline_log_loss": 0.2956
+  },
+  "cup": {
+   "log_loss": 0.2745,
+   "brier": 0.077,
+   "ece": 0.0118,
+   "sample_size": 8633,
+   "auc": 0.7399,
+   "baseline_log_loss": 0.3059,
+   "by_role": {
+    "F": {
+     "n": 14893,
+     "obs": 0.172,
+     "pred": 0.1576
+    },
+    "M": {
+     "n": 24397,
+     "obs": 0.088,
+     "pred": 0.0778
+    },
+    "D": {
+     "n": 19515,
+     "obs": 0.0384,
+     "pred": 0.0327
+    }
+   }
+  },
+  "other": {
+   "log_loss": 0.2666,
+   "brier": 0.0742,
+   "ece": 0.0045,
+   "sample_size": 21470,
+   "auc": 0.7385,
+   "baseline_log_loss": 0.2983
+  }
+ },
+ "A_top5_only/hgb": {
+  "top5": {
+   "log_loss": 0.2637,
+   "brier": 0.0733,
+   "ece": 0.0032,
+   "sample_size": 28702,
+   "auc": 0.7426,
+   "baseline_log_loss": 0.2956
+  },
+  "cup": {
+   "log_loss": 0.2735,
+   "brier": 0.0767,
+   "ece": 0.0082,
+   "sample_size": 8633,
+   "auc": 0.7423,
+   "baseline_log_loss": 0.3059,
+   "by_role": {
+    "F": {
+     "n": 14893,
+     "obs": 0.172,
+     "pred": 0.1555
+    },
+    "M": {
+     "n": 24397,
+     "obs": 0.088,
+     "pred": 0.0803
+    },
+    "D": {
+     "n": 19515,
+     "obs": 0.0384,
+     "pred": 0.0355
+    }
+   }
+  },
+  "other": {
+   "log_loss": 0.2661,
+   "brier": 0.0741,
+   "ece": 0.0035,
+   "sample_size": 21470,
+   "auc": 0.7402,
+   "baseline_log_loss": 0.2983
+  }
+ },
+ "B_all/logreg": {
+  "top5": {
+   "log_loss": 0.2639,
+   "brier": 0.0733,
+   "ece": 0.0047,
+   "sample_size": 28702,
+   "auc": 0.7419,
+   "baseline_log_loss": 0.2956
+  },
+  "cup": {
+   "log_loss": 0.274,
+   "brier": 0.0768,
+   "ece": 0.0099,
+   "sample_size": 8633,
+   "auc": 0.7403,
+   "baseline_log_loss": 0.3059,
+   "by_role": {
+    "F": {
+     "n": 14893,
+     "obs": 0.172,
+     "pred": 0.1596
+    },
+    "M": {
+     "n": 24397,
+     "obs": 0.088,
+     "pred": 0.0805
+    },
+    "D": {
+     "n": 19515,
+     "obs": 0.0384,
+     "pred": 0.0333
+    }
+   }
+  },
+  "other": {
+   "log_loss": 0.2665,
+   "brier": 0.0741,
+   "ece": 0.0035,
+   "sample_size": 21470,
+   "auc": 0.7384,
+   "baseline_log_loss": 0.2983
+  }
+ },
+ "B_all/hgb": {
+  "top5": {
+   "log_loss": 0.2636,
+   "brier": 0.0733,
+   "ece": 0.0036,
+   "sample_size": 28702,
+   "auc": 0.7433,
+   "baseline_log_loss": 0.2956
+  },
+  "cup": {
+   "log_loss": 0.2733,
+   "brier": 0.0766,
+   "ece": 0.008,
+   "sample_size": 8633,
+   "auc": 0.7424,
+   "baseline_log_loss": 0.3059,
+   "by_role": {
+    "F": {
+     "n": 14893,
+     "obs": 0.172,
+     "pred": 0.1556
+    },
+    "M": {
+     "n": 24397,
+     "obs": 0.088,
+     "pred": 0.0806
+    },
+    "D": {
+     "n": 19515,
+     "obs": 0.0384,
+     "pred": 0.0356
+    }
+   }
+  },
+  "other": {
+   "log_loss": 0.266,
+   "brier": 0.074,
+   "ece": 0.0026,
+   "sample_size": 21470,
+   "auc": 0.7405,
+   "baseline_log_loss": 0.2983
+  }
+ },
+ "C_all_flags/logreg": {
+  "top5": {
+   "log_loss": 0.2638,
+   "brier": 0.0733,
+   "ece": 0.0039,
+   "sample_size": 28702,
+   "auc": 0.742,
+   "baseline_log_loss": 0.2956
+  },
+  "cup": {
+   "log_loss": 0.2741,
+   "brier": 0.0769,
+   "ece": 0.0117,
+   "sample_size": 8633,
+   "auc": 0.7402,
+   "baseline_log_loss": 0.3059,
+   "by_role": {
+    "F": {
+     "n": 14893,
+     "obs": 0.172,
+     "pred": 0.1566
+    },
+    "M": {
+     "n": 24397,
+     "obs": 0.088,
+     "pred": 0.0787
+    },
+    "D": {
+     "n": 19515,
+     "obs": 0.0384,
+     "pred": 0.0324
+    }
+   }
+  },
+  "other": {
+   "log_loss": 0.2665,
+   "brier": 0.0741,
+   "ece": 0.0035,
+   "sample_size": 21470,
+   "auc": 0.7384,
+   "baseline_log_loss": 0.2983
+  }
+ },
+ "C_all_flags/hgb": {
+  "top5": {
+   "log_loss": 0.2636,
+   "brier": 0.0733,
+   "ece": 0.0036,
+   "sample_size": 28702,
+   "auc": 0.7433,
+   "baseline_log_loss": 0.2956
+  },
+  "cup": {
+   "log_loss": 0.2733,
+   "brier": 0.0766,
+   "ece": 0.008,
+   "sample_size": 8633,
+   "auc": 0.7424,
+   "baseline_log_loss": 0.3059,
+   "by_role": {
+    "F": {
+     "n": 14893,
+     "obs": 0.172,
+     "pred": 0.1556
+    },
+    "M": {
+     "n": 24397,
+     "obs": 0.088,
+     "pred": 0.0806
+    },
+    "D": {
+     "n": 19515,
+     "obs": 0.0384,
+     "pred": 0.0356
+    }
+   }
+  },
+  "other": {
+   "log_loss": 0.266,
+   "brier": 0.074,
+   "ece": 0.0026,
+   "sample_size": 21470,
+   "auc": 0.7405,
+   "baseline_log_loss": 0.2983
+  }
+ }
+}
