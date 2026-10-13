@@ -1,20 +1,20 @@
-"""player_lineup (bridge)
+"""player_lineup
 
 Revision ID: e5f6a7b8c9d0
 Revises: d1e2f3a4b5c6
-Create Date: 2026-10-08 00:00:00.000000
+Create Date: 2026-10-07 00:00:00.000000
 
-BRIDGE, upgrade/downgrade NO-OP. Stesso identico scenario del bridge
-precedente (d1e2f3a4b5c6_player_match_event.py): il DB "dev" condiviso e'
-stato stampato con questa revision id da un `alembic upgrade head` lanciato
-dal branch `claude/player-goalscorer-odds-backend` (cantiere "giocatori che
-segnano"), che ha creato VERAMENTE la tabella `player_lineup`. Questo chain
-(quello che il servizio `api` di Railway esegue all'avvio) non conosceva
-quella revision id - stesso fallimento "Can't locate revision identified
-by 'e5f6a7b8c9d0'", stesso identico fix: riconoscerla senza ripetere la DDL
-(la tabella esiste gia').
+Cantiere "giocatori che segnano": completa `player_match_event` con
+l'universo completo di chi ha giocato una fixture (titolari + panchina),
+necessario per costruire un dataset di training "ha segnato si/no" senza
+la distorsione di vedere solo i giocatori con eventi (vedi docstring di
+`src/data/player/player_lineup_models.py`). Tabella nuova, additiva,
+nessun impatto sullo schema esistente.
 """
 from typing import Sequence, Union
+
+from alembic import op
+import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
@@ -25,12 +25,24 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    """No-op: `player_lineup` esiste gia' (vedi docstring del modulo)."""
-    pass
+    """Upgrade schema."""
+    op.create_table(
+        'player_lineup',
+        sa.Column('fixture_id', sa.Integer(), nullable=False),
+        sa.Column('player_id', sa.Integer(), nullable=False),
+        sa.Column('player_name', sa.String(), nullable=True),
+        sa.Column('team_id', sa.Integer(), nullable=True),
+        sa.Column('team_name', sa.String(), nullable=True),
+        sa.Column('position', sa.String(), nullable=True),
+        sa.Column('is_starter', sa.Boolean(), nullable=False),
+        sa.Column('formation', sa.String(), nullable=True),
+        sa.Column('source', sa.String(), nullable=False),
+        sa.PrimaryKeyConstraint('fixture_id', 'player_id'),
+    )
+    op.create_index('ix_player_lineup_team_id', 'player_lineup', ['team_id'], unique=False)
 
 
 def downgrade() -> None:
-    """No-op: il downgrade reale e' di competenza del chain che ha creato
-    la tabella (`alembic/versions/e5f6a7b8c9d0_player_lineup.py` sul branch
-    `claude/player-goalscorer-odds-backend`)."""
-    pass
+    """Downgrade schema."""
+    op.drop_index('ix_player_lineup_team_id', table_name='player_lineup')
+    op.drop_table('player_lineup')

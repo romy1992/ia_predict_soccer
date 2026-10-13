@@ -16,9 +16,12 @@ from uuid import uuid4
 
 import pandas as pd
 
+from src.data.player.player_event_service import extract_player_event
+from src.data.player.player_lineup_service import extract_lineup_players
 from src.repository.base.repository_db import SessionLocal
 from src.repository.match_repository import MatchRepository
 from src.repository.odds_snapshot_repository import OddsSnapshotRepository
+from src.repository.player_data_repository import PlayerDataRepository
 from src.service_ia.config.app_config import load_app_config
 from src.service_ia.mapper.statistic_mapper import get_attribute_statistics, form_last_5_tot
 from src.service_ia.model.match import Match, Statistics, Odds, OddsSnapshot
@@ -46,6 +49,7 @@ logging.basicConfig(level=logging.DEBUG)
 """
 repo_match = MatchRepository()
 repo_snapshot = OddsSnapshotRepository()
+repo_player = PlayerDataRepository()
 
 BASE_DIR = os.path.dirname(__file__)
 BET_FILE = os.path.join(BASE_DIR, '..', 'json', 'bet.json')
@@ -286,6 +290,13 @@ def _split_statuses(statuses: str | None) -> list[str]:
     return tokens
 
 
+# Stessi stati di `status_list`, come insieme - usato per decidere se una
+# fixture e' conclusa e quindi idonea alla cattura storica degli eventi per
+# giocatore (Step 3b, cantiere "giocatori che segnano"): non ha senso
+# chiamare `fixtures/events` su una fixture non ancora finita.
+_FINISHED_STATUSES = set(_split_statuses(status_list))
+
+
 def _extract_line_value(raw_value: str) -> Optional[str]:
     import re
 
@@ -316,7 +327,20 @@ def _switch_market_name(bet_name: str, alternate_bet: str) -> Optional[str]:
             return 'cards'
         case 'Double Chance':
             return 'dc'
+        case 'Anytime Goal Scorer':
+            return 'player_anytime_goalscorer'
     return None
+
+
+# Mercati giocatore (cantiere "giocatori che segnano"): bet id API-Sports,
+# SOLO per gli snapshot (`map_odds_snapshots`), MAI aggiunti a `bet.json`/
+# `BET_BOOKMAKERS` - quella lista alimenta anche la riga piatta di features
+# pre-match, dove 40+ giocatori per partita diventerebbero colonne
+# spazzatura. Id 92 = "Anytime Goal Scorer" (API-Sports `base_bet.json`),
+# confermato con dati reali (Bet365, Serie A) il 2026-10-06. Le quote non
+# sono recuperabili a posteriori (spariscono a fine partita), quindi vanno
+# catturate da ora in avanti.
+PLAYER_MARKET_BET_IDS = {92}
 
 
 def _safe_float(raw_value) -> Optional[float]:
@@ -336,7 +360,9 @@ def map_odds_snapshots(id_match: str, id_fixture: int, fixture_bookmakers: list[
     captured_raw = fixture_bookmakers[0].get('update') if isinstance(fixture_bookmakers[0], dict) else None
     captured_at = _parse_iso_datetime(captured_raw) or datetime.now(timezone.utc)
 
-    allowed_bet_ids = {int(item['id']) for item in BET_BOOKMAKERS if isinstance(item, dict) and item.get('id') is not None}
+    allowed_bet_ids = {
+        int(item['id']) for item in BET_BOOKMAKERS if isinstance(item, dict) and item.get('id') is not None
+    } | PLAYER_MARKET_BET_IDS
     snapshots: list[OddsSnapshot] = []
 
     payload = fixture_bookmakers[0] if isinstance(fixture_bookmakers[0], dict) else {}
@@ -600,6 +626,36 @@ def download_import_matches(
                     dict_match['statistics'] = stats_objs
                     if odds_objs:
                         dict_match['odds'] = odds_objs
+
+                    # Step 3b (cantiere "giocatori che segnano"): cattura gli
+                    # eventi per giocatore di una fixture GIA' CONCLUSA, cosi'
+                    # lo storico si accumula da solo ad ogni giro del job
+                    # regolare, senza un backfill one-off da ripetere. Il
+                    # check `has_events_for_fixture` evita di ri-spendere una
+                    # chiamata ad ogni passaggio sulla finestra rolling di
+                    # "Aggiorna tutto" (stessa fixture conclusa rivista piu'
+                    # giorni di fila): una volta catturata, non cambia piu'.
+                    if status_short in _FINISHED_STATUSES and not repo_player.has_events_for_fixture(id_fix):
+                        raw_events = provider.get_fixture_events(id_fix)
+                        player_events = [extract_player_event(id_fix, raw_event) for raw_event in raw_events]
+                        repo_player.save_events(player_events)
+
+                    # Step 4 (cantiere "giocatori che segnano"): cattura la
+                    # formazione (titolari + panchina) di una fixture GIA'
+                    # CONCLUSA - l'universo completo di chi ha giocato, senza
+                    # il quale un dataset "ha segnato si/no" vedrebbe solo i
+                    # giocatori con eventi (gol/cartellini), mai gli esempi
+                    # negativi puliti (vedi player_lineup_models.py). Stesso
+                    # principio di guardia di Step 3b: una fixture catturata
+                    # non cambia piu', non va ri-richiesta.
+                    if status_short in _FINISHED_STATUSES and not repo_player.has_lineup_for_fixture(id_fix):
+                        raw_lineups = provider.get_fixture_lineups(id_fix)
+                        lineup_rows = [
+                            player_row
+                            for raw_team_lineup in raw_lineups
+                            for player_row in extract_lineup_players(id_fix, raw_team_lineup)
+                        ]
+                        repo_player.save_lineups(lineup_rows)
 
                     # L'upsert ha già scritto le colonne base; questo `save`
                     # (merge) serve alle RELAZIONI statistics/odds, che con
