@@ -40,30 +40,49 @@ SEED = 42
 MIN_TRAIN_ROWS = 20_000
 
 
-def _estimator() -> VotingClassifier:
-    """Voting soft tra logistica, HistGradientBoosting e random forest (campione della ricerca in cloud)."""
-    logreg = make_pipeline(StandardScaler(), LogisticRegression(C=0.0113, max_iter=3000))
-    hgb = HistGradientBoostingClassifier(
+def _logreg():
+    return make_pipeline(StandardScaler(), LogisticRegression(C=0.0113, max_iter=3000))
+
+
+def _hgb():
+    return HistGradientBoostingClassifier(
         learning_rate=0.08, max_depth=2, max_iter=100, min_samples_leaf=50, l2_regularization=1,
         early_stopping=False, random_state=SEED,
     )
-    rf = RandomForestClassifier(
+
+
+def _rf():
+    return RandomForestClassifier(
         n_estimators=400, max_depth=8, min_samples_leaf=50, max_features=0.5, random_state=SEED, n_jobs=2,
     )
-    return VotingClassifier([("logreg", logreg), ("hgb", hgb), ("rf", rf)], voting="soft")
+
+
+# Famiglie in gara a ogni training (iperparametri fissi scelti dalla ricerca in cloud). Vince la log loss
+# piu' bassa sull'holdout temporale; il voting soft combina le tre.
+FAMILIES = ("logreg", "hgb", "rf", "voting")
+
+
+def _estimator(family: str = "voting"):
+    if family == "logreg":
+        return _logreg()
+    if family == "hgb":
+        return _hgb()
+    if family == "rf":
+        return _rf()
+    return VotingClassifier([("logreg", _logreg()), ("hgb", _hgb()), ("rf", _rf())], voting="soft")
 
 
 def _matrix(df: pd.DataFrame, medians: pd.Series) -> np.ndarray:
     return df[FEATURE_COLUMNS].replace([np.inf, -np.inf], np.nan).fillna(medians).to_numpy(dtype=float)
 
 
-def train_bundle(dataset: pd.DataFrame) -> dict[str, Any]:
+def train_bundle(dataset: pd.DataFrame, family: str = "voting") -> dict[str, Any]:
     """Addestra su TUTTO il dataset passato (partite concluse, una riga per giocatore-partita)."""
     if len(dataset) < MIN_TRAIN_ROWS:
         raise ValueError(f"Dataset troppo piccolo per addestrare: {len(dataset)} righe (< {MIN_TRAIN_ROWS})")
     dataset = dataset.sort_values("match_date")
     medians = dataset[FEATURE_COLUMNS].replace([np.inf, -np.inf], np.nan).median()
-    model = _estimator().fit(_matrix(dataset, medians), dataset[TARGET].to_numpy())
+    model = _estimator(family).fit(_matrix(dataset, medians), dataset[TARGET].to_numpy())
     return {
         "model": model,
         "medians": medians,
@@ -75,6 +94,7 @@ def train_bundle(dataset: pd.DataFrame) -> dict[str, Any]:
         "train_until": str(dataset["match_date"].max()),
         "positive_rate": float(dataset[TARGET].mean()),
         "version": datetime.now(timezone.utc).strftime("%Y%m%d%H%M"),
+        "family": family,
     }
 
 
@@ -88,22 +108,35 @@ def registry() -> ModelRegistry:
     return ModelRegistry(registry_dir=REGISTRY_DIR)
 
 
-def holdout_metrics(dataset: pd.DataFrame) -> dict[str, Any]:
-    """Addestra sul passato e misura sulle partite piu' recenti (ultimo 20% delle DATE, mai una partita
-    spezzata tra train e test): stesse metriche usate dal gate di promozione (log loss, Brier, ECE, AUC)."""
+def holdout_metrics(dataset: pd.DataFrame, families: tuple[str, ...] = FAMILIES) -> dict[str, Any]:
+    """Addestra ogni famiglia sul passato e la misura sulle partite piu' recenti (ultimo 20% delle DATE,
+    mai una partita spezzata tra train e test). Ritorna le metriche della famiglia VINCENTE (log loss piu'
+    bassa) piu' il confronto tra tutte in `families`."""
     dataset = dataset.sort_values("match_date").reset_index(drop=True)
     cut = dataset["match_date"].quantile(1.0 - HOLDOUT_FRACTION)
     train, test = dataset[dataset["match_date"] < cut], dataset[dataset["match_date"] >= cut]
     if len(train) < MIN_TRAIN_ROWS or test.empty or test[TARGET].nunique() < 2:
         raise ValueError("Dati insufficienti per la valutazione su holdout temporale")
     medians = train[FEATURE_COLUMNS].replace([np.inf, -np.inf], np.nan).median()
-    model = _estimator().fit(_matrix(train, medians), train[TARGET].to_numpy())
-    p = model.predict_proba(_matrix(test, medians))[:, 1]
-    metrics = compute_probability_metrics(test[TARGET].to_numpy(), p)
+    x_train, y_train, x_test = _matrix(train, medians), train[TARGET].to_numpy(), _matrix(test, medians)
     base = float(train[TARGET].mean())
-    metrics["baseline_log_loss"] = float(-np.mean(
-        test[TARGET] * np.log(base) + (1 - test[TARGET]) * np.log(1 - base)))
+    baseline = float(-np.mean(test[TARGET] * np.log(base) + (1 - test[TARGET]) * np.log(1 - base)))
+
+    results: dict[str, dict[str, Any]] = {}
+    probs: dict[str, np.ndarray] = {}
+    for family in families:
+        p = _estimator(family).fit(x_train, y_train).predict_proba(x_test)[:, 1]
+        probs[family] = p
+        results[family] = compute_probability_metrics(test[TARGET].to_numpy(), p)
+    best = min(results, key=lambda f: results[f]["log_loss"])
+    metrics = dict(results[best])
+    metrics.pop("reliability", None)
+    metrics["reliability"] = results[best].get("reliability")
+    metrics["best_family"] = best
+    metrics["baseline_log_loss"] = baseline
     metrics["holdout_from"] = str(cut)
+    metrics["families"] = {f: {k: results[f][k] for k in ("log_loss", "brier", "ece", "auc")} for f in results}
+    p = probs[best]
     metrics["by_role"] = {
         role: {"n": int(m.sum()), "observed": float(test[TARGET][m].mean()), "predicted": float(p[m.to_numpy()].mean())}
         for role in ("F", "M", "D") if (m := test[f"pos_{role}"] == 1).any()
@@ -112,21 +145,52 @@ def holdout_metrics(dataset: pd.DataFrame) -> dict[str, Any]:
 
 
 def train_candidate(dataset: pd.DataFrame, *, reg: Optional[ModelRegistry] = None) -> dict[str, Any]:
-    """Valuta su holdout, riaddestra su tutto, salva il bundle e registra un run `candidate`.
-    La promozione resta un'azione esplicita (`promote_with_policy`)."""
+    """Sceglie la famiglia migliore sull'holdout, riaddestra quella su tutto, salva il bundle e registra un
+    run `candidate`. La promozione e' un passo separato (`auto_promote` o `promote_with_policy`)."""
     metrics = holdout_metrics(dataset)
-    bundle = train_bundle(dataset)
+    family = metrics["best_family"]
+    bundle = train_bundle(dataset, family)
     key = f"{BUNDLE_PREFIX}/v{bundle['version']}.joblib"
     bucket_store.put_joblib(key, bundle)
     metrics["rows"] = bundle["n_rows"]
     return (reg or registry()).register(
-        model_path=key, market=MARKET, model_name=MODEL_NAME, metrics=metrics,
+        model_path=key, market=MARKET, model_name=family, metrics=metrics,
         feature_names=list(FEATURE_COLUMNS),
-        params={"model": "voting(logreg C=0.0113, hgb depth2 lr0.08, rf400 depth8)", "target": "anytime_goal_regulation"},
+        params={"family": family, "target": "anytime_goal_regulation"},
         extra={"sklearn_version": bundle["sklearn_version"], "n_fixtures": bundle["n_fixtures"],
                "train_until": bundle["train_until"], "dataset_version": f"player_scoring:{bundle['train_until']}"},
         stage="candidate",
     )
+
+
+# Controlli AGGIUNTIVI a quelli della policy di promozione (soglie troppo larghe per un evento raro).
+MIN_GAIN_OVER_BASELINE = 0.005   # log loss almeno 0,005 sotto la media storica
+MAX_ECE = 0.03
+MAX_ROLE_GAP = 0.03              # |previsto - osservato| medio per ruolo
+
+
+def auto_promote(run: dict[str, Any], *, reg: Optional[ModelRegistry] = None) -> dict[str, Any]:
+    """Promuove il candidate a production SOLO se supera i controlli qui sotto E la policy standard
+    (gate metriche + confronto con l'attuale production). Mai `force`; ogni tentativo e' nell'audit con
+    actor 'auto:scorer_training'. Ritorna {promoted, reasons}."""
+    reg = reg or registry()
+    m = run.get("metrics") or {}
+    reasons = []
+    if (m.get("baseline_log_loss") or 0) - (m.get("log_loss") or 99) < MIN_GAIN_OVER_BASELINE:
+        reasons.append("log_loss non abbastanza sotto la baseline")
+    if (m.get("ece") if m.get("ece") is not None else 99) > MAX_ECE:
+        reasons.append("calibrazione (ECE) sopra soglia")
+    for role, r in (m.get("by_role") or {}).items():
+        if abs(r["predicted"] - r["observed"]) > MAX_ROLE_GAP:
+            reasons.append(f"ruolo {role}: probabilita' media lontana dalla realta'")
+    if reasons:
+        return {"promoted": False, "reasons": reasons}
+    result = reg.promote_with_policy(run["run_id"], to_stage="production", actor="auto:scorer_training",
+                                     reason="auto-promozione: controlli marcatori + policy superati")
+    out = {"promoted": bool(result["promoted"]), "reasons": []}
+    if not result["promoted"]:
+        out["reasons"] = ["policy di promozione: non supera il confronto con production o il gate metriche"]
+    return out
 
 
 def load_production_bundle(*, reg: Optional[ModelRegistry] = None) -> Optional[dict[str, Any]]:
