@@ -136,6 +136,9 @@ class AppConfig:
     # una squadra gioca una nuova partita finale: intervallo moderato, non
     # serve la freschezza al minuto dei job quote/punteggi.
     team_rating_refresh_interval_minutes: int = 60
+    # Job "Predizioni marcatori": cerca le formazioni ufficiali in arrivo e calcola le probabilita'
+    # "il giocatore segna" prima del kickoff.
+    scorer_predictions_interval_minutes: int = 10
     # Job "Aggiorna Model Consensus" (2026-09-24, tabella
     # `model_consensus_snapshot`): stessa finestra di
     # `prediction_snapshot_interval_minutes` (NS oggi->oggi+N giorni +
@@ -172,6 +175,7 @@ def load_app_config() -> AppConfig:
     official_capture_minutes_before_kickoff = _int_env(
         "OFFICIAL_CAPTURE_MINUTES_BEFORE_KICKOFF", default=60
     )
+    scorer_predictions_interval_minutes = _int_env("SCORER_PREDICTIONS_INTERVAL_MINUTES", default=10)
     team_rating_refresh_interval_minutes = _int_env("TEAM_RATING_REFRESH_INTERVAL_MINUTES", default=60)
     model_consensus_refresh_interval_minutes = _int_env("MODEL_CONSENSUS_REFRESH_INTERVAL_MINUTES", default=60)
     database_url = os.environ.get("DATABASE_URL", DEFAULT_DATABASE_URL).strip()
@@ -199,6 +203,7 @@ def load_app_config() -> AppConfig:
         official_capture_interval_minutes=official_capture_interval_minutes,
         official_capture_minutes_before_kickoff=official_capture_minutes_before_kickoff,
         team_rating_refresh_interval_minutes=team_rating_refresh_interval_minutes,
+        scorer_predictions_interval_minutes=scorer_predictions_interval_minutes,
         model_consensus_refresh_interval_minutes=model_consensus_refresh_interval_minutes,
     )
 
