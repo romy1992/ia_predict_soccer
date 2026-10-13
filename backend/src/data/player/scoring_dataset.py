@@ -36,6 +36,9 @@ FEATURE_COLUMNS = [
     "rate_last10_per90", "rate_last10_shrunk", "rate_last20_shrunk",
     "starter_rate_last5", "avg_minutes_last5", "pens_last20",
     "team_gf10", "team_ga10", "opp_gf10", "opp_ga10",
+    # v2: dai soli dati gia' a DB
+    "goal_share_last10", "pen_taker_share_last20", "rest_days",
+    "rate_samevenue_shrunk", "opp_conc_role10", "teammates_rate_sum",
 ]
 SHRINK_K = 3.0  # peso (in "partite da 90'") del tasso di ruolo nel tasso del giocatore
 # Usati solo quando non esiste ancora nessuna storia del ruolo (inizio dataset).
@@ -113,6 +116,9 @@ def _appearances(matches: pd.DataFrame, lineups: pd.DataFrame, events: pd.DataFr
     a["is_home"] = (a["team_id"] == a["home_id"]).astype(int)
     a["opp_id"] = np.where(a["is_home"] == 1, a["away_id"], a["home_id"])
     a["scored"] = (a["goals"] > 0).astype(int)
+    # Gol e rigori della squadra nella partita (somma dei suoi giocatori, per le quote di peso).
+    a["team_goals"] = a.groupby(["fixture_id", "team_id"])["goals"].transform("sum")
+    a["team_pens"] = a.groupby(["fixture_id", "team_id"])["pens"].transform("sum")
     return a.dropna(subset=["match_date"])
 
 
@@ -141,7 +147,7 @@ def _player_features(played: pd.DataFrame) -> pd.DataFrame:
     for w in (5, 10, 20):
         p[f"prior_goals_last{w}"] = prior_sum("goals", w)
     minutes10, minutes20 = prior_sum("minutes", 10), prior_sum("minutes", 20)
-    p["rate_last10_per90"] = p["prior_goals_last10"] / (minutes10 / 90.0)
+    p["rate_last10_per90"] = (p["prior_goals_last10"] / (minutes10 / 90.0)).where(minutes10 > 0)
     p["rate_last10_shrunk"] = (p["prior_goals_last10"].fillna(0) + SHRINK_K * p["role_rate"]) / (
         minutes10.fillna(0) / 90.0 + SHRINK_K)
     p["rate_last20_shrunk"] = (p["prior_goals_last20"].fillna(0) + SHRINK_K * p["role_rate"]) / (
@@ -152,6 +158,18 @@ def _player_features(played: pd.DataFrame) -> pd.DataFrame:
         lambda s: s.shift(1).rolling(5, min_periods=1).mean())
     p["avg_minutes_last5"] = g["minutes"].transform(lambda s: s.shift(1).rolling(5, min_periods=1).mean())
     p["pens_last20"] = prior_sum("pens", 20)
+
+    # --- v2 ---
+    # Gol/rigori della squadra nelle stesse partite in cui il giocatore ha giocato.
+    p["goal_share_last10"] = p["prior_goals_last10"] / prior_sum("team_goals", 10).where(lambda s: s > 0)
+    p["pen_taker_share_last20"] = (p["pens_last20"] / prior_sum("team_pens", 20).where(lambda s: s > 0)).fillna(0.0)
+    prev_date = g["match_date"].shift(1)
+    p["rest_days"] = ((p["match_date"] - prev_date).dt.total_seconds() / 86400.0).clip(upper=30)
+    # Tasso (gol/90') solo nelle partite nello stesso campo (casa/trasferta), con lo stesso restringimento.
+    gv = p.groupby(["player_id", "is_home"], sort=False)
+    gv_goals = gv["goals"].transform(lambda s: s.shift(1).rolling(10, min_periods=1).sum())
+    gv_min = gv["minutes"].transform(lambda s: s.shift(1).rolling(10, min_periods=1).sum())
+    p["rate_samevenue_shrunk"] = (gv_goals.fillna(0) + SHRINK_K * p["role_rate"]) / (gv_min.fillna(0) / 90.0 + SHRINK_K)
     return p
 
 
@@ -183,6 +201,20 @@ def _team_form(matches: pd.DataFrame, events: pd.DataFrame) -> pd.DataFrame:
     return t[["fixture_id", "team_id", "team_gf10", "team_ga10"]]
 
 
+def _opp_conceded_by_role(played: pd.DataFrame, form_pairs: pd.DataFrame) -> pd.DataFrame:
+    """Gol subiti da ogni squadra per ruolo del marcatore (media sulle 10 partite precedenti)."""
+    goals = played.groupby(["fixture_id", "team_id", "position"])["goals"].sum().rename("g").reset_index()
+    grid = form_pairs.merge(pd.DataFrame({"position": ["F", "M", "D"]}), how="cross")
+    grid = grid.merge(goals.rename(columns={"team_id": "opp_id", "g": "conc"}),
+                      on=["fixture_id", "opp_id", "position"], how="left")
+    grid["conc"] = grid["conc"].fillna(0)
+    grid = grid.sort_values(["team_id", "position", "match_date", "fixture_id"])
+    grid["opp_conc_role10"] = grid.groupby(["team_id", "position"], sort=False)["conc"].transform(
+        lambda s: s.shift(1).rolling(10, min_periods=3).mean())
+    # `team_id` e' la squadra che SUBISCE; per il giocatore sara' la squadra avversaria.
+    return grid[["fixture_id", "team_id", "position", "opp_conc_role10"]].rename(columns={"team_id": "opp_id"})
+
+
 def build_dataset(matches: pd.DataFrame, lineups: pd.DataFrame, events: pd.DataFrame) -> pd.DataFrame:
     """Dataset finale: META + FEATURE + TARGET, ordinato per data."""
     if matches.empty or lineups.empty:
@@ -191,6 +223,14 @@ def build_dataset(matches: pd.DataFrame, lineups: pd.DataFrame, events: pd.DataF
     played = a[a["played"]].copy()
     feats = _player_features(played)
     form = _team_form(matches, events)
+    pairs = (feats[["fixture_id", "team_id", "opp_id", "match_date"]].drop_duplicates())
+    conc = _opp_conceded_by_role(played, pairs)
+    feats = feats.merge(conc, on=["fixture_id", "opp_id", "position"], how="left")
+    # Forza offensiva dei compagni titolari (somma del loro tasso restringimento, senza se stessi).
+    st = feats["is_starter"].astype(bool)
+    tot = feats.assign(_r=np.where(st, feats["rate_last20_shrunk"], 0.0)).groupby(
+        ["fixture_id", "team_id"])["_r"].transform("sum")
+    feats["teammates_rate_sum"] = tot - np.where(st, feats["rate_last20_shrunk"], 0.0)
     feats = feats.merge(form, on=["fixture_id", "team_id"], how="left")
     opp = form.rename(columns={"team_id": "opp_id", "team_gf10": "opp_gf10", "team_ga10": "opp_ga10"})
     feats = feats.merge(opp, on=["fixture_id", "opp_id"], how="left")
