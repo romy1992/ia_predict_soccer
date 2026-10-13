@@ -1,0 +1,13 @@
+{
+  "daily_remaining": 0,
+  "minute_remaining": 0,
+  "minute_limit": 0,
+  "updated_at": "2026-10-07T04:50:06.927102+00:00",
+  "daily_limit": 7500,
+  "status_requests_current": 1240,
+  "status_requests_limit_day": 7500,
+  "status_plan": "Pro",
+  "status_active": true,
+  "status_error_message": null,
+  "status_updated_at": "2026-10-06T20:38:36.730894+00:00"
+}
