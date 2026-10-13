@@ -12,6 +12,7 @@ di scikit-learn: se la versione cambia il bundle non viene caricato alla cieca."
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -26,6 +27,7 @@ from sklearn.preprocessing import StandardScaler
 
 from src.data.player.scoring_dataset import FEATURE_COLUMNS, TARGET
 from src.ml.evaluation.probability_metrics import compute_probability_metrics
+from src.ml.registry.promotion_policy import DEFAULT_PROMOTION_POLICY
 from src.service_ia.training.model_registry import ModelRegistry
 from src.storage import bucket_store
 
@@ -167,6 +169,11 @@ def train_candidate(dataset: pd.DataFrame, *, reg: Optional[ModelRegistry] = Non
 MIN_GAIN_OVER_BASELINE = 0.005   # log loss almeno 0,005 sotto la media storica
 MAX_ECE = 0.03
 MAX_ROLE_GAP = 0.03              # |previsto - osservato| medio per ruolo
+# Rinnovo con dati piu' freschi: a ogni retrain l'holdout si sposta e le metriche cambiano di pochi
+# decimillesimi per puro rumore. Con la policy standard (margine >= 0) un candidato "equivalente" non
+# sostituirebbe mai la production e il modello invecchierebbe. Si tollera quindi un peggioramento
+# trascurabile (punteggio composito) in cambio di piu' dati; un peggioramento vero resta bloccato.
+REFRESH_TOLERANCE = 0.0005
 
 
 def auto_promote(run: dict[str, Any], *, reg: Optional[ModelRegistry] = None) -> dict[str, Any]:
@@ -185,7 +192,9 @@ def auto_promote(run: dict[str, Any], *, reg: Optional[ModelRegistry] = None) ->
             reasons.append(f"ruolo {role}: probabilita' media lontana dalla realta'")
     if reasons:
         return {"promoted": False, "reasons": reasons}
-    result = reg.promote_with_policy(run["run_id"], to_stage="production", actor="auto:scorer_training",
+    policy = dataclasses.replace(DEFAULT_PROMOTION_POLICY, min_improvement_over_production=-REFRESH_TOLERANCE)
+    result = reg.promote_with_policy(run["run_id"], to_stage="production", policy=policy,
+                                     actor="auto:scorer_training",
                                      reason="auto-promozione: controlli marcatori + policy superati")
     out = {"promoted": bool(result["promoted"]), "reasons": []}
     if not result["promoted"]:
