@@ -54,7 +54,9 @@ export default function ScorersPanel({ fixtureId, home, away, homeXg, awayXg, fi
   const [error, setError] = useState("");
 
   const rows = data?.rows || [];
-  const isEmpty = data !== null && rows.length === 0;
+  // `supported === false`: competizione fuori dal mercato (es. Champions League) -> il pannello non si mostra.
+  const unsupported = data?.supported === false && rows.length === 0;
+  const isEmpty = data !== null && rows.length === 0 && !unsupported;
 
   useEffect(() => {
     if (!fixtureId) return undefined;
@@ -78,6 +80,8 @@ export default function ScorersPanel({ fixtureId, home, away, homeXg, awayXg, fi
     }, REFRESH_MS);
     return () => clearInterval(id);
   }, [fixtureId, finished, isEmpty]);
+
+  if (unsupported) return null;
 
   const teams = groupByTeam(rows, home, away);
   const first = rows[0];

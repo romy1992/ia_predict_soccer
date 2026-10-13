@@ -482,7 +482,7 @@ def run_scorer_predictions(job_id: Optional[str] = None) -> dict:
         with SessionLocal() as session:
             now = datetime.now(timezone.utc)
             upcoming = prediction_service.upcoming_matches(
-                session, prediction_service.TOP5_LEAGUES, now, prediction_service.PREDICT_HORIZON_HOURS
+                session, prediction_service.SCORER_LEAGUES, now, prediction_service.PREDICT_HORIZON_HOURS
             )
             if not upcoming:
                 report = {"fixtures": 0, "predicted": 0, "note": "nessuna partita in arrivo"}
