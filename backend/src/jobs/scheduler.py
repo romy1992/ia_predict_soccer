@@ -509,8 +509,8 @@ def run_scorer_predictions(job_id: Optional[str] = None) -> dict:
 
 
 def run_scorer_training(job_id: Optional[str] = None) -> dict:
-    """Addestra il modello marcatori, lo valuta su holdout temporale e lo registra come CANDIDATE.
-    Non promuove mai: la promozione resta esplicita (gate metriche + confronto con production)."""
+    """Addestra le famiglie di modelli marcatori, tiene la migliore sull'holdout temporale, la registra come
+    CANDIDATE e la promuove a production solo se supera controlli propri + policy standard."""
     from src.repository.base.repository_db import SessionLocal
     from src.service_ia.scorer import model_store, prediction_service
 
@@ -529,8 +529,10 @@ def run_scorer_training(job_id: Optional[str] = None) -> dict:
             dataset = prediction_service.dataset_for_training(session)
         run = model_store.train_candidate(dataset)
         metrics = run.get("metrics") or {}
+        promotion = model_store.auto_promote(run)
         report = {
-            "run_id": run["run_id"], "stage": run["stage"], "rows": len(dataset),
+            "run_id": run["run_id"], "family": metrics.get("best_family"), "rows": len(dataset),
+            "promoted": promotion["promoted"], "not_promoted_reasons": promotion["reasons"],
             "log_loss": metrics.get("log_loss"), "baseline_log_loss": metrics.get("baseline_log_loss"),
             "brier": metrics.get("brier"), "ece": metrics.get("ece"), "auc": metrics.get("auc"),
             "duration_seconds": time.perf_counter() - start,
