@@ -216,6 +216,28 @@ def _opp_conceded_by_role(played: pd.DataFrame, form_pairs: pd.DataFrame) -> pd.
     return grid[["fixture_id", "team_id", "position", "opp_conc_role10"]].rename(columns={"team_id": "opp_id"})
 
 
+VALID_ROLES = {"G", "D", "M", "F"}
+
+
+def fill_missing_roles(matches: pd.DataFrame, lineups: pd.DataFrame) -> pd.DataFrame:
+    """Completa il ruolo mancante di un giocatore con quello che ha avuto nelle altre formazioni.
+
+    Nelle coppe molte formazioni arrivano senza ruolo, ma lo stesso giocatore ha quasi sempre un ruolo in
+    un'altra partita. Si usa l'ultimo ruolo noto PRIMA della partita; solo se non ce n'e', il primo ruolo
+    noto dopo (il ruolo e' un attributo stabile, non un dato di risultato)."""
+    out = lineups.copy()
+    out["position"] = out["position"].where(out["position"].isin(VALID_ROLES))
+    if out["position"].notna().all():
+        return out
+    dates = pd.to_datetime(matches.set_index("fixture_id")["date_match"], utc=True, errors="coerce")
+    order = out.assign(_d=out["fixture_id"].map(dates)).sort_values(["player_id", "_d", "fixture_id"])
+    grouped = order.groupby("player_id")["position"]
+    filled = grouped.ffill()
+    order["position"] = filled.groupby(order["player_id"]).bfill()
+    out["position"] = order["position"].reindex(out.index)
+    return out
+
+
 def build_dataset(matches: pd.DataFrame, lineups: pd.DataFrame, events: pd.DataFrame,
                   upcoming_fixture_ids: Iterable[int] = ()) -> pd.DataFrame:
     """Dataset finale: META + FEATURE + TARGET, ordinato per data.
@@ -226,6 +248,7 @@ def build_dataset(matches: pd.DataFrame, lineups: pd.DataFrame, events: pd.DataF
     upcoming = set(int(x) for x in upcoming_fixture_ids)
     if matches.empty or lineups.empty:
         return pd.DataFrame(columns=META_COLUMNS + FEATURE_COLUMNS + [TARGET])
+    lineups = fill_missing_roles(matches, lineups)
     a = _appearances(matches, lineups, events)
     played = a[a["played"]].copy()
     feats = _player_features(played)
