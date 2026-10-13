@@ -140,8 +140,27 @@ export default function MatchTable({
         return (
           <article className="match-mobile-card" key={`mobile-${row.fixture_id}`}>
             <div className="match-mobile-head">
-              <strong>{row.home} vs {row.away}</strong>
+              <span className="muted">{row.time} · {row.league || "-"}</span>
               <span className={`phase-badge ${phaseClass(row.phase)}`}>{phaseLabel(row.phase)}</span>
+            </div>
+            <div className="match-mobile-teams">
+              <strong>{row.home}</strong>
+              <span>vs</span>
+              <strong>{row.away}</strong>
+              {(row.score?.home != null || row.score?.away != null) && (
+                <span className="match-mobile-score">{row.score?.home ?? "-"} - {row.score?.away ?? "-"}</span>
+              )}
+            </div>
+            <div className="match-mobile-best">
+              <div>
+                <span className="muted">{showAllMarkets ? "Pronostico migliore" : "Pronostico"}</span>
+                <strong>{pick}</strong>
+                <span className="muted">
+                  Prob. IA <b>{probability == null ? "N/D" : formatPercent(probability)}</b> · Quota{" "}
+                  <b>{decision?.market_odd == null ? "N/D" : formatOdd(decision.market_odd)}</b>
+                </span>
+              </div>
+              <span className={`value-badge ${valueClass(decision?.value_label || "SENZA QUOTA")}`}>{decision?.value_label || "SENZA QUOTA"}</span>
             </div>
             {showAllMarkets && (
               <div className="match-mobile-all-markets">
@@ -149,25 +168,29 @@ export default function MatchTable({
                 <PredictionBadges row={row} modelMarkets={modelMarkets} />
               </div>
             )}
-            <dl>
-              {showCardsTotals && (
-                <>
-                  <div><dt>Gialli effettivi</dt><dd>{row.actual_totals?.yellow_cards ?? "N/D"}</dd></div>
-                  <div><dt>Rossi effettivi</dt><dd>{row.actual_totals?.red_cards ?? "N/D"}</dd></div>
-                  <div><dt>Totale cards</dt><dd>{row.actual_totals?.cards ?? "N/D"}</dd></div>
-                </>
+            <details className="match-mobile-more">
+              <summary>Più dettagli</summary>
+              <dl>
+                {showCardsTotals && (
+                  <>
+                    <div><dt>Gialli effettivi</dt><dd>{row.actual_totals?.yellow_cards ?? "N/D"}</dd></div>
+                    <div><dt>Rossi effettivi</dt><dd>{row.actual_totals?.red_cards ?? "N/D"}</dd></div>
+                    <div><dt>Totale cards</dt><dd>{row.actual_totals?.cards ?? "N/D"}</dd></div>
+                  </>
+                )}
+                {showCornersTotals && <div><dt>Totale corners</dt><dd>{row.actual_totals?.corners ?? "N/D"}</dd></div>}
+                <div><dt>Quota void IA</dt><dd>{decision?.model_void_odd == null ? "N/D" : formatOdd(decision.model_void_odd)}</dd></div>
+                <div><dt>Edge</dt><dd>{decision?.odds_edge_absolute == null ? "N/D" : formatSignedNumber(decision.odds_edge_absolute)}</dd></div>
+                <div><dt>ROI atteso</dt><dd>{decision?.expected_roi_percent == null ? "N/D" : formatPercentagePoints(decision.expected_roi_percent)}</dd></div>
+                <div><dt>Giocata ufficiale</dt><dd>{decision?.is_official ? decision.official_outcome : "Non registrata"}</dd></div>
+              </dl>
+            </details>
+            <div className="match-mobile-actions">
+              <button className="btn-secondary" onClick={() => onOpenMatch(row.fixture_id)}>Apri</button>
+              {onOpenOracleDetail && (
+                <button className="btn-primary" onClick={() => onOpenOracleDetail(row.fixture_id)}>Oracle</button>
               )}
-              {showCornersTotals && <div><dt>Totale corners</dt><dd>{row.actual_totals?.corners ?? "N/D"}</dd></div>}
-              <div><dt>{showAllMarkets ? "Pronostico vincitore" : "Pronostico"}</dt><dd>{pick}</dd></div>
-              <div><dt>Probabilità IA</dt><dd>{probability == null ? "N/D" : formatPercent(probability)}</dd></div>
-              <div><dt>Quota mercato</dt><dd>{decision?.market_odd == null ? "N/D" : formatOdd(decision.market_odd)}</dd></div>
-              <div><dt>Quota void IA</dt><dd>{decision?.model_void_odd == null ? "N/D" : formatOdd(decision.model_void_odd)}</dd></div>
-              <div><dt>Edge</dt><dd>{decision?.odds_edge_absolute == null ? "N/D" : formatSignedNumber(decision.odds_edge_absolute)}</dd></div>
-              <div><dt>ROI atteso</dt><dd>{decision?.expected_roi_percent == null ? "N/D" : formatPercentagePoints(decision.expected_roi_percent)}</dd></div>
-              <div><dt>Situazione</dt><dd><span className={`value-badge ${valueClass(decision?.value_label || "SENZA QUOTA")}`}>{decision?.value_label || "SENZA QUOTA"}</span></dd></div>
-              <div><dt>Giocata ufficiale</dt><dd>{decision?.is_official ? decision.official_outcome : "Non registrata"}</dd></div>
-            </dl>
-            <button className="btn-secondary" onClick={() => onOpenMatch(row.fixture_id)}>Apri dettaglio</button>
+            </div>
           </article>
         );
       })}

@@ -216,15 +216,32 @@ export default function SettingsPage({
   const barClass = quotaBarClass(percentage);
   const isLive = quota?.source === "live";
 
+  const activeJobs = jobs.filter((job) => job.enabled).length;
+
   return (
-    <section className="stack">
-      <section className="panel">
-        <div className="panel-header">
-          <h3>Account</h3>
+    <section className="stack settings-page">
+      <section className="settings-summary">
+        <article className="stat-card">
+          <span>Account</span>
+          <strong className="settings-summary-small">Sessione attiva</strong>
           <button className="btn-secondary" onClick={onLogout}>
             Logout
           </button>
-        </div>
+        </article>
+        <article className="stat-card">
+          <span>Quota API-Sports{quota?.available ? (isLive ? " · reale" : " · stima") : ""}</span>
+          <strong>{percentage !== null ? `${percentage}%` : "n/d"}</strong>
+          {quota?.available && (
+            <div className="quota-bar">
+              <div className={`quota-bar-fill ${barClass}`} style={{ width: `${barWidth}%` }} />
+            </div>
+          )}
+        </article>
+        <article className="stat-card">
+          <span>Job attivi</span>
+          <strong>{activeJobs} / {jobs.length}</strong>
+          <small className="muted">{quotaPaused ? "Job API-Sports in pausa" : "Nessuna pausa in corso"}</small>
+        </article>
       </section>
 
       <section className="panel">
@@ -276,13 +293,13 @@ export default function SettingsPage({
       </section>
 
 
-      <section className="panel">
+      <section className="panel settings-jobs-panel">
         <div className="panel-header">
           <h3>Job automatici (scheduler)</h3>
           <div className="panel-header-actions">
             {onRunAllJobs && (
               <button
-                className="btn-secondary"
+                className="btn-primary"
                 onClick={onRunAllJobs}
                 disabled={batchRun.active}
                 title="Lancia in sequenza, in ordine di priorita', tutti i job che si prestano a un giro manuale (esclusi Retrain ML e Sync live) - indipendentemente dall'interruttore acceso/spento, che riguarda solo l'esecuzione automatica dello scheduler"
@@ -368,6 +385,9 @@ export default function SettingsPage({
                   onChange={(e) => onToggleJob(job.job_id, e.target.checked)}
                 />
                 <span className="switch-slider" />
+                <span className={job.enabled ? "switch-label on" : "switch-label"}>
+                  {job.enabled ? "Attivo" : "Disattivato"}
+                </span>
               </label>
             </div>
           ))}

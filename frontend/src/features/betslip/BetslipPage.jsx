@@ -538,6 +538,10 @@ function SlipStatistics({ report, proposals, official }) {
   );
 }
 
+function legTime(leg) {
+  return leg.kickoff_at ? new Date(leg.kickoff_at).toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit" }) : "—";
+}
+
 function SlipCard({ slip, fixtureIndex, stake, copied, onCopy, cardRef, onDownloadImage, downloading }) {
   const shadowLegs = slip.shadow_settlement?.legs;
   const legs = !slip.is_official && shadowLegs?.length ? shadowLegs : slip.legs || [];
@@ -545,6 +549,7 @@ function SlipCard({ slip, fixtureIndex, stake, copied, onCopy, cardRef, onDownlo
   const hasShadowStatus = !slip.is_official && Boolean(slip.shadow_status);
   const status = slip.is_official ? slip.status || "PENDING" : slip.shadow_status || "PROPOSTA";
   const profile = slip.profile_name || slip.profile;
+  const legKey = (leg) => (slip.is_official || hasShadowStatus ? leg.status || "pending" : "proposal").toLowerCase();
   const extraProfiles = (slip.matching_profiles || []).filter((name) => name !== profile);
   const simulatedReturn = Number(stake) * Number(slip.combined_odd || 0);
   const simulatedProfit = simulatedReturn - Number(stake);
@@ -572,40 +577,38 @@ function SlipCard({ slip, fixtureIndex, stake, copied, onCopy, cardRef, onDownlo
         </div>
       </div>
 
-      <div className="table-wrap">
-        <table className="slip-picks-table">
+      <div className="slip-key-metrics">
+        <span><small>Quota combinata</small><strong>{formatOdd(slip.combined_odd)}</strong></span>
+        <span title="Rendimento teorico pre-partita; non è il ROI realizzato."><small>Expected ROI</small><strong>{formatPercent(slip.combined_expected_roi)}</strong></span>
+        <span title="Probabilità aggregata restituita dal motore centrale delle correlazioni."><small>Probabilità corretta</small><strong>{formatPercent(slip.adjusted_probability)}</strong></span>
+        <span><small>Vincita potenziale</small><strong>{formatNumber(simulatedReturn, 2)} €</strong></span>
+      </div>
+
+      <div className="table-wrap slip-legs-desktop">
+        <table className="slip-picks-table slip-picks-compact">
           <thead>
             <tr>
-              <th>Esito</th><th>Ora</th><th>Torneo</th><th>Partita</th><th>Mercato</th><th>Pick</th><th>Probabilità</th>
-              <th>Quota</th><th title="Quota teorica di pareggio: 1 / probabilità modello.">Quota void modello</th>
-              <th title="Differenza tra quota bookmaker e quota void modello.">Edge</th>
-              <th title="Rendimento teorico della selezione, non quello realizzato.">Expected ROI</th><th>Situazione</th>
+              <th>Esito</th><th>Ora</th><th>Partita</th><th>Mercato</th><th>Pick</th><th>Prob.</th><th>Quota</th><th>Situazione</th>
             </tr>
           </thead>
           <tbody>
             {legs.map((leg, index) => (
-              <tr key={`${slip.slip_id || slip.id}-${index}`}>
+              <tr key={`${slip.slip_id || slip.id}-c-${index}`}>
                 <td title={leg.status === "VOID" ? `Esito rimborsato: ${leg.void_reason || "evento void"}` : ""}>
                   <span className="pick-status">
-                    <i className={`status-dot status-${(slip.is_official || hasShadowStatus ? leg.status || "pending" : "proposal").toLowerCase()}`} />
+                    <i className={`status-dot status-${legKey(leg)}`} />
                     {legStatusLabel(leg.status, slip.is_official, hasShadowStatus)}
                   </span>
                 </td>
-                <td>{leg.kickoff_at ? new Date(leg.kickoff_at).toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit" }) : "—"}</td>
-                <td>{leg.competition || "—"}</td>
+                <td>{legTime(leg)}</td>
                 <td>
                   <strong>{legMatchLabel(leg, fixtureIndex)}</strong>
-                  {leg.final_score && <small>Finale: {leg.final_score}</small>}
+                  <small>{leg.competition || "—"}{leg.final_score ? ` · Finale: ${leg.final_score}` : ""}</small>
                 </td>
                 <td>{marketLabel(leg.market)}{leg.line ? ` · ${leg.line}` : ""}</td>
                 <td>{leg.outcome}</td>
                 <td>{formatPercent(leg.p_model)}</td>
-                <td>{formatOdd(leg.odd ?? leg.market_odd)}</td>
-                <td>{formatOdd(leg.model_void_odd)}</td>
-                <td title={`Edge percentuale: ${formatPercent(leg.odds_edge_percent == null ? null : leg.odds_edge_percent / 100)}`}>
-                  {formatNumber(leg.odds_edge_absolute, 3)}
-                </td>
-                <td>{formatPercent(leg.ev ?? leg.expected_roi)}</td>
+                <td><strong>{formatOdd(leg.odd ?? leg.market_odd)}</strong></td>
                 <td><span className={`value-badge ${statusClass(leg.decision || leg.situation)}`}>{leg.decision || leg.situation}</span></td>
               </tr>
             ))}
@@ -613,17 +616,62 @@ function SlipCard({ slip, fixtureIndex, stake, copied, onCopy, cardRef, onDownlo
         </table>
       </div>
 
-      <div className="slip-footer">
+      <div className="slip-legs-mobile">
+        {legs.map((leg, index) => (
+          <div className="slip-leg" key={`${slip.slip_id || slip.id}-m-${index}`}>
+            <i className={`status-dot status-${legKey(leg)}`} title={legStatusLabel(leg.status, slip.is_official, hasShadowStatus)} />
+            <div className="slip-leg-main">
+              <span className="muted">{legTime(leg)} · {leg.competition || "—"}</span>
+              <strong>{legMatchLabel(leg, fixtureIndex)}</strong>
+              <span>{marketLabel(leg.market)}{leg.line ? ` · ${leg.line}` : ""} · <b>{leg.outcome}</b></span>
+              <span className="muted">
+                Prob. {formatPercent(leg.p_model)} · Edge {formatNumber(leg.odds_edge_absolute, 3)}
+                {leg.final_score ? ` · Finale ${leg.final_score}` : ""}
+              </span>
+            </div>
+            <div className="slip-leg-side">
+              <strong>{formatOdd(leg.odd ?? leg.market_odd)}</strong>
+              <span className={`value-badge ${statusClass(leg.decision || leg.situation)}`}>{leg.decision || leg.situation}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <details className="slip-technical slip-more">
+        <summary>Altre metriche e dettaglio per evento</summary>
         <div className="slip-footer-metrics">
-          <span><small>Quota combinata</small><strong>{formatOdd(slip.combined_odd)}</strong></span>
           <span title="Quota teorica di pareggio ricavata dalla probabilità combinata corretta."><small>Quota void combinata</small><strong>{formatOdd(slip.combined_model_void_odd)}</strong></span>
           <span><small>Edge combinato</small><strong>{formatNumber(slip.combined_edge_absolute, 3)}</strong></span>
-          <span title="Rendimento teorico pre-partita; non è il ROI realizzato."><small>Expected ROI</small><strong>{formatPercent(slip.combined_expected_roi)}</strong></span>
-          <span title="Probabilità aggregata restituita dal motore centrale delle correlazioni."><small>Probabilità corretta</small><strong>{formatPercent(slip.adjusted_probability)}</strong></span>
           <span><small>Puntata simulata</small><strong>{formatNumber(stake, 2)} €</strong></span>
-          <span><small>Vincita potenziale</small><strong>{formatNumber(simulatedReturn, 2)} €</strong></span>
           <span><small>Profitto potenziale</small><strong>{formatNumber(simulatedProfit, 2)} €</strong></span>
         </div>
+        <div className="table-wrap">
+          <table className="slip-picks-table">
+            <thead>
+              <tr>
+                <th>Partita</th><th>Mercato</th><th>Pick</th>
+                <th title="Quota teorica di pareggio: 1 / probabilità modello.">Quota void modello</th>
+                <th title="Differenza tra quota bookmaker e quota void modello.">Edge</th>
+                <th title="Rendimento teorico della selezione, non quello realizzato.">Expected ROI</th>
+              </tr>
+            </thead>
+            <tbody>
+              {legs.map((leg, index) => (
+                <tr key={`${slip.slip_id || slip.id}-d-${index}`}>
+                  <td>{legMatchLabel(leg, fixtureIndex)}</td>
+                  <td>{marketLabel(leg.market)}{leg.line ? ` · ${leg.line}` : ""}</td>
+                  <td>{leg.outcome}</td>
+                  <td>{formatOdd(leg.model_void_odd)}</td>
+                  <td title={`Edge percentuale: ${formatPercent(leg.odds_edge_percent == null ? null : leg.odds_edge_percent / 100)}`}>{formatNumber(leg.odds_edge_absolute, 3)}</td>
+                  <td>{formatPercent(leg.ev ?? leg.expected_roi)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </details>
+
+      <div className="slip-footer">
         <div className="slip-actions">
           <button className="btn-secondary" onClick={onCopy}>{copied ? "Copiata!" : "Copia schedina"}</button>
           <button className="btn-secondary" onClick={onDownloadImage} disabled={downloading}>
