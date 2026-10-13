@@ -81,6 +81,23 @@ class ScorerLifecycleTest(unittest.TestCase):
         flat = dict(run, metrics=dict(run["metrics"], log_loss=run["metrics"]["baseline_log_loss"]))
         self.assertIn("baseline", " ".join(model_store.auto_promote(flat)["reasons"]))
 
+    def test_refresh_with_equivalent_metrics_replaces_production_but_real_regression_does_not(self):
+        with _small():
+            first = model_store.train_candidate(_synthetic())
+        self.assertTrue(model_store.auto_promote(first)["promoted"])
+        reg = model_store.registry()
+        # candidato appena piu' rumoroso (log loss +0,0003): dati freschi, nessun peggioramento reale
+        m = dict(first["metrics"], log_loss=first["metrics"]["log_loss"] + 0.0003)
+        same = dict(first, run_id="same", metrics=m)
+        reg.register(model_path=first["model_path"], market=model_store.MARKET, model_name="voting", metrics=m)
+        run2 = reg.get_latest(market=model_store.MARKET)
+        self.assertTrue(model_store.auto_promote(run2)["promoted"], same)
+        # peggioramento vero (+0,02): bloccato
+        bad = dict(first["metrics"], log_loss=first["metrics"]["log_loss"] + 0.02)
+        reg.register(model_path=first["model_path"], market=model_store.MARKET, model_name="voting", metrics=bad)
+        run3 = reg.get_latest(market=model_store.MARKET)
+        self.assertFalse(model_store.auto_promote(run3)["promoted"])
+
     def test_holdout_compares_all_families_and_keeps_the_best(self):
         with _small():
             m = model_store.holdout_metrics(_synthetic())
