@@ -1028,3 +1028,141 @@ th {
     display: none;
   }
 }
+
+/* =====================================================================
+   Tabelle -> card su mobile, badge job, barre coverage, dettagli
+   ===================================================================== */
+
+.coverage-bar {
+  height: 6px;
+  margin-top: 5px;
+  min-width: 90px;
+  border-radius: 999px;
+  background: #eef1f8;
+  overflow: hidden;
+}
+
+.coverage-bar i {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+}
+
+.coverage-bar i.warning {
+  background: #d99a1b;
+}
+
+.coverage-bar i.danger {
+  background: #c0392b;
+}
+
+.service-details summary {
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  font-weight: 600;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+@media (max-width: 760px) {
+  .table-wrap:has(> .table-cards) {
+    overflow: visible;
+  }
+
+  .table-cards,
+  .table-cards tbody,
+  .table-cards tr,
+  .table-cards td {
+    display: block;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .table-cards {
+    min-width: 0 !important;
+  }
+
+  .table-cards thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+  }
+
+  .table-cards tr {
+    padding: 8px 0;
+    border-top: 1px solid var(--line);
+  }
+
+  .table-cards tr:first-child {
+    border-top: 0;
+  }
+
+  .table-cards tbody tr:hover {
+    background: transparent;
+  }
+
+  .table-cards td {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 14px;
+    padding: 5px 0;
+    border: 0;
+    text-align: right;
+    font-size: 14px;
+    overflow-wrap: anywhere;
+  }
+
+  .table-cards td::before {
+    content: attr(data-label);
+    flex-shrink: 0;
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 500;
+    text-align: left;
+  }
+
+  .table-cards td .coverage-bar {
+    width: 100%;
+  }
+
+  .table-cards td:has(.coverage-bar) {
+    flex-wrap: wrap;
+    text-align: right;
+  }
+
+  /* form delle pagine operative: campi impilati, pulsanti a tutta larghezza */
+  .inline-form label,
+  .inline-form input,
+  .inline-form select {
+    width: 100%;
+  }
+
+  .inline-form button {
+    width: 100%;
+  }
+
+  .inline-form .check {
+    width: auto;
+  }
+
+  .detail-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .code-block {
+    font-size: 11px;
+  }
+}
+
+@media (max-width: 760px) {
+  .inline-form input[type="checkbox"],
+  .inline-form input[type="radio"] {
+    width: auto;
+    min-height: 0;
+  }
+}
