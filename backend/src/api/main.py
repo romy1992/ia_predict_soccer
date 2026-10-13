@@ -1419,11 +1419,14 @@ def list_prediction_ledger(
 def scorers_for_fixture(fixture_id: int) -> dict:
     """Probabilita' "il giocatore segna" (ultima revisione) per i titolari della partita."""
     from src.repository.base.repository_db import SessionLocal
-    from src.service_ia.scorer.prediction_service import latest_predictions
+    from src.service_ia.scorer.prediction_service import fixture_league, latest_predictions, SCORER_LEAGUES
 
     with SessionLocal() as session:
         rows = latest_predictions(session, fixture_id=fixture_id)
-    return {"fixture_id": fixture_id, "rows": rows, "total": len(rows)}
+        league = fixture_league(session, fixture_id)
+    # `supported=False`: la competizione non e' coperta dal mercato (mai predizioni), diverso da "formazione non ancora ufficiale".
+    return {"fixture_id": fixture_id, "rows": rows, "total": len(rows), "league": league,
+            "supported": bool(rows) or league in SCORER_LEAGUES}
 
 
 @app.get("/scorers/day")

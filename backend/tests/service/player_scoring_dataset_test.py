@@ -100,6 +100,25 @@ class ScoringDatasetTest(unittest.TestCase):
         assert_frame_equal(base.loc[(slice(None), slice(None)), cols].sort_index(),
                            new.loc[base.index, cols].sort_index())
 
+    def test_missing_role_is_filled_from_the_players_history(self):
+        lineups = self.lineups.copy()
+        # in F3 il ruolo di 110 (attaccante) e di 106 (centrocampista) manca; in F5 manca ancora
+        mask = lineups.player_id.isin([110, 106]) & lineups.fixture_id.isin([3, 4])
+        lineups.loc[mask, "position"] = None
+        ds = build_dataset(self.matches, lineups, self.events)
+        r = ds[(ds.fixture_id == 3) & (ds.player_id == 110)].iloc[0]
+        self.assertEqual((r["pos_F"], r["pos_M"], r["pos_D"]), (1, 0, 0))
+        r = ds[(ds.fixture_id == 4) & (ds.player_id == 106)].iloc[0]
+        self.assertEqual((r["pos_F"], r["pos_M"], r["pos_D"]), (0, 1, 0))
+        # stesso risultato di quando il ruolo c'e': nessuna riga persa
+        self.assertEqual(len(ds), len(self.ds))
+
+    def test_role_unknown_everywhere_stays_excluded(self):
+        lineups = self.lineups.copy()
+        lineups.loc[lineups.player_id == 110, "position"] = None  # mai un ruolo noto
+        ds = build_dataset(self.matches, lineups, self.events)
+        self.assertTrue(ds[ds.player_id == 110].empty)
+
     def test_target_rules(self):
         self.assertEqual(self.row(1, 110)[TARGET], 1)      # gol normale
         self.assertEqual(self.row(1, 109)[TARGET], 1)      # gol al 90'
