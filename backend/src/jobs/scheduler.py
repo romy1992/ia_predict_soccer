@@ -461,6 +461,49 @@ def run_official_prediction_capture(job_id: Optional[str] = None) -> dict:
         raise
 
 
+def run_scorer_predictions(job_id: Optional[str] = None) -> dict:
+    """Formazioni ufficiali in arrivo + predizioni marcatori (vedi `service_ia/scorer/prediction_service`)."""
+    from src.repository.base.repository_db import SessionLocal
+    from src.repository.player_data_repository import PlayerDataRepository
+    from src.service_ia.scorer import prediction_service
+    from src.service_ia.utility.request_api import get_api_sports_provider
+
+    history = JobHistory()
+    params: dict = {}
+    if job_id:
+        history.mark_running(job_id=job_id, params=params)
+    else:
+        started = history.create_job(
+            job_type="scorer_predictions", status="running", params=params, started_at=JobHistory._now_iso()
+        )
+        job_id = started["job_id"]
+    start = time.perf_counter()
+    try:
+        with SessionLocal() as session:
+            now = datetime.now(timezone.utc)
+            upcoming = prediction_service.upcoming_matches(
+                session, prediction_service.TOP5_LEAGUES, now, prediction_service.PREDICT_HORIZON_HOURS
+            )
+            if not upcoming:
+                report = {"fixtures": 0, "predicted": 0, "note": "nessuna partita in arrivo"}
+            else:
+                report = prediction_service.fetch_official_lineups(
+                    session, get_api_sports_provider(), PlayerDataRepository(), now=now
+                )
+                bundle = prediction_service.ensure_bundle(session)
+                report.update(prediction_service.predict_upcoming(session, bundle, now=now))
+            report.update(prediction_service.settle_predictions(session))
+        report["duration_seconds"] = time.perf_counter() - start
+        history.mark_success(job_id=job_id, summary=report)
+        return {"job_id": job_id, **report}
+    except Exception as exc:
+        history.mark_failed(
+            job_id=job_id,
+            error={"message": str(exc), "duration_seconds": time.perf_counter() - start, "params": params},
+        )
+        raise
+
+
 def run_manual_refresh_for_next_round() -> None:
     """Compatibilità legacy: alias del nuovo future sync."""
     cfg = load_app_config()
@@ -1287,6 +1330,15 @@ def build_scheduler(cfg: Optional[AppConfig] = None) -> BlockingScheduler:
         functools.partial(_run_if_due, "ml_training", run_manual_retrain, cfg=cfg),
         trigger=heartbeat,
         job_id="ml_training",
+        misfire_grace_time=_MISFIRE_GRACE_SECONDS,
+    )
+
+    # --- Marcatori: formazioni ufficiali + predizioni "il giocatore segna" ---
+    _add_job(
+        scheduler,
+        functools.partial(_run_if_due, "scorer_predictions", run_scorer_predictions, cfg=cfg),
+        trigger=heartbeat,
+        job_id="scorer_predictions",
         misfire_grace_time=_MISFIRE_GRACE_SECONDS,
     )
 
