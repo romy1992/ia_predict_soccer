@@ -135,6 +135,8 @@ from src.jobs.scheduler import (
     run_manual_today_update,
     run_model_consensus_refresh,
     run_official_prediction_capture,
+    run_player_cards_predictions,
+    run_player_cards_training,
     run_scorer_predictions,
     run_scorer_training,
     run_prediction_snapshot_refresh,
@@ -1222,6 +1224,64 @@ def trigger_scorer_training(payload: JobScorerRequest, background_tasks: Backgro
     return JobResponse(queued=False, message="Scorer training job completed", details=run_scorer_training())
 
 
+@app.post("/jobs/player-cards-predictions", response_model=JobResponse)
+def trigger_player_cards_predictions(payload: JobScorerRequest, background_tasks: BackgroundTasks) -> JobResponse:
+    """"Esegui ora" del job 'Predizioni cartellini giocatori'."""
+    if payload.async_run:
+        row = JobHistory().queue_job(job_type="player_cards_predictions", params={})
+        background_tasks.add_task(run_player_cards_predictions, job_id=row["job_id"])
+        return JobResponse(queued=True, message="Player cards predictions job queued", details={"job_id": row["job_id"]})
+    return JobResponse(queued=False, message="Player cards predictions job completed",
+                       details=run_player_cards_predictions())
+
+
+@app.post("/jobs/player-cards-training", response_model=JobResponse)
+def trigger_player_cards_training(payload: JobScorerRequest, background_tasks: BackgroundTasks) -> JobResponse:
+    """"Esegui ora" del job 'Retrain modello cartellini giocatori': registra un CANDIDATE e lo promuove solo se supera i controlli."""
+    if payload.async_run:
+        row = JobHistory().queue_job(job_type="player_cards_training", params={})
+        background_tasks.add_task(run_player_cards_training, job_id=row["job_id"])
+        return JobResponse(queued=True, message="Player cards training job queued", details={"job_id": row["job_id"]})
+    return JobResponse(queued=False, message="Player cards training job completed", details=run_player_cards_training())
+
+
+def _player_cards_registry() -> ModelRegistry:
+    from src.service_ia.player_cards import model_store
+
+    return model_store.registry()
+
+
+@app.get("/player-cards/model/registry", response_model=ModelRegistryOverviewResponse)
+def player_cards_model_registry(limit: int = 50) -> ModelRegistryOverviewResponse:
+    """Lifecycle del modello gialli (latest / production / storico), stesso formato dei mercati."""
+    from src.service_ia.player_cards.model_store import MARKET
+
+    reg = _player_cards_registry()
+    return ModelRegistryOverviewResponse(
+        market=MARKET, latest=reg.get_latest(market=MARKET), production=reg.get_production(market=MARKET),
+        history=reg.tail(limit=limit, market=MARKET))
+
+
+@app.get("/player-cards/model/promotion/evaluate", response_model=PromotionEvaluationResponse)
+def player_cards_model_evaluate(run_id: str, to_stage: str = "production") -> PromotionEvaluationResponse:
+    result = _player_cards_registry().evaluate_promotion(run_id=run_id, to_stage=to_stage, policy=DEFAULT_PROMOTION_POLICY)
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"Run non trovato: {run_id}")
+    return PromotionEvaluationResponse(**result)
+
+
+@app.post("/player-cards/model/promote", response_model=PromotionResponse)
+def player_cards_model_promote(payload: PromotionRequest) -> PromotionResponse:
+    """Promozione CONTROLLATA (gate metriche + confronto con production)."""
+    try:
+        result = _player_cards_registry().promote_with_policy(
+            run_id=payload.run_id, to_stage=payload.to_stage, reason=payload.reason,
+            actor=payload.actor or "manual", force=payload.force)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return PromotionResponse(**result)
+
+
 def _scorer_registry() -> ModelRegistry:
     from src.service_ia.scorer import model_store
 
@@ -1427,6 +1487,30 @@ def scorers_for_fixture(fixture_id: int) -> dict:
     # `supported=False`: la competizione non e' coperta dal mercato (mai predizioni), diverso da "formazione non ancora ufficiale".
     return {"fixture_id": fixture_id, "rows": rows, "total": len(rows), "league": league,
             "supported": bool(rows) or league in SCORER_LEAGUES}
+
+
+@app.get("/player-cards/fixture/{fixture_id}")
+def player_cards_for_fixture(fixture_id: int) -> dict:
+    """Probabilita' "il giocatore prende un giallo" (ultima revisione) per i titolari della partita."""
+    from src.repository.base.repository_db import SessionLocal
+    from src.service_ia.player_cards.prediction_service import SCORER_LEAGUES, fixture_league, latest_predictions
+
+    with SessionLocal() as session:
+        rows = latest_predictions(session, fixture_id=fixture_id)
+        league = fixture_league(session, fixture_id)
+    return {"fixture_id": fixture_id, "rows": rows, "total": len(rows), "league": league,
+            "supported": bool(rows) or league in SCORER_LEAGUES}
+
+
+@app.get("/player-cards/day")
+def player_cards_for_day(date: str, limit: int = 2000) -> dict:
+    """Probabilita' gialli delle partite del giorno `date` (YYYY-MM-DD, ora del kickoff in UTC)."""
+    from src.repository.base.repository_db import SessionLocal
+    from src.service_ia.player_cards.prediction_service import latest_predictions
+
+    with SessionLocal() as session:
+        rows = latest_predictions(session, day=date, limit=limit)
+    return {"date": date, "rows": rows, "total": len(rows)}
 
 
 @app.get("/scorers/day")
