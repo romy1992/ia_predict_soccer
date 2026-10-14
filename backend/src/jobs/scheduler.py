@@ -293,7 +293,8 @@ def run_daily_refresh(
        (`run_prediction_snapshot_refresh`: riusa le righe gia' calcolate se
        quote/statistiche e modello non sono cambiati);
     5) aggiorna le formazioni ufficiali e le predizioni dei marcatori
-       (`run_scorer_predictions`).
+       (`run_scorer_predictions`) e quelle dei gialli dei giocatori
+       (`run_player_cards_predictions`).
     Le fasi 4 e 5 sono "morbide": se falliscono i dati importati restano e
     l'errore finisce nell'avviso finale (`prediction_errors`).
 
@@ -360,6 +361,8 @@ def run_daily_refresh(
             predictions_report = _soft_phase("predictions", run_prediction_snapshot_refresh, prediction_errors)
             history.set_progress(job_id, 85, "Aggiorno formazioni e marcatori")
             scorers_report = _soft_phase("scorers", run_scorer_predictions, prediction_errors)
+            history.set_progress(job_id, 92, "Aggiorno i cartellini dei giocatori")
+            cards_report = _soft_phase("player_cards", run_player_cards_predictions, prediction_errors)
             summary = {
                 "progress_pct": 100,
                 "phase": "Completato"
@@ -371,6 +374,7 @@ def run_daily_refresh(
                 "settlement": settlement_report,
                 "predictions": predictions_report,
                 "scorers": scorers_report,
+                "player_cards": cards_report,
                 "prediction_errors": prediction_errors,
                 "duration_seconds": time.perf_counter() - start,
             }
@@ -555,6 +559,94 @@ def run_scorer_training(job_id: Optional[str] = None) -> dict:
     else:
         started = history.create_job(
             job_type="scorer_training", status="running", params=params, started_at=JobHistory._now_iso()
+        )
+        job_id = started["job_id"]
+    start = time.perf_counter()
+    try:
+        with SessionLocal() as session:
+            dataset = prediction_service.dataset_for_training(session)
+        run = model_store.train_candidate(dataset)
+        metrics = run.get("metrics") or {}
+        promotion = model_store.auto_promote(run)
+        report = {
+            "run_id": run["run_id"], "family": metrics.get("best_family"), "rows": len(dataset),
+            "promoted": promotion["promoted"], "not_promoted_reasons": promotion["reasons"],
+            "log_loss": metrics.get("log_loss"), "baseline_log_loss": metrics.get("baseline_log_loss"),
+            "brier": metrics.get("brier"), "ece": metrics.get("ece"), "auc": metrics.get("auc"),
+            "duration_seconds": time.perf_counter() - start,
+        }
+        history.mark_success(job_id=job_id, summary=report)
+        return {"job_id": job_id, **report}
+    except Exception as exc:
+        history.mark_failed(
+            job_id=job_id,
+            error={"message": str(exc), "duration_seconds": time.perf_counter() - start, "params": params},
+        )
+        raise
+
+
+def run_player_cards_predictions(job_id: Optional[str] = None) -> dict:
+    """Formazioni ufficiali in arrivo + probabilita' di ammonizione dei titolari (vedi
+    `service_ia/player_cards/prediction_service`). Le formazioni gia' scaricate dal job marcatori non si
+    riscaricano (idempotente)."""
+    from src.repository.base.repository_db import SessionLocal
+    from src.repository.player_data_repository import PlayerDataRepository
+    from src.service_ia.player_cards import model_store, prediction_service
+    from src.service_ia.utility.request_api import get_api_sports_provider
+
+    history = JobHistory()
+    params: dict = {}
+    if job_id:
+        history.mark_running(job_id=job_id, params=params)
+    else:
+        started = history.create_job(
+            job_type="player_cards_predictions", status="running", params=params, started_at=JobHistory._now_iso()
+        )
+        job_id = started["job_id"]
+    start = time.perf_counter()
+    try:
+        with SessionLocal() as session:
+            now = datetime.now(timezone.utc)
+            upcoming = prediction_service.upcoming_matches(
+                session, prediction_service.SCORER_LEAGUES, now, prediction_service.PREDICT_HORIZON_HOURS
+            )
+            if not upcoming:
+                report = {"fixtures": 0, "predicted": 0, "note": "nessuna partita in arrivo"}
+            else:
+                report = prediction_service.fetch_official_lineups(
+                    session, get_api_sports_provider(), PlayerDataRepository(), now=now
+                )
+                bundle = model_store.load_production_bundle()
+                if bundle is None:
+                    report["note"] = "nessun modello production: addestra e promuovi 'player_yellow_card'"
+                    report["predicted"] = 0
+                else:
+                    report.update(prediction_service.predict_upcoming(session, bundle, now=now))
+            report.update(prediction_service.settle_predictions(session))
+        report["duration_seconds"] = time.perf_counter() - start
+        history.mark_success(job_id=job_id, summary=report)
+        return {"job_id": job_id, **report}
+    except Exception as exc:
+        history.mark_failed(
+            job_id=job_id,
+            error={"message": str(exc), "duration_seconds": time.perf_counter() - start, "params": params},
+        )
+        raise
+
+
+def run_player_cards_training(job_id: Optional[str] = None) -> dict:
+    """Addestra le famiglie di modelli gialli, tiene la migliore sull'holdout temporale (solo titolari), la
+    registra come CANDIDATE e la promuove a production solo se supera controlli propri + policy standard."""
+    from src.repository.base.repository_db import SessionLocal
+    from src.service_ia.player_cards import model_store, prediction_service
+
+    history = JobHistory()
+    params: dict = {"market": model_store.MARKET}
+    if job_id:
+        history.mark_running(job_id=job_id, params=params)
+    else:
+        started = history.create_job(
+            job_type="player_cards_training", status="running", params=params, started_at=JobHistory._now_iso()
         )
         job_id = started["job_id"]
     start = time.perf_counter()
@@ -1424,6 +1516,20 @@ def build_scheduler(cfg: Optional[AppConfig] = None) -> BlockingScheduler:
         functools.partial(_run_if_due, "scorer_training", run_scorer_training, cfg=cfg),
         trigger=heartbeat,
         job_id="scorer_training",
+        misfire_grace_time=_MISFIRE_GRACE_SECONDS,
+    )
+    _add_job(
+        scheduler,
+        functools.partial(_run_if_due, "player_cards_predictions", run_player_cards_predictions, cfg=cfg),
+        trigger=heartbeat,
+        job_id="player_cards_predictions",
+        misfire_grace_time=_MISFIRE_GRACE_SECONDS,
+    )
+    _add_job(
+        scheduler,
+        functools.partial(_run_if_due, "player_cards_training", run_player_cards_training, cfg=cfg),
+        trigger=heartbeat,
+        job_id="player_cards_training",
         misfire_grace_time=_MISFIRE_GRACE_SECONDS,
     )
 

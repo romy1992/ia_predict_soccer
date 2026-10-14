@@ -238,6 +238,40 @@ JOB_DEFINITIONS: dict[str, dict[str, Any]] = {
         "run_all_priority": 84,
         "run_all_included": True,
     },
+    "player_cards_predictions": {
+        "label": "Predizioni cartellini giocatori",
+        "description": (
+            "Per le partite in partenza a breve (stesse competizioni dei marcatori) usa la formazione "
+            "ufficiale (gia' scaricata dal job marcatori, altrimenti la scarica: poche chiamate API-Sports) "
+            "e calcola la probabilita' che ogni titolare prenda un giallo, salvando una revisione "
+            "append-only prima del kickoff. Usa il modello in stage 'production' del mercato "
+            "'player_yellow_card': se nessuno e' stato promosso non predice."
+        ),
+        "default_enabled": True,
+        "calls_api_sports": True,
+        "schedule_kind": "interval_minutes",
+        "job_history_type": "player_cards_predictions",
+        "cfg_fields": {"interval_minutes": "player_cards_predictions_interval_minutes"},
+        "run_all_priority": 87,
+        "run_all_included": True,
+    },
+    "player_cards_training": {
+        "label": "Retrain modello cartellini giocatori",
+        "description": (
+            "Riaddestra il modello 'il giocatore prende un giallo' sui dati a DB: confronta logistica, "
+            "gradient boosting, random forest e voting su un holdout temporale (solo titolari), registra la "
+            "migliore come CANDIDATE e la promuove a production solo se batte la baseline, e' calibrata e "
+            "supera gate metriche + confronto con l'attuale production (mai forzato, tutto nell'audit). "
+            "Lavora solo su dati gia' a DB."
+        ),
+        "default_enabled": True,
+        "calls_api_sports": False,
+        "schedule_kind": "daily",
+        "job_history_type": "player_cards_training",
+        "cfg_fields": {"hour": "player_cards_training_hour", "minute": "player_cards_training_minute"},
+        "run_all_priority": 86,
+        "run_all_included": True,
+    },
 }
 
 # Limiti di validazione per ciascun `schedule_kind` (Impostazioni, editor

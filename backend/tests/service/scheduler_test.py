@@ -77,7 +77,7 @@ class TestBuildSchedulerJobsSeparation(unittest.TestCase):
     job SEPARATI per data sync (frequenti) e training (indipendente) - mai
     un job unico che incatena import+retrain."""
 
-    def test_registers_exactly_nine_independent_jobs(self):
+    def test_registers_exactly_fifteen_independent_jobs(self):
         sched = scheduler_module.build_scheduler(cfg=_cfg())
         job_ids = {job.id for job in sched.get_jobs()}
         self.assertEqual(
@@ -96,12 +96,14 @@ class TestBuildSchedulerJobsSeparation(unittest.TestCase):
                 "model_consensus_refresh",
                 "scorer_predictions",
                 "scorer_training",
+                "player_cards_predictions",
+                "player_cards_training",
             },
         )
 
     def test_build_scheduler_uses_default_config_when_none_given(self):
         sched = scheduler_module.build_scheduler()
-        self.assertEqual(len(sched.get_jobs()), 13)
+        self.assertEqual(len(sched.get_jobs()), 15)
 
 
 class TestMaxInstancesAndCoalesce(unittest.TestCase):
@@ -111,7 +113,7 @@ class TestMaxInstancesAndCoalesce(unittest.TestCase):
     def test_every_job_has_max_instances_one_and_coalesce_true(self):
         sched = scheduler_module.build_scheduler(cfg=_cfg())
         jobs = sched.get_jobs()
-        self.assertEqual(len(jobs), 13)
+        self.assertEqual(len(jobs), 15)
         for job in jobs:
             self.assertEqual(job.max_instances, 1, f"{job.id} deve avere max_instances=1")
             self.assertTrue(job.coalesce, f"{job.id} deve avere coalesce=True")
@@ -197,6 +199,7 @@ class TestJobTargetsAreCorrectAndIndependent(unittest.TestCase):
              mock.patch.object(scheduler_module, "run_manual_future_sync", return_value={"synced": 2}) as future_mock, \
              mock.patch.object(scheduler_module, "run_prediction_snapshot_refresh", return_value={"computed": 4}), \
              mock.patch.object(scheduler_module, "run_scorer_predictions", return_value={"predicted": 9}), \
+             mock.patch.object(scheduler_module, "run_player_cards_predictions", return_value={"predicted": 5}), \
              mock.patch.object(
                  scheduler_module, "run_manual_settlement", return_value={"shadow_settled": 3}
              ) as settlement_mock:
@@ -224,12 +227,17 @@ class TestJobTargetsAreCorrectAndIndependent(unittest.TestCase):
              mock.patch.object(
                  scheduler_module, "run_scorer_predictions",
                  side_effect=lambda: order.append("scorers") or {"predicted": 9},
+             ), \
+             mock.patch.object(
+                 scheduler_module, "run_player_cards_predictions",
+                 side_effect=lambda: order.append("cards") or {"predicted": 5},
              ):
             result = scheduler_module.run_daily_refresh(seasons=[2026], leagues=[39], days_ahead=7)
 
-        self.assertEqual(order, ["future", "settle", "predictions", "scorers"])
+        self.assertEqual(order, ["future", "settle", "predictions", "scorers", "cards"])
         self.assertEqual(result["predictions"], {"computed": 4})
         self.assertEqual(result["scorers"], {"predicted": 9})
+        self.assertEqual(result["player_cards"], {"predicted": 5})
         self.assertEqual(result["prediction_errors"], {})
         self.assertEqual(result["phase"], "Completato")
         self.assertEqual(result["progress_pct"], 100)
@@ -240,6 +248,7 @@ class TestJobTargetsAreCorrectAndIndependent(unittest.TestCase):
              mock.patch.object(scheduler_module, "run_manual_future_sync", return_value={}), \
              mock.patch.object(scheduler_module, "run_manual_settlement", return_value={}), \
              mock.patch.object(scheduler_module, "run_prediction_snapshot_refresh", return_value={"computed": 1}), \
+             mock.patch.object(scheduler_module, "run_player_cards_predictions", return_value={"predicted": 5}), \
              mock.patch.object(scheduler_module, "run_scorer_predictions", side_effect=RuntimeError("quota")):
             result = scheduler_module.run_daily_refresh(seasons=[2026], leagues=[39], days_ahead=7)
 
