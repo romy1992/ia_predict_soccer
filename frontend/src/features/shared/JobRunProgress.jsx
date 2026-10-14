@@ -14,11 +14,19 @@ export default function JobRunProgress({ row }) {
     return null;
   }
   const summary = row.summary || {};
-  const percent = typeof summary.percent === "number" ? summary.percent : null;
+  // `progress_pct`/`phase`: avanzamento a fasi dei job composti (es. "Aggiorna tutto").
+  const percent =
+    typeof summary.percent === "number"
+      ? summary.percent
+      : typeof summary.progress_pct === "number"
+        ? summary.progress_pct
+        : null;
   const dettaglio =
     percent !== null && summary.fixtures_total
       ? `${summary.fixtures_done ?? 0}/${summary.fixtures_total} (${Math.round(percent)}%)`
-      : row.status === "queued"
+      : percent !== null && summary.phase
+        ? `${summary.phase} (${Math.round(percent)}%)`
+        : row.status === "queued"
         ? "In coda..."
         : "In esecuzione...";
 

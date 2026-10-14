@@ -57,6 +57,47 @@ class JobHistory:
         except Exception:
             return None
 
+    # Indice dei job in corso (queued/running): un solo piccolo file, cosi' la pagina Impostazioni sa
+    # cosa sta girando SENZA elencare tutte le righe di cronologia ad ogni richiesta.
+    _ACTIVE_KEY = "best_models/jobs_active.json"
+    _ACTIVE_MAX_AGE_HOURS = 6
+
+    def _track(self, job_id: str, job_type: Optional[str], active: bool) -> None:
+        """Best-effort: un errore sull'indice non deve mai far fallire il job."""
+        try:
+            index = bucket_store.get_json(self._ACTIVE_KEY) or {}
+            if active:
+                index[job_id] = job_type or ""
+            elif job_id in index:
+                del index[job_id]
+            else:
+                return
+            bucket_store.put_json(self._ACTIVE_KEY, index)
+        except Exception:
+            pass
+
+    def active_runs(self) -> dict[str, dict[str, Any]]:
+        """Ultima riga in corso per `job_type` (righe ferme da piu' di qualche ora = job morti, ignorate)."""
+        try:
+            index = bucket_store.get_json(self._ACTIVE_KEY) or {}
+        except Exception:
+            return {}
+        cutoff = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=self._ACTIVE_MAX_AGE_HOURS)).isoformat()
+        out: dict[str, dict[str, Any]] = {}
+        for job_id in list(index):
+            try:
+                row = bucket_store.get_json(self._job_key(job_id))
+            except Exception:
+                continue
+            if not row or row.get("status") not in ("queued", "running"):
+                continue
+            if str(row.get("timestamp") or "") < cutoff:
+                continue
+            job_type = str(row.get("job_type") or "")
+            if job_type not in out or str(row.get("timestamp") or "") > str(out[job_type].get("timestamp") or ""):
+                out[job_type] = row
+        return out
+
     def get(self, job_id: str) -> Optional[dict[str, Any]]:
         """Una riga per `job_id`, o `None`. Serve al polling del bottone
         "Ricalcola previsioni": dopo un refresh pagina il frontend riprende
@@ -113,6 +154,8 @@ class JobHistory:
             finished_at=finished_at,
         )
         bucket_store.put_json(self._job_key(row["job_id"]), row)
+        if status in ("queued", "running"):
+            self._track(row["job_id"], job_type, True)
         return row
 
     def update_job(
@@ -151,6 +194,10 @@ class JobHistory:
         )
 
         bucket_store.put_json(key, row)
+        if row.get("status") in ("queued", "running"):
+            self._track(job_id, row.get("job_type"), True)
+        else:
+            self._track(job_id, row.get("job_type"), False)
         return row
 
     def queue_job(self, job_type: str, params: Optional[dict[str, Any]] = None) -> dict[str, Any]:
@@ -165,6 +212,7 @@ class JobHistory:
                 job_type="unknown", status="running", params=params, job_id=job_id, started_at=now_iso
             )
             bucket_store.put_json(key, row)
+            self._track(job_id, "unknown", True)
             return row
 
         row["status"] = "running"
@@ -173,6 +221,7 @@ class JobHistory:
         if params is not None:
             row["params"] = params
         bucket_store.put_json(key, row)
+        self._track(job_id, row.get("job_type"), True)
         return row
 
     def set_progress(self, job_id: str, pct: int, phase: str) -> None:
