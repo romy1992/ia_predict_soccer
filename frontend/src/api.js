@@ -333,6 +333,8 @@ const JOB_RUN_ENDPOINTS = {
   model_consensus_refresh: "/jobs/model-consensus-refresh",
   scorer_predictions: "/jobs/scorer-predictions",
   scorer_training: "/jobs/scorer-training",
+  player_cards_predictions: "/jobs/player-cards-predictions",
+  player_cards_training: "/jobs/player-cards-training",
 };
 
 export function runJobNow(jobId) {

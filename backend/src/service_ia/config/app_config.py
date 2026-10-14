@@ -142,6 +142,9 @@ class AppConfig:
     # Training marcatori (candidate, mai promosso da solo): una volta al giorno, orario separato.
     scorer_training_hour: int = 4
     scorer_training_minute: int = 30
+    player_cards_predictions_interval_minutes: int = 10
+    player_cards_training_hour: int = 4
+    player_cards_training_minute: int = 45
     # Job "Aggiorna Model Consensus" (2026-09-24, tabella
     # `model_consensus_snapshot`): stessa finestra di
     # `prediction_snapshot_interval_minutes` (NS oggi->oggi+N giorni +
@@ -181,6 +184,9 @@ def load_app_config() -> AppConfig:
     scorer_predictions_interval_minutes = _int_env("SCORER_PREDICTIONS_INTERVAL_MINUTES", default=10)
     scorer_training_hour = _int_env("SCORER_TRAINING_HOUR", default=4)
     scorer_training_minute = _int_env("SCORER_TRAINING_MINUTE", default=30)
+    player_cards_predictions_interval_minutes = _int_env("PLAYER_CARDS_PREDICTIONS_INTERVAL_MINUTES", default=10)
+    player_cards_training_hour = _int_env("PLAYER_CARDS_TRAINING_HOUR", default=4)
+    player_cards_training_minute = _int_env("PLAYER_CARDS_TRAINING_MINUTE", default=45)
     team_rating_refresh_interval_minutes = _int_env("TEAM_RATING_REFRESH_INTERVAL_MINUTES", default=60)
     model_consensus_refresh_interval_minutes = _int_env("MODEL_CONSENSUS_REFRESH_INTERVAL_MINUTES", default=60)
     database_url = os.environ.get("DATABASE_URL", DEFAULT_DATABASE_URL).strip()
@@ -211,6 +217,9 @@ def load_app_config() -> AppConfig:
         scorer_predictions_interval_minutes=scorer_predictions_interval_minutes,
         scorer_training_hour=scorer_training_hour,
         scorer_training_minute=scorer_training_minute,
+        player_cards_predictions_interval_minutes=player_cards_predictions_interval_minutes,
+        player_cards_training_hour=player_cards_training_hour,
+        player_cards_training_minute=player_cards_training_minute,
         model_consensus_refresh_interval_minutes=model_consensus_refresh_interval_minutes,
     )
 

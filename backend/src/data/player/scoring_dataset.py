@@ -122,16 +122,17 @@ def _appearances(matches: pd.DataFrame, lineups: pd.DataFrame, events: pd.DataFr
     return a.dropna(subset=["match_date"])
 
 
-def _role_prior(played: pd.DataFrame) -> pd.Series:
-    """Gol per 90' del ruolo calcolati SOLO su date precedenti (somme cumulate spostate di una data)."""
-    daily = (played.groupby(["position", played["match_date"].dt.normalize()])[["goals", "minutes"]].sum()
+def _role_prior(played: pd.DataFrame, value_col: str = "goals",
+                fallback_rates: dict[str, float] | None = None) -> pd.Series:
+    """Eventi (default: gol) per 90' del ruolo calcolati SOLO su date precedenti (somme cumulate spostate di una data)."""
+    daily = (played.groupby(["position", played["match_date"].dt.normalize()])[[value_col, "minutes"]].sum()
              .reset_index().rename(columns={"match_date": "day"}).sort_values(["position", "day"]))
-    cum = daily.groupby("position")[["goals", "minutes"]].cumsum()
+    cum = daily.groupby("position")[[value_col, "minutes"]].cumsum()
     shifted = cum.groupby(daily["position"]).shift(1)
-    daily["role_rate"] = shifted["goals"] / (shifted["minutes"] / 90.0)
+    daily["role_rate"] = shifted[value_col] / (shifted["minutes"] / 90.0)
     rate = played[["position"]].assign(day=played["match_date"].dt.normalize()).merge(
         daily[["position", "day", "role_rate"]], on=["position", "day"], how="left")["role_rate"]
-    fallback = played["position"].map(FALLBACK_RATE_PER90)
+    fallback = played["position"].map(fallback_rates or FALLBACK_RATE_PER90)
     return pd.Series(rate.to_numpy(), index=played.index).where(lambda s: s.notna() & (s > 0), fallback)
 
 
