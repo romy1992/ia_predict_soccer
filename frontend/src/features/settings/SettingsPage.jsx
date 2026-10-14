@@ -353,7 +353,7 @@ export default function SettingsPage({
                     {runFeedback[job.job_id].message}
                   </small>
                 )}
-                <JobRunProgress row={runRows[job.job_id]} />
+                <JobRunProgress row={runRows[job.job_id] || job.active_run} />
               </div>
               {job.schedule_kind && onSaveSchedule && onResetSchedule && (
                 <JobScheduleEditor
@@ -364,7 +364,9 @@ export default function SettingsPage({
                 />
               )}
               {onRunJob && (() => {
-                const inCorso = ["queued", "running"].includes(runRows[job.job_id]?.status);
+                const inCorso = ["queued", "running"].includes(
+                  (runRows[job.job_id] || job.active_run)?.status
+                );
                 const inInvio = runningJobId === job.job_id;
                 return (
                   <button
