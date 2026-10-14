@@ -21,6 +21,15 @@ def _target_func(job):
     return func
 
 
+import contextlib
+
+
+@contextlib.contextmanager
+def _no_lock(*_args, **_kwargs):
+    """Lock sempre preso: i test di orchestrazione non devono dipendere dal DB dei lock."""
+    yield True
+
+
 def _cfg(**overrides) -> AppConfig:
     base = dict(
         leagues=[39],
@@ -186,6 +195,8 @@ class TestJobTargetsAreCorrectAndIndependent(unittest.TestCase):
         "settlement"."""
         with mock.patch.object(scheduler_module, "run_manual_import", return_value={"updated": 1}) as import_mock, \
              mock.patch.object(scheduler_module, "run_manual_future_sync", return_value={"synced": 2}) as future_mock, \
+             mock.patch.object(scheduler_module, "run_prediction_snapshot_refresh", return_value={"computed": 4}), \
+             mock.patch.object(scheduler_module, "run_scorer_predictions", return_value={"predicted": 9}), \
              mock.patch.object(
                  scheduler_module, "run_manual_settlement", return_value={"shadow_settled": 3}
              ) as settlement_mock:
@@ -197,6 +208,44 @@ class TestJobTargetsAreCorrectAndIndependent(unittest.TestCase):
         future_mock.assert_called_once()
         settlement_mock.assert_called_once_with(seasons=[2026], leagues=[39])
         self.assertEqual(result["settlement"], {"shadow_settled": 3})
+
+    def test_daily_refresh_also_refreshes_predictions_and_scorers(self):
+        """Fasi 4 e 5 di "Aggiorna tutto": predizioni salvate di tutti i mercati + marcatori, dopo
+        la sincronizzazione (quote fresche) e il settlement."""
+        order = []
+        with mock.patch.object(scheduler_module, "job_lock", _no_lock), \
+             mock.patch.object(scheduler_module, "run_manual_import", return_value={}), \
+             mock.patch.object(scheduler_module, "run_manual_future_sync", side_effect=lambda **k: order.append("future") or {}), \
+             mock.patch.object(scheduler_module, "run_manual_settlement", side_effect=lambda **k: order.append("settle") or {}), \
+             mock.patch.object(
+                 scheduler_module, "run_prediction_snapshot_refresh",
+                 side_effect=lambda: order.append("predictions") or {"computed": 4},
+             ), \
+             mock.patch.object(
+                 scheduler_module, "run_scorer_predictions",
+                 side_effect=lambda: order.append("scorers") or {"predicted": 9},
+             ):
+            result = scheduler_module.run_daily_refresh(seasons=[2026], leagues=[39], days_ahead=7)
+
+        self.assertEqual(order, ["future", "settle", "predictions", "scorers"])
+        self.assertEqual(result["predictions"], {"computed": 4})
+        self.assertEqual(result["scorers"], {"predicted": 9})
+        self.assertEqual(result["prediction_errors"], {})
+        self.assertEqual(result["phase"], "Completato")
+        self.assertEqual(result["progress_pct"], 100)
+
+    def test_daily_refresh_prediction_failure_keeps_data_and_reports_warning(self):
+        with mock.patch.object(scheduler_module, "job_lock", _no_lock), \
+             mock.patch.object(scheduler_module, "run_manual_import", return_value={}), \
+             mock.patch.object(scheduler_module, "run_manual_future_sync", return_value={}), \
+             mock.patch.object(scheduler_module, "run_manual_settlement", return_value={}), \
+             mock.patch.object(scheduler_module, "run_prediction_snapshot_refresh", return_value={"computed": 1}), \
+             mock.patch.object(scheduler_module, "run_scorer_predictions", side_effect=RuntimeError("quota")):
+            result = scheduler_module.run_daily_refresh(seasons=[2026], leagues=[39], days_ahead=7)
+
+        self.assertEqual(result["prediction_errors"], {"scorers": "quota"})
+        self.assertEqual(result["phase"], "Completato con avvisi: scorers")
+        self.assertEqual(result["predictions"], {"computed": 1})
 
     def test_live_sync_job_targets_run_manual_live_sync_never_retrain(self):
         sched = scheduler_module.build_scheduler(cfg=_cfg())

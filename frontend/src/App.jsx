@@ -1050,7 +1050,18 @@ export default function App() {
     const timer = setInterval(() => {
       loadApiQuota().catch(() => {});
     }, 30000);
-    return () => clearInterval(timer);
+    // Job in corso lanciati da fuori (es. "Aggiorna tutto" dell'app): la lista porta `active_run` per
+    // ogni job, quindi basta rileggerla ogni pochi secondi (lettura di un solo file, nessuna chiamata
+    // API-Sports) per vedere partire e finire i job in diretta.
+    const jobsTimer = setInterval(() => {
+      getJobSettings()
+        .then((payload) => setJobSettingsRows(payload?.jobs || []))
+        .catch(() => {});
+    }, 5000);
+    return () => {
+      clearInterval(timer);
+      clearInterval(jobsTimer);
+    };
   }, [activePage, loadJobSettings, loadApiQuota]);
   async function handleImport() {
     try {
