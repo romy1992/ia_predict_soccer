@@ -697,20 +697,29 @@ def train_market(
     )
 
 
+DEFAULT_MARKETS = ["h2h", "under_over_2_5", "goal_no_goal", "corners", "cards", "dc"]
+
+
+def markets_in_production(candidates: list[str]) -> list[str]:
+    """Quelli tra `candidates` che hanno un modello in `production` nel registro."""
+    from src.service_ia.training.model_registry import ModelRegistry
+
+    registry = ModelRegistry()
+    return [m for m in candidates if registry.get_production(market=m) is not None]
+
+
 def train_all_markets(
     markets: Optional[list[str]] = None,
     seasons: Optional[list[int]] = None,
     selection_method: str = "kbest",
     save_model: bool = True,
 ) -> list[MarketTrainResult]:
-    markets = markets or [
-        "h2h",
-        "under_over_2_5",
-        "goal_no_goal",
-        "corners",
-        "cards",
-        "dc",
-    ]
+    """Senza `markets` (retrain schedulato / "Esegui ora") riaddestra SOLO i mercati che hanno gia' un
+    modello in produzione: un retrain automatico non deve creare candidati per mercati ritirati o mai
+    promossi (decisione del 2026-10-14). Per addestrare un mercato nuovo si passa `markets` esplicito."""
+    if not markets:
+        markets = markets_in_production(DEFAULT_MARKETS)
+        logging.info("Retrain dei soli mercati in produzione: %s", markets)
 
     results = []
     for market in markets:
