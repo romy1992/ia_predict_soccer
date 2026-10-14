@@ -316,6 +316,7 @@ def run_daily_refresh(
         if not lock_preso:
             return _esito_job_saltato(history=history, job_id=job_id, start=start)
         try:
+            history.set_progress(job_id, 5, "Importo i risultati di ieri")
             played_report = run_manual_import(
                 seasons=seasons,
                 leagues=leagues,
@@ -324,16 +325,20 @@ def run_daily_refresh(
                 is_next=False,
                 job_type="daily_refresh_played",
             )
+            history.set_progress(job_id, 45, "Sincronizzo le prossime partite")
             upcoming_report = run_manual_future_sync(
                 days_ahead=days_ahead,
                 seasons=seasons,
                 leagues=leagues,
             )
+            history.set_progress(job_id, 80, "Riconcilio le schedine")
             settlement_report = run_manual_settlement(
                 seasons=seasons,
                 leagues=leagues,
             )
             summary = {
+                "progress_pct": 100,
+                "phase": "Completato",
                 "played_date": yesterday,
                 "played_matches": played_report,
                 "upcoming_matches": upcoming_report,
