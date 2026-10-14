@@ -455,17 +455,27 @@ class TestListActiveMarkets(unittest.TestCase):
             self.assertNotIn("under_over_4_5", registry.list_active_markets())
             self.assertIn("under_over_1_5", registry.list_active_markets())
 
-    def test_mercato_senza_produzione_resta_attivo(self):
-        # Un candidate ancora in valutazione (nessuna produzione) NON e'
-        # "archiviato": deve restare visibile (badge "In coda" in Dashboard),
-        # distinzione gia' esistente e voluta - vedi PredictionBadges.jsx.
+    def test_mercato_senza_produzione_non_e_attivo(self):
+        # Decisione 2026-10-14: si mostrano solo i mercati con un modello in produzione. Un candidate
+        # (anche appena addestrato) non rende attivo il mercato: niente badge "In coda".
         with tempfile.TemporaryDirectory() as tmp:
             registry = ModelRegistry(registry_dir=tmp)
             registry.register(
                 model_path=os.path.join(tmp, "candidate.pkl"), market="goal_no_goal", model_name="logistic"
             )
 
-            self.assertIn("goal_no_goal", registry.list_active_markets())
+            self.assertIn("goal_no_goal", registry.list_markets())
+            self.assertNotIn("goal_no_goal", registry.list_active_markets())
+
+    def test_candidate_nuovo_non_riattiva_un_mercato_ritirato(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            registry = ModelRegistry(registry_dir=tmp)
+            old = registry.register(model_path=os.path.join(tmp, "old.pkl"), market="corners", model_name="voting")
+            registry.promote(run_id=old["run_id"], to_stage="production", actor="test")
+            registry.promote(run_id=old["run_id"], to_stage="retired", actor="operator_request")
+            registry.register(model_path=os.path.join(tmp, "new.pkl"), market="corners", model_name="voting")
+
+            self.assertNotIn("corners", registry.list_active_markets())
 
     def test_produzione_fuori_da_archivio_resta_attiva(self):
         with tempfile.TemporaryDirectory() as tmp:

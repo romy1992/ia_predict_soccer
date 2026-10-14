@@ -175,6 +175,22 @@ class JobHistory:
         bucket_store.put_json(key, row)
         return row
 
+    def set_progress(self, job_id: str, pct: int, phase: str) -> None:
+        """Aggiorna l'avanzamento (0-100) senza toccare altro. Best-effort:
+        un errore di scrittura sul bucket non deve mai far fallire il job."""
+        try:
+            row = bucket_store.get_json(self._job_key(job_id))
+            if row is None:
+                return
+            summary = dict(row.get("summary") or {})
+            summary["progress_pct"] = max(0, min(100, int(pct)))
+            summary["phase"] = phase
+            row["summary"] = summary
+            row["timestamp"] = self._now_iso()
+            bucket_store.put_json(self._job_key(job_id), row)
+        except Exception:
+            pass
+
     def mark_success(self, job_id: str, summary: Optional[dict[str, Any]] = None) -> dict[str, Any]:
         now_iso = self._now_iso()
         return self.update_job(
