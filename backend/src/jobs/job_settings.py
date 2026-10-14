@@ -328,8 +328,16 @@ def list_job_definitions(cfg: Optional[AppConfig] = None) -> list[dict[str, Any]
     `AppConfig`/variabili d'ambiente - vedi `resolve_job_schedule`)."""
     settings = get_job_settings()
     cfg = cfg or load_app_config()
+    # Job in corso adesso (anche lanciati da fuori, es. "Aggiorna tutto" dell'app), per tipo di cronologia.
+    try:
+        from src.jobs.job_history import JobHistory
+
+        active = JobHistory().active_runs()
+    except Exception:  # noqa: BLE001 - la lista job non deve dipendere dalla cronologia
+        active = {}
     rows = []
     for job_id, definition in JOB_DEFINITIONS.items():
+        run = active.get(definition.get("job_history_type") or "")
         rows.append(
             {
                 "job_id": job_id,
@@ -346,6 +354,16 @@ def list_job_definitions(cfg: Optional[AppConfig] = None) -> list[dict[str, Any]
                 # frontend (stesso principio di `calls_api_sports`).
                 "run_all_priority": definition.get("run_all_priority", 999),
                 "run_all_included": bool(definition.get("run_all_included", True)),
+                "active_run": (
+                    {
+                        "job_id": run.get("job_id"),
+                        "status": run.get("status"),
+                        "summary": run.get("summary") or {},
+                        "started_at": run.get("started_at"),
+                    }
+                    if run
+                    else None
+                ),
             }
         )
     return rows

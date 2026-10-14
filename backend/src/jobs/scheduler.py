@@ -252,6 +252,17 @@ def run_manual_future_sync(
     )
 
 
+def _soft_phase(name: str, func, errors: dict) -> dict:
+    """Fase "previsioni" di Aggiorna tutto: un errore qui NON annulla i dati gia' aggiornati, finisce
+    in `errors` (e quindi nell'avviso finale) invece di far fallire l'intero lancio."""
+    try:
+        return func()
+    except Exception as exc:  # noqa: BLE001 - isolato apposta, vedi docstring
+        logging.exception("Aggiorna tutto: fase '%s' fallita", name)
+        errors[name] = str(exc)
+        return {"error": str(exc)}
+
+
 def run_daily_refresh(
     seasons: Optional[list[int]] = None,
     leagues: Optional[list[int]] = None,
@@ -277,6 +288,14 @@ def run_daily_refresh(
        oggi - se questo bottone viene premuto con una cadenza regolare (anche
        non quotidiana ma entro 3 giorni), nessuna partita conclusa resta mai
        fuori dalla finestra.
+
+    4) ricalcola le predizioni salvate di tutti i mercati
+       (`run_prediction_snapshot_refresh`: riusa le righe gia' calcolate se
+       quote/statistiche e modello non sono cambiati);
+    5) aggiorna le formazioni ufficiali e le predizioni dei marcatori
+       (`run_scorer_predictions`).
+    Le fasi 4 e 5 sono "morbide": se falliscono i dati importati restano e
+    l'errore finisce nell'avviso finale (`prediction_errors`).
 
     Le tre sotto-fasi restano loggate anche singolarmente in
     `best_models/jobs_history.jsonl` (job_type `daily_refresh_played` /
@@ -325,24 +344,34 @@ def run_daily_refresh(
                 is_next=False,
                 job_type="daily_refresh_played",
             )
-            history.set_progress(job_id, 45, "Sincronizzo le prossime partite")
+            history.set_progress(job_id, 30, "Sincronizzo le prossime partite")
             upcoming_report = run_manual_future_sync(
                 days_ahead=days_ahead,
                 seasons=seasons,
                 leagues=leagues,
             )
-            history.set_progress(job_id, 80, "Riconcilio le schedine")
+            history.set_progress(job_id, 55, "Riconcilio le schedine")
             settlement_report = run_manual_settlement(
                 seasons=seasons,
                 leagues=leagues,
             )
+            prediction_errors: dict = {}
+            history.set_progress(job_id, 70, "Aggiorno le predizioni salvate")
+            predictions_report = _soft_phase("predictions", run_prediction_snapshot_refresh, prediction_errors)
+            history.set_progress(job_id, 85, "Aggiorno formazioni e marcatori")
+            scorers_report = _soft_phase("scorers", run_scorer_predictions, prediction_errors)
             summary = {
                 "progress_pct": 100,
-                "phase": "Completato",
+                "phase": "Completato"
+                if not prediction_errors
+                else "Completato con avvisi: " + ", ".join(sorted(prediction_errors)),
                 "played_date": yesterday,
                 "played_matches": played_report,
                 "upcoming_matches": upcoming_report,
                 "settlement": settlement_report,
+                "predictions": predictions_report,
+                "scorers": scorers_report,
+                "prediction_errors": prediction_errors,
                 "duration_seconds": time.perf_counter() - start,
             }
             history.mark_success(job_id=job_id, summary=summary)

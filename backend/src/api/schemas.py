@@ -216,6 +216,8 @@ class JobSettingRow(BaseModel):
     # vedi `src/jobs/job_settings.py::JOB_DEFINITIONS` per il significato.
     run_all_priority: int = 999
     run_all_included: bool = True
+    # Esecuzione in corso adesso (qualunque ne sia l'origine): {job_id, status, summary, started_at}.
+    active_run: Optional[dict[str, Any]] = None
 
 
 class JobSettingsResponse(BaseModel):
