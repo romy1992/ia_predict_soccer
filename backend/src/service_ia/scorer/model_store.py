@@ -26,6 +26,7 @@ from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 
 from src.data.player.scoring_dataset import FEATURE_COLUMNS, TARGET
+from src.ml.evaluation.classification_report import compute_compact_classification_summary
 from src.ml.evaluation.probability_metrics import compute_probability_metrics
 from src.ml.registry.promotion_policy import DEFAULT_PROMOTION_POLICY
 from src.service_ia.training.model_registry import ModelRegistry
@@ -164,6 +165,7 @@ def holdout_metrics(dataset: pd.DataFrame, families: tuple[str, ...] = FAMILIES)
     metrics["holdout_from"] = str(cut)
     metrics["families"] = {f: {k: results[f][k] for k in ("log_loss", "brier", "ece", "auc")} for f in results}
     p = probs[best]
+    metrics["classification"] = compute_compact_classification_summary(test[TARGET].to_numpy(), p)
     metrics["groups"] = _group_metrics(test, p, float(train[TARGET].mean()))
     metrics["by_role"] = {
         role: {"n": int(m.sum()), "observed": float(test[TARGET][m].mean()), "predicted": float(p[m.to_numpy()].mean())}
