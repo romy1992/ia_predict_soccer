@@ -165,6 +165,10 @@ export function getScorersForFixture(fixtureId) {
   return request(`/scorers/fixture/${encodeURIComponent(fixtureId)}`);
 }
 
+export function getPlayerCardsForFixture(fixtureId) {
+  return request(`/player-cards/fixture/${encodeURIComponent(fixtureId)}`);
+}
+
 export function getOracleMatchDetail(fixtureId, { markets } = {}) {
   const params = new URLSearchParams();
   if (markets && markets.length > 0) {

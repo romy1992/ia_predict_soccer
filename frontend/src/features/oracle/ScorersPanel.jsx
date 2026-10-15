@@ -18,7 +18,7 @@ function formatTime(iso) {
   return date.toLocaleString("it-IT", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
 }
 
-function groupByTeam(rows, home, away) {
+export function groupByTeam(rows, home, away) {
   const map = new Map();
   rows.forEach((row) => {
     const key = row.team_id ?? row.team_name;

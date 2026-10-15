@@ -1400,3 +1400,19 @@ th {
     grid-template-columns: 1fr;
   }
 }
+
+/* ---------- Modale giocatori (marcatori + gialli) ---------- */
+
+.players-modal .players-modal-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.players-modal .players-modal-tabs button {
+  min-height: 40px;
+}
+
+.players-modal .panel-header {
+  gap: 12px;
+}

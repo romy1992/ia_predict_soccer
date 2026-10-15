@@ -32,6 +32,7 @@ export default function MatchTable({
   selectedFixtureId,
   onOpenMatch,
   onOpenOracleDetail,
+  onOpenPlayers,
   modelMarkets,
   selectedMarket,
 }) {
@@ -119,6 +120,11 @@ export default function MatchTable({
                   <button className="btn-secondary" onClick={() => onOpenMatch(row.fixture_id)}>
                     Apri
                   </button>
+                  {onOpenPlayers && (
+                    <button className="btn-secondary" onClick={() => onOpenPlayers(row)} title="Probabilità di marcatori e gialli dei titolari">
+                      Giocatori
+                    </button>
+                  )}
                   {onOpenOracleDetail && (
                     <button className="btn-secondary" onClick={() => onOpenOracleDetail(row.fixture_id)}>
                       Oracle
@@ -187,6 +193,9 @@ export default function MatchTable({
             </details>
             <div className="match-mobile-actions">
               <button className="btn-secondary" onClick={() => onOpenMatch(row.fixture_id)}>Apri</button>
+              {onOpenPlayers && (
+                <button className="btn-secondary" onClick={() => onOpenPlayers(row)}>Giocatori</button>
+              )}
               {onOpenOracleDetail && (
                 <button className="btn-primary" onClick={() => onOpenOracleDetail(row.fixture_id)}>Oracle</button>
               )}
