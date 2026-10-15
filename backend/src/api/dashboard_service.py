@@ -665,8 +665,16 @@ class DashboardService:
         row_context: dict[str, Any],
         odds_summary: dict[str, list[dict[str, Any]]],
     ) -> tuple[str, Optional[float]]:
-        rows = odds_summary.get(market) or []
+        # Le linee Cards/Corners (`cards_line_6_5`, ...) non hanno una riga quote propria: le quote stanno sotto
+        # il mercato base (`cards`/`corners`), con esiti "Over 6.5" / "Under 6.5".
+        rows = odds_summary.get(market) or odds_summary.get(self._LINE_MARKET_ODDS_COLUMN.get(market, market)) or []
         normalized = self._row_to_outcome_maps(rows)
+
+        if market in self._LINE_MARKET_ODDS_COLUMN:
+            threshold = market.rsplit("_line_", 1)[1].replace("_", ".")
+            pick = f"{'Over' if prediction == 1 else 'Under'} {threshold}"
+            # Solo la linea ESATTA: una quota di un'altra linea non e' la quota di questa previsione.
+            return pick, normalized.get(self._normalize_text(pick))
 
         if market.startswith("under_over_"):
             threshold = market.replace("under_over_", "").replace("_", ".")
