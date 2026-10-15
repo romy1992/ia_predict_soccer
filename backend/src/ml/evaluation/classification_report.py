@@ -101,3 +101,46 @@ def compute_full_classification_report(y_true, probabilities, threshold: float =
     report["optimal_threshold"] = {"threshold": optimal_threshold, **_threshold_metrics(y, y_pred_opt)}
 
     return report
+
+
+def compute_compact_classification_summary(y_true, probabilities) -> dict[str, Any]:
+    """Versione COMPATTA per eventi rari (mercati giocatore: marcatori, gialli), pensata per stare nel
+    registro dei modelli accanto alle metriche di probabilita': niente curve, solo confusion matrix, accuracy
+    e report per classe a QUATTRO soglie di decisione, piu' il "lift" dei primi percentili.
+
+    Con una frequenza dell'evento molto sotto il 50% la soglia standard 0,5 non scatta mai (nessun positivo
+    previsto, accuracy = quella di "dire sempre no"): per questo si aggiungono la soglia che prevede tanti
+    positivi quanti ne esistono davvero (`base_rate`), quella che massimizza l'F1 della classe positiva
+    (`best_f1`) e quella di Youden (`youden`). `majority_accuracy` e' il riferimento da battere."""
+    y = np.asarray(y_true, dtype=int).reshape(-1)
+    p = np.asarray(probabilities, dtype=float).reshape(-1)
+    if np.unique(y).size < 2:
+        return {"status": "single_class", "sample_size": int(len(y))}
+
+    rate = float(y.mean())
+    grid = np.unique(np.quantile(p, np.linspace(0.02, 0.98, 97)))
+    f1s = [precision_recall_fscore_support(y, (p >= t).astype(int), labels=[0, 1], zero_division=0)[2][1] for t in grid]
+    fpr, tpr, roc_thresholds = roc_curve(y, p)
+    youden = float(np.clip(roc_thresholds[int(np.argmax(tpr - fpr))], 0.0, 1.0))
+    thresholds = {
+        "standard": 0.5,
+        "base_rate": float(np.quantile(p, 1.0 - rate)),
+        "best_f1": float(grid[int(np.argmax(f1s))]),
+        "youden": youden,
+    }
+    out: dict[str, Any] = {
+        "status": "ok",
+        "sample_size": int(len(y)),
+        "positive_rate": rate,
+        "majority_accuracy": float(1.0 - rate),
+        "thresholds": {},
+        "lift": {},
+    }
+    for name, t in thresholds.items():
+        out["thresholds"][name] = {"threshold": float(t), **_threshold_metrics(y, (p >= t).astype(int))}
+    order = np.argsort(-p)
+    for pct in (1, 5, 10, 20):
+        top = order[: max(1, int(len(p) * pct / 100))]
+        hit = float(y[top].mean())
+        out["lift"][f"top_{pct}pct"] = {"n": int(len(top)), "event_rate": hit, "lift": hit / rate if rate else None}
+    return out
