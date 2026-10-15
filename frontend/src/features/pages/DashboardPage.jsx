@@ -4,6 +4,8 @@ import PhaseTabs from "../matches/components/PhaseTabs";
 import LeagueTabs from "../matches/components/LeagueTabs";
 import MarketTabs from "../matches/components/MarketTabs";
 import ModelLegend from "../shared/ModelLegend";
+import Modal from "../shared/Modal";
+import PlayersModal from "../matches/components/PlayersModal";
 import { marketLabel, phaseClass, phaseLabel } from "../shared/formatters";
 
 export default function DashboardPage({
@@ -25,6 +27,7 @@ export default function DashboardPage({
 }) {
   const safeRows = dayData?.rows || [];
   const [situationFilter, setSituationFilter] = useState("all");
+  const [playersRow, setPlayersRow] = useState(null);
   const counters = useMemo(() => {
     const initial = { PLAY: 0, BORDERLINE: 0, "NO BET": 0, "SENZA QUOTA": 0, official: 0, WON: 0, LOST: 0, VOID: 0 };
     return safeRows.reduce((acc, row) => {
@@ -147,10 +150,14 @@ export default function DashboardPage({
           selectedFixtureId={selectedFixtureId}
           onOpenMatch={onOpenMatch}
           onOpenOracleDetail={onOpenOracleDetail}
+          onOpenPlayers={setPlayersRow}
           modelMarkets={dayData?.model_markets}
           selectedMarket={selectedMarket}
         />
       </section>
+      <Modal isOpen={!!playersRow} onClose={() => setPlayersRow(null)}>
+        <PlayersModal row={playersRow} onClose={() => setPlayersRow(null)} />
+      </Modal>
     </section>
   );
 }
