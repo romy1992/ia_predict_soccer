@@ -673,6 +673,45 @@ def run_player_cards_training(job_id: Optional[str] = None) -> dict:
         raise
 
 
+def run_fotmob_predicted_lineups(job_id: Optional[str] = None) -> dict:
+    """Formazioni previste FotMob, una volta al giorno. Non tocca i pesi del modello."""
+    from src.repository.base.repository_db import SessionLocal
+    from src.service_ia.fotmob.sync import sync_predicted_lineups
+
+    history = JobHistory()
+    cfg = load_app_config()
+    params = {
+        "horizon_hours": cfg.fotmob_horizon_hours,
+        "max_requests": cfg.fotmob_max_requests_per_run,
+    }
+    if job_id:
+        history.mark_running(job_id=job_id, params=params)
+    else:
+        started = history.create_job(
+            job_type="fotmob_predicted_lineups", status="running", params=params, started_at=JobHistory._now_iso()
+        )
+        job_id = started["job_id"]
+    start = time.perf_counter()
+    try:
+        with SessionLocal() as session:
+            report = sync_predicted_lineups(
+                session,
+                now=datetime.now(timezone.utc),
+                horizon_hours=cfg.fotmob_horizon_hours,
+                max_requests=cfg.fotmob_max_requests_per_run,
+                refresh_hours=cfg.fotmob_refresh_hours,
+            )
+        report["duration_seconds"] = time.perf_counter() - start
+        history.mark_success(job_id=job_id, summary=report)
+        return {"job_id": job_id, **report}
+    except Exception as exc:
+        history.mark_failed(
+            job_id=job_id,
+            error={"message": str(exc), "duration_seconds": time.perf_counter() - start, "params": params},
+        )
+        raise
+
+
 def run_manual_refresh_for_next_round() -> None:
     """Compatibilità legacy: alias del nuovo future sync."""
     cfg = load_app_config()
@@ -1530,6 +1569,13 @@ def build_scheduler(cfg: Optional[AppConfig] = None) -> BlockingScheduler:
         functools.partial(_run_if_due, "player_cards_training", run_player_cards_training, cfg=cfg),
         trigger=heartbeat,
         job_id="player_cards_training",
+        misfire_grace_time=_MISFIRE_GRACE_SECONDS,
+    )
+    _add_job(
+        scheduler,
+        functools.partial(_run_if_due, "fotmob_predicted_lineups", run_fotmob_predicted_lineups, cfg=cfg),
+        trigger=heartbeat,
+        job_id="fotmob_predicted_lineups",
         misfire_grace_time=_MISFIRE_GRACE_SECONDS,
     )
 
