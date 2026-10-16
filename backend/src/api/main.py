@@ -12,6 +12,7 @@ from typing import Any, Optional
 import numpy as np
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 
 from src.api import auth
@@ -135,6 +136,7 @@ from src.jobs.scheduler import (
     run_manual_today_update,
     run_model_consensus_refresh,
     run_official_prediction_capture,
+    run_fotmob_predicted_lineups,
     run_player_cards_predictions,
     run_player_cards_training,
     run_scorer_predictions,
@@ -181,13 +183,23 @@ async def _require_auth_cookie(request: Request, call_next):
     return await call_next(request)
 
 
-# Registrato DOPO il middleware di auth: Starlette avvolge i middleware in
-# ordine inverso di registrazione (l'ultimo aggiunto diventa il piu'
-# esterno), quindi CORS deve essere l'ultimo `add_middleware` per restare
-# fuori e gestire sia il preflight OPTIONS sia gli header sulle risposte
-# 401 ritornate dal middleware di auth - altrimenti un 401 su un preflight
-# arriverebbe al browser senza header CORS e verrebbe letto come errore
-# CORS generico invece che come "non autenticato".
+@app.middleware("http")
+async def _unhandled_as_json(request: Request, call_next):
+    """Un'eccezione non gestita esce da CORS e il browser la mostra come
+    "Failed to fetch" (nessun header Access-Control-Allow-Origin sulla 500
+    generata dal proxy). Qui la trasformiamo in JSON prima di CORS."""
+    try:
+        return await call_next(request)
+    except Exception:
+        logging.exception("Errore non gestito su %s %s", request.method, request.url.path)
+        return JSONResponse(status_code=500, content={"detail": "Errore interno del server"})
+
+
+# Ordine di registrazione (l'ultimo diventa il piu' esterno):
+# auth -> errori JSON -> gzip -> CORS. CORS deve restare il piu' esterno
+# cosi' anche 401 e 500 hanno gli header, altrimenti il browser legge un
+# errore di rete generico ("Failed to fetch") invece del dettaglio.
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins(),
@@ -1233,6 +1245,51 @@ def trigger_player_cards_predictions(payload: JobScorerRequest, background_tasks
         return JobResponse(queued=True, message="Player cards predictions job queued", details={"job_id": row["job_id"]})
     return JobResponse(queued=False, message="Player cards predictions job completed",
                        details=run_player_cards_predictions())
+
+
+@app.post("/jobs/fotmob-predicted-lineups", response_model=JobResponse)
+def trigger_fotmob_predicted_lineups(payload: JobScorerRequest, background_tasks: BackgroundTasks) -> JobResponse:
+    """"Esegui ora" del job giornaliero delle formazioni previste FotMob."""
+    if payload.async_run:
+        row = JobHistory().queue_job(job_type="fotmob_predicted_lineups", params={})
+        background_tasks.add_task(run_fotmob_predicted_lineups, job_id=row["job_id"])
+        return JobResponse(queued=True, message="FotMob predicted lineups job queued", details={"job_id": row["job_id"]})
+    return JobResponse(
+        queued=False, message="FotMob predicted lineups job completed", details=run_fotmob_predicted_lineups()
+    )
+
+
+@app.get("/fotmob/lineups/{fixture_id}")
+def fotmob_lineup_for_fixture(fixture_id: int) -> dict:
+    """Ultimo snapshot FotMob della partita. Non contiene la chiave RapidAPI."""
+    from sqlalchemy import select
+
+    from src.repository.base.repository_db import SessionLocal
+    from src.service_ia.fotmob.models import FotmobLineupPlayer, FotmobLineupSnapshot
+
+    with SessionLocal() as session:
+        snapshot = session.execute(
+            select(FotmobLineupSnapshot)
+            .where(FotmobLineupSnapshot.fixture_id == fixture_id)
+            .order_by(FotmobLineupSnapshot.fetched_at.desc())
+        ).scalars().first()
+        if snapshot is None:
+            return {"fixture_id": fixture_id, "snapshot": None, "players": []}
+        players = session.execute(
+            select(FotmobLineupPlayer).where(FotmobLineupPlayer.snapshot_id == snapshot.id)
+        ).scalars().all()
+        body = snapshot.to_dict()
+        body.pop("payload", None)
+        fetched = body.get("fetched_at")
+        body["fetched_at"] = fetched.isoformat() if fetched is not None else None
+        return {
+            "fixture_id": fixture_id,
+            "snapshot": body,
+            "players": [
+                {column.name: getattr(player, column.name) for column in player.__table__.columns}
+                for player in players
+            ],
+        }
 
 
 @app.post("/jobs/player-cards-training", response_model=JobResponse)

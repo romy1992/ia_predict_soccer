@@ -339,6 +339,7 @@ const JOB_RUN_ENDPOINTS = {
   scorer_training: "/jobs/scorer-training",
   player_cards_predictions: "/jobs/player-cards-predictions",
   player_cards_training: "/jobs/player-cards-training",
+  fotmob_predicted_lineups: "/jobs/fotmob-predicted-lineups",
 };
 
 export function runJobNow(jobId) {
