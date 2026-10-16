@@ -152,6 +152,13 @@ class AppConfig:
     # esperto invece della sola predizione diretta - popola la cache PRIMA
     # che qualcuno apra "Oracle Match Detail".
     model_consensus_refresh_interval_minutes: int = 60
+    # Job giornaliero formazioni previste FotMob. Gira dopo il sync del calendario
+    # (future_sync 04:30, daily refresh 05:00) cosi' le partite sono gia' a DB.
+    fotmob_lineup_hour: int = 6
+    fotmob_lineup_minute: int = 30
+    fotmob_horizon_hours: int = 72
+    fotmob_max_requests_per_run: int = 120
+    fotmob_refresh_hours: int = 20
 
 
 def load_app_config() -> AppConfig:
@@ -189,6 +196,11 @@ def load_app_config() -> AppConfig:
     player_cards_training_minute = _int_env("PLAYER_CARDS_TRAINING_MINUTE", default=45)
     team_rating_refresh_interval_minutes = _int_env("TEAM_RATING_REFRESH_INTERVAL_MINUTES", default=60)
     model_consensus_refresh_interval_minutes = _int_env("MODEL_CONSENSUS_REFRESH_INTERVAL_MINUTES", default=60)
+    fotmob_lineup_hour = _int_env("FOTMOB_LINEUP_HOUR", default=6)
+    fotmob_lineup_minute = _int_env("FOTMOB_LINEUP_MINUTE", default=30)
+    fotmob_horizon_hours = _int_env("FOTMOB_HORIZON_HOURS", default=72)
+    fotmob_max_requests_per_run = _int_env("FOTMOB_MAX_REQUESTS_PER_RUN", default=120)
+    fotmob_refresh_hours = _int_env("FOTMOB_REFRESH_HOURS", default=20)
     database_url = os.environ.get("DATABASE_URL", DEFAULT_DATABASE_URL).strip()
     database_schema = os.environ.get("DATABASE_SCHEMA", DEFAULT_DATABASE_SCHEMA).strip() or DEFAULT_DATABASE_SCHEMA
 
@@ -221,5 +233,10 @@ def load_app_config() -> AppConfig:
         player_cards_training_hour=player_cards_training_hour,
         player_cards_training_minute=player_cards_training_minute,
         model_consensus_refresh_interval_minutes=model_consensus_refresh_interval_minutes,
+        fotmob_lineup_hour=fotmob_lineup_hour,
+        fotmob_lineup_minute=fotmob_lineup_minute,
+        fotmob_horizon_hours=fotmob_horizon_hours,
+        fotmob_max_requests_per_run=fotmob_max_requests_per_run,
+        fotmob_refresh_hours=fotmob_refresh_hours,
     )
 

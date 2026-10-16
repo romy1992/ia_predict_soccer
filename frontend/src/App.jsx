@@ -234,7 +234,10 @@ export default function App() {
     return rows?.rows || [];
   }, []);
   const loadMetaData = useCallback(async () => {
-    const [healthData, marketsData, jobsData, predData, datesData, quotaData] = await Promise.all([
+    // allSettled: storico job / log previsioni non devono impedire il
+    // caricamento delle partite. Prima un solo fallimento (rete lenta,
+    // "Failed to fetch") azzerava l'intera dashboard.
+    const [healthRes, marketsRes, jobsRes, predRes, datesRes, quotaRes] = await Promise.allSettled([
       getHealth(),
       getMarkets(),
       getJobs(80),
@@ -247,18 +250,28 @@ export default function App() {
       // caricamento iniziale.
       getApiQuota().catch(() => null),
     ]);
-    setHealth({ ...healthData, apiBaseUrl: API_BASE_URL });
-    const apiMarkets = marketsData?.markets || [];
-    const mergedMarkets = ["all", ...apiMarkets];
-    setMarkets(mergedMarkets);
-    setSelectedMarket((prev) => (mergedMarkets.includes(prev) ? prev : "all"));
-    setManualMarket((prev) => (apiMarkets.includes(prev) ? prev : apiMarkets[0] || "under_over_2_5"));
-    setJobsRows(jobsData?.rows || []);
-    setPredictionRows(predData?.rows || []);
-    const dates = datesData?.dates || [];
-    setAvailableDates(dates.length > 0 ? dates : [todayIso()]);
-    if (quotaData) {
-      setApiQuota(quotaData);
+    if (healthRes.status === "fulfilled") {
+      setHealth({ ...healthRes.value, apiBaseUrl: API_BASE_URL });
+    }
+    if (marketsRes.status === "fulfilled") {
+      const apiMarkets = marketsRes.value?.markets || [];
+      const mergedMarkets = ["all", ...apiMarkets];
+      setMarkets(mergedMarkets);
+      setSelectedMarket((prev) => (mergedMarkets.includes(prev) ? prev : "all"));
+      setManualMarket((prev) => (apiMarkets.includes(prev) ? prev : apiMarkets[0] || "under_over_2_5"));
+    }
+    if (jobsRes.status === "fulfilled") {
+      setJobsRows(jobsRes.value?.rows || []);
+    }
+    if (predRes.status === "fulfilled") {
+      setPredictionRows(predRes.value?.rows || []);
+    }
+    if (datesRes.status === "fulfilled") {
+      const dates = datesRes.value?.dates || [];
+      setAvailableDates(dates.length > 0 ? dates : [todayIso()]);
+    }
+    if (quotaRes.status === "fulfilled" && quotaRes.value) {
+      setApiQuota(quotaRes.value);
     }
   }, []);
   const loadDashboardData = useCallback(
@@ -290,9 +303,11 @@ export default function App() {
         setLiveData(payload.live);
         setDayData(payload.day);
         setLastRefresh(new Date().toLocaleString("it-IT"));
+        return true;
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         setError(message);
+        return false;
       } finally {
         if (mode === "full") {
           setIsLoading(false);
@@ -456,9 +471,11 @@ export default function App() {
     }
     setError("");
     try {
-      await loadMetaData();
-      await loadDashboardData("silent");
-      setLastRefresh(new Date().toLocaleString("it-IT"));
+      // In parallelo: le partite non aspettano storico job e log previsioni.
+      const [, dashOk] = await Promise.all([loadMetaData(), loadDashboardData("silent")]);
+      if (dashOk) {
+        setLastRefresh(new Date().toLocaleString("it-IT"));
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       setError(message);

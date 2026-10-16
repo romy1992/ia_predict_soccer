@@ -13,6 +13,11 @@ class PredictionLogger:
     con `scheduler`): round-trip get-append-put sull'intero oggetto,
     accettabile per un singolo writer."""
 
+    # La dashboard chiede solo le ultime righe. Leggere l'intero jsonl a
+    # ogni apertura (cresce a ogni previsione) saturava la risposta e sul
+    # telefono la fetch falliva prima di mostrare le partite.
+    _TAIL_BYTES = 256 * 1024
+
     def __init__(self, key: str = "best_models/predictions_log.jsonl"):
         self.key = key
 
@@ -46,9 +51,19 @@ class PredictionLogger:
 
     def tail(self, limit: int = 100, market: Optional[str] = None) -> list[Dict[str, Any]]:
         try:
-            raw = bucket_store.get_bytes(self.key)
+            size = bucket_store.object_size(self.key)
         except bucket_store.BucketKeyNotFound:
             return []
+
+        window = self._TAIL_BYTES if not market else max(self._TAIL_BYTES, 1024 * 1024)
+        if size <= window:
+            raw = bucket_store.get_bytes(self.key)
+        else:
+            raw = bucket_store.get_bytes_range(self.key, max(0, size - window), size - 1)
+            # Il primo pezzo puo' essere una riga tagliata a meta'.
+            cut = raw.find(b"\n")
+            if cut >= 0:
+                raw = raw[cut + 1 :]
 
         rows: list[Dict[str, Any]] = []
         for line in raw.decode("utf-8").splitlines():
