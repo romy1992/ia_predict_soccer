@@ -272,6 +272,23 @@ JOB_DEFINITIONS: dict[str, dict[str, Any]] = {
         "run_all_priority": 86,
         "run_all_included": True,
     },
+    "fotmob_predicted_lineups": {
+        "label": "Formazioni previste FotMob",
+        "description": (
+            "Una volta al giorno recupera da FotMob le probabili formazioni delle partite delle prossime 72 ore "
+            "(prime 5 leghe e coppe europee gia' a DB), le valida e le salva come snapshot. Solo se i controlli "
+            "passano calcola una previsione iniziale di marcatori e ammoniti con il modello gia' in production. "
+            "Non sostituisce le formazioni ufficiali API-Sports e non cambia i pesi del modello. "
+            "Richiede RAPIDAPI_KEY (RapidAPI, non la quota API-Sports)."
+        ),
+        "default_enabled": True,
+        "calls_api_sports": False,
+        "schedule_kind": "daily",
+        "job_history_type": "fotmob_predicted_lineups",
+        "cfg_fields": {"hour": "fotmob_lineup_hour", "minute": "fotmob_lineup_minute"},
+        "run_all_priority": 999,
+        "run_all_included": False,
+    },
 }
 
 # Limiti di validazione per ciascun `schedule_kind` (Impostazioni, editor

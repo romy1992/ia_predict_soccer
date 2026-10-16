@@ -77,7 +77,7 @@ class TestBuildSchedulerJobsSeparation(unittest.TestCase):
     job SEPARATI per data sync (frequenti) e training (indipendente) - mai
     un job unico che incatena import+retrain."""
 
-    def test_registers_exactly_fifteen_independent_jobs(self):
+    def test_registers_exactly_sixteen_independent_jobs(self):
         sched = scheduler_module.build_scheduler(cfg=_cfg())
         job_ids = {job.id for job in sched.get_jobs()}
         self.assertEqual(
@@ -98,12 +98,13 @@ class TestBuildSchedulerJobsSeparation(unittest.TestCase):
                 "scorer_training",
                 "player_cards_predictions",
                 "player_cards_training",
+                "fotmob_predicted_lineups",
             },
         )
 
     def test_build_scheduler_uses_default_config_when_none_given(self):
         sched = scheduler_module.build_scheduler()
-        self.assertEqual(len(sched.get_jobs()), 15)
+        self.assertEqual(len(sched.get_jobs()), 16)
 
 
 class TestMaxInstancesAndCoalesce(unittest.TestCase):
@@ -113,7 +114,7 @@ class TestMaxInstancesAndCoalesce(unittest.TestCase):
     def test_every_job_has_max_instances_one_and_coalesce_true(self):
         sched = scheduler_module.build_scheduler(cfg=_cfg())
         jobs = sched.get_jobs()
-        self.assertEqual(len(jobs), 15)
+        self.assertEqual(len(jobs), 16)
         for job in jobs:
             self.assertEqual(job.max_instances, 1, f"{job.id} deve avere max_instances=1")
             self.assertTrue(job.coalesce, f"{job.id} deve avere coalesce=True")

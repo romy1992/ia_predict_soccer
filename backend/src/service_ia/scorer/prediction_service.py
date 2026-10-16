@@ -88,20 +88,21 @@ def fetch_official_lineups(session: Session, provider, repo_player, *, leagues: 
     return {"candidates": len(cand), "lineups_fetched": fetched, "lineups_not_ready": missing}
 
 
-def _latest_revisions(session: Session, fixture_ids: list[int]) -> dict[int, tuple[int, set[int]]]:
+def _latest_revisions(session: Session, fixture_ids: list[int]) -> dict[int, tuple[int, set[int], str]]:
     if not fixture_ids:
         return {}
     mx = session.execute(
         select(PlayerScorerPrediction.fixture_id, func.max(PlayerScorerPrediction.revision))
         .where(PlayerScorerPrediction.fixture_id.in_(fixture_ids)).group_by(PlayerScorerPrediction.fixture_id)
     ).all()
-    out: dict[int, tuple[int, set[int]]] = {}
+    out: dict[int, tuple[int, set[int], str]] = {}
     for fid, rev in mx:
-        pids = session.execute(
-            select(PlayerScorerPrediction.player_id).where(
+        rows = session.execute(
+            select(PlayerScorerPrediction.player_id, PlayerScorerPrediction.lineup_type).where(
                 PlayerScorerPrediction.fixture_id == fid, PlayerScorerPrediction.revision == rev)
-        ).scalars().all()
-        out[int(fid)] = (int(rev), set(int(p) for p in pids))
+        ).all()
+        out[int(fid)] = (int(rev), {int(player_id) for player_id, _lineup_type in rows},
+                         (rows[0][1] if rows else None) or "official")
     return out
 
 
@@ -151,7 +152,8 @@ def predict_upcoming(session: Session, bundle: dict, *, leagues: Iterable[int] =
         fid = int(fid)
         pids = set(int(p) for p in grp["player_id"])
         prev = latest.get(fid)
-        if prev and prev[1] == pids:
+        # Una revisione `predicted` (FotMob) non blocca la formazione ufficiale: stesso undici, nuova revisione.
+        if prev and prev[1] == pids and prev[2] == "official":
             skipped += 1
             continue
         revision = (prev[0] + 1) if prev else 1

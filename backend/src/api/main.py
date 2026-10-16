@@ -136,6 +136,7 @@ from src.jobs.scheduler import (
     run_manual_today_update,
     run_model_consensus_refresh,
     run_official_prediction_capture,
+    run_fotmob_predicted_lineups,
     run_player_cards_predictions,
     run_player_cards_training,
     run_scorer_predictions,
@@ -1244,6 +1245,51 @@ def trigger_player_cards_predictions(payload: JobScorerRequest, background_tasks
         return JobResponse(queued=True, message="Player cards predictions job queued", details={"job_id": row["job_id"]})
     return JobResponse(queued=False, message="Player cards predictions job completed",
                        details=run_player_cards_predictions())
+
+
+@app.post("/jobs/fotmob-predicted-lineups", response_model=JobResponse)
+def trigger_fotmob_predicted_lineups(payload: JobScorerRequest, background_tasks: BackgroundTasks) -> JobResponse:
+    """"Esegui ora" del job giornaliero delle formazioni previste FotMob."""
+    if payload.async_run:
+        row = JobHistory().queue_job(job_type="fotmob_predicted_lineups", params={})
+        background_tasks.add_task(run_fotmob_predicted_lineups, job_id=row["job_id"])
+        return JobResponse(queued=True, message="FotMob predicted lineups job queued", details={"job_id": row["job_id"]})
+    return JobResponse(
+        queued=False, message="FotMob predicted lineups job completed", details=run_fotmob_predicted_lineups()
+    )
+
+
+@app.get("/fotmob/lineups/{fixture_id}")
+def fotmob_lineup_for_fixture(fixture_id: int) -> dict:
+    """Ultimo snapshot FotMob della partita. Non contiene la chiave RapidAPI."""
+    from sqlalchemy import select
+
+    from src.repository.base.repository_db import SessionLocal
+    from src.service_ia.fotmob.models import FotmobLineupPlayer, FotmobLineupSnapshot
+
+    with SessionLocal() as session:
+        snapshot = session.execute(
+            select(FotmobLineupSnapshot)
+            .where(FotmobLineupSnapshot.fixture_id == fixture_id)
+            .order_by(FotmobLineupSnapshot.fetched_at.desc())
+        ).scalars().first()
+        if snapshot is None:
+            return {"fixture_id": fixture_id, "snapshot": None, "players": []}
+        players = session.execute(
+            select(FotmobLineupPlayer).where(FotmobLineupPlayer.snapshot_id == snapshot.id)
+        ).scalars().all()
+        body = snapshot.to_dict()
+        body.pop("payload", None)
+        fetched = body.get("fetched_at")
+        body["fetched_at"] = fetched.isoformat() if fetched is not None else None
+        return {
+            "fixture_id": fixture_id,
+            "snapshot": body,
+            "players": [
+                {column.name: getattr(player, column.name) for column in player.__table__.columns}
+                for player in players
+            ],
+        }
 
 
 @app.post("/jobs/player-cards-training", response_model=JobResponse)
