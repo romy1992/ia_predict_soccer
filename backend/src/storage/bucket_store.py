@@ -133,13 +133,53 @@ def put_joblib(key: str, obj: Any) -> None:
 
 
 def list_keys(prefix: str) -> list[str]:
+    return [meta["key"] for meta in list_object_meta(prefix)]
+
+
+def list_object_meta(prefix: str) -> list[dict[str, Any]]:
+    """Elenco leggero (chiave, data di modifica, dimensione): un ListObjects,
+    senza scaricare i corpi. Serve a leggere solo gli ultimi N record
+    invece dell'intero prefisso."""
     client, bucket = _get_client_and_bucket()
     paginator = client.get_paginator("list_objects_v2")
-    keys: list[str] = []
+    metas: list[dict[str, Any]] = []
     for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
         for obj in page.get("Contents", []):
-            keys.append(obj["Key"])
-    return keys
+            metas.append(
+                {
+                    "key": obj["Key"],
+                    "last_modified": obj.get("LastModified"),
+                    "size": obj.get("Size"),
+                }
+            )
+    return metas
+
+
+def object_size(key: str) -> int:
+    client, bucket = _get_client_and_bucket()
+    try:
+        response = client.head_object(Bucket=bucket, Key=key)
+    except ClientError as exc:
+        if _is_not_found(exc):
+            raise BucketKeyNotFound(key) from exc
+        raise
+    length = response.get("ContentLength")
+    if length is None:
+        return len(get_bytes(key))
+    return int(length)
+
+
+def get_bytes_range(key: str, start: int, end: int) -> bytes:
+    client, bucket = _get_client_and_bucket()
+    try:
+        response = client.get_object(
+            Bucket=bucket, Key=key, Range=f"bytes={int(start)}-{int(end)}"
+        )
+    except ClientError as exc:
+        if _is_not_found(exc):
+            raise BucketKeyNotFound(key) from exc
+        raise
+    return response["Body"].read()
 
 
 def _get_json_isolated(key: str) -> Any:
@@ -159,6 +199,13 @@ def _get_json_isolated(key: str) -> Any:
         return None
 
 
+def get_json_many(keys: list[str]) -> list[Any]:
+    if not keys:
+        return []
+    with ThreadPoolExecutor(max_workers=min(16, len(keys))) as pool:
+        return list(pool.map(_get_json_isolated, keys))
+
+
 def list_json(prefix: str) -> list[Any]:
     """`list_keys` + `get_json` in parallelo per ogni chiave - un oggetto
     per record (job, run, evento di promozione...) sotto `prefix` invece
@@ -166,12 +213,7 @@ def list_json(prefix: str) -> list[Any]:
     chiamate girano in un ThreadPoolExecutor cosi' il costo resta
     dominato dalla latenza di rete, non dalla somma delle N round-trip
     sequenziali."""
-    keys = list_keys(prefix)
-    if not keys:
-        return []
-    with ThreadPoolExecutor(max_workers=min(16, len(keys))) as pool:
-        results = list(pool.map(_get_json_isolated, keys))
-    return [item for item in results if item]
+    return [item for item in get_json_many(list_keys(prefix)) if item]
 
 
 def delete(key: str) -> None:

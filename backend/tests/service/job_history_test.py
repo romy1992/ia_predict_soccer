@@ -3,6 +3,7 @@ import threading
 import unittest
 
 from src.jobs.job_history import JobHistory
+from src.storage import bucket_store
 
 
 class TestJobHistory(unittest.TestCase):
@@ -60,6 +61,21 @@ class TestJobHistory(unittest.TestCase):
             rows = history.tail(limit=20, job_type="import", status="success")
             self.assertEqual(len(rows), 1)
             self.assertEqual(rows[0]["summary"]["inserted"], 10)
+
+    def test_tail_downloads_only_the_newest_jobs(self):
+        history = JobHistory(path="jobs/tail-cap")
+        for index in range(12):
+            history.create_job(
+                job_type="import",
+                status="success",
+                job_id=f"id-{index:02d}",
+                summary={"n": index},
+            )
+        client = bucket_store._client
+        client.gets = 0
+        rows = history.tail(limit=3)
+        self.assertEqual(client.gets, 3)
+        self.assertEqual({row["summary"]["n"] for row in rows}, {9, 10, 11})
 
     def test_get_restituisce_la_riga_o_none(self):
         with tempfile.TemporaryDirectory() as tmp:

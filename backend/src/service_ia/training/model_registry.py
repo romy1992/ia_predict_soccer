@@ -4,6 +4,7 @@ import hashlib
 import logging
 import os
 import subprocess
+import threading
 from time import monotonic
 from typing import Any, Dict, Optional
 
@@ -18,6 +19,7 @@ from src.storage import bucket_store
 logging.basicConfig(level=logging.INFO)
 
 _CACHE_TTL_SECONDS = 5.0
+_ROWS_LOCK = threading.Lock()
 
 
 class ModelRegistry:
@@ -75,9 +77,15 @@ class ModelRegistry:
         if cached is not None and (monotonic() - cached[0]) < _CACHE_TTL_SECONDS:
             return cached[1]
 
-        rows = bucket_store.list_json(prefix)
-        cls._ROWS_CACHE[prefix] = (monotonic(), rows)
-        return rows
+        # La dashboard chiede registry e bundle insieme: senza il lock i
+        # due thread scaricherebbero due volte l'intero prefisso.
+        with _ROWS_LOCK:
+            cached = cls._ROWS_CACHE.get(prefix)
+            if cached is not None and (monotonic() - cached[0]) < _CACHE_TTL_SECONDS:
+                return cached[1]
+            rows = bucket_store.list_json(prefix)
+            cls._ROWS_CACHE[prefix] = (monotonic(), rows)
+            return rows
 
     def _run_key(self, run_id: str) -> str:
         return f"{self.runs_prefix}{run_id}.json"

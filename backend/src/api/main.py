@@ -12,6 +12,7 @@ from typing import Any, Optional
 import numpy as np
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 
 from src.api import auth
@@ -181,13 +182,23 @@ async def _require_auth_cookie(request: Request, call_next):
     return await call_next(request)
 
 
-# Registrato DOPO il middleware di auth: Starlette avvolge i middleware in
-# ordine inverso di registrazione (l'ultimo aggiunto diventa il piu'
-# esterno), quindi CORS deve essere l'ultimo `add_middleware` per restare
-# fuori e gestire sia il preflight OPTIONS sia gli header sulle risposte
-# 401 ritornate dal middleware di auth - altrimenti un 401 su un preflight
-# arriverebbe al browser senza header CORS e verrebbe letto come errore
-# CORS generico invece che come "non autenticato".
+@app.middleware("http")
+async def _unhandled_as_json(request: Request, call_next):
+    """Un'eccezione non gestita esce da CORS e il browser la mostra come
+    "Failed to fetch" (nessun header Access-Control-Allow-Origin sulla 500
+    generata dal proxy). Qui la trasformiamo in JSON prima di CORS."""
+    try:
+        return await call_next(request)
+    except Exception:
+        logging.exception("Errore non gestito su %s %s", request.method, request.url.path)
+        return JSONResponse(status_code=500, content={"detail": "Errore interno del server"})
+
+
+# Ordine di registrazione (l'ultimo diventa il piu' esterno):
+# auth -> errori JSON -> gzip -> CORS. CORS deve restare il piu' esterno
+# cosi' anche 401 e 500 hanno gli header, altrimenti il browser legge un
+# errore di rete generico ("Failed to fetch") invece del dettaglio.
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins(),

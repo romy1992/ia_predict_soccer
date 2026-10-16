@@ -282,7 +282,29 @@ class JobHistory:
         return row
 
     def tail(self, limit: int = 100, job_type: Optional[str] = None, status: Optional[str] = None) -> list[dict[str, Any]]:
-        rows = bucket_store.list_json(self.prefix + "/")
+        """Ultimi job. Non scarica l'intero prefisso: la dashboard chiama
+        questo endpoint a ogni apertura e un GET per ogni job storico
+        (uno ogni mezz'ora, per sempre) faceva morire la richiesta sul
+        telefono prima del caricamento delle partite ("Failed to fetch")."""
+        metas = bucket_store.list_object_meta(self.prefix + "/")
+
+        def _modified_key(meta: dict[str, Any]) -> str:
+            value = meta.get("last_modified")
+            if value is None:
+                return ""
+            if hasattr(value, "isoformat"):
+                return value.isoformat()
+            return str(value)
+
+        metas.sort(key=_modified_key)
+        newest_first = list(reversed(metas))
+        # Senza filtri bastano gli ultimi `limit` oggetti. Con un filtro
+        # si guarda un po' piu' indietro (i fallimenti recenti stanno tra
+        # i job nuovi), senza rileggere anni di cronologia.
+        scan_cap = limit if not (job_type or status) else max(limit * 8, limit)
+        chosen = newest_first[: max(scan_cap, 0)]
+        rows = [row for row in bucket_store.get_json_many([meta["key"] for meta in chosen]) if row]
+
         filtered: list[dict[str, Any]] = []
         for row in rows:
             if job_type and row.get("job_type") != job_type:
