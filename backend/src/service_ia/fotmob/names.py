@@ -32,10 +32,17 @@ _ALIASES = {
 }
 
 
+# Lettere che NFKD non scompone: senza questa tabella "Ødegaard" diventa "degaard" e non corrisponde a "Odegaard".
+_TRANSLIT = str.maketrans({
+    "ø": "o", "Ø": "O", "ł": "l", "Ł": "L", "đ": "d", "Đ": "D", "ð": "d", "Ð": "D", "þ": "th", "Þ": "Th",
+    "ß": "ss", "æ": "ae", "Æ": "AE", "œ": "oe", "Œ": "OE", "ı": "i",
+})
+
+
 def normalize_name(value: str | None) -> str:
     if not value:
         return ""
-    text = unicodedata.normalize("NFKD", value)
+    text = unicodedata.normalize("NFKD", value.translate(_TRANSLIT))
     text = "".join(ch for ch in text if not unicodedata.combining(ch))
     text = text.lower().replace("&", " and ")
     text = _PUNCT.sub(" ", text)
@@ -66,3 +73,14 @@ def player_keys(name: str | None) -> tuple[str, str | None]:
     if len(tokens) < 2:
         return full, None
     return full, f"{tokens[0][0]}|{tokens[-1]}"
+
+
+def name_tokens(name: str | None) -> tuple[str, ...]:
+    """Token del nome senza suffissi (jr/junior), nell'ordine originale."""
+    return tuple(token for token in normalize_name(name).split(" ") if token and token not in {"jr", "junior"})
+
+
+def token_key(name: str | None) -> str | None:
+    """Chiave senza ordine ("Kang In Lee" e "Lee Kang In" coincidono). Solo con almeno due token."""
+    tokens = name_tokens(name)
+    return " ".join(sorted(tokens)) if len(tokens) >= 2 else None
