@@ -700,8 +700,10 @@ class DashboardService:
             else:
                 # Il binario legacy stima Not Home (Draw + Away): non può
                 # essere prezzato con la sola quota Away.
+                # "Non casa" = pareggio o trasferta: stessa scommessa della doppia chance X2.
                 pick = "Non casa"
-                odd = None
+                dc_rows = odds_summary.get("dc") or []
+                odd = self._row_to_outcome_maps(dc_rows).get(self._normalize_text("Draw/Away"))
             return pick, odd
 
         if market in {"corners", "cards"}:
@@ -727,6 +729,30 @@ class DashboardService:
             return fallback, None
 
         return str(prediction), None
+
+    @staticmethod
+    def _not_home_baseline_row(fixture_baseline: dict[str, Any]) -> Optional[dict[str, Any]]:
+        """Riga baseline per "Non casa" (h2h binario legacy): quota = X2 della doppia chance,
+        probabilita' equa = 1 - equa di "Home". None se manca una delle due."""
+        markets = fixture_baseline.get("markets") or {}
+        home = get_market_outcome_baseline(fixture_baseline, "h2h", "Home")
+        x2 = next(
+            (
+                item
+                for item in (markets.get("dc") or {}).get("outcomes") or []
+                if DashboardService._normalize_text(str(item.get("outcome") or "")) == "drawaway"
+            ),
+            None,
+        )
+        if not home or not x2 or home.get("fair_probability") is None or not x2.get("avg_odd"):
+            return None
+        return {
+            "outcome": "Not Home",
+            "avg_odd": x2["avg_odd"],
+            "implied_raw": x2.get("implied_raw"),
+            "fair_probability": 1.0 - float(home["fair_probability"]),
+            "bookmakers": x2.get("bookmakers", 0),
+        }
 
     @staticmethod
     def _baseline_outcome_for_prediction(market: str, prediction: int, pick_label: str) -> str:
@@ -809,6 +835,8 @@ class DashboardService:
                 market=market,
                 outcome=baseline_outcome,
             )
+            if baseline_row is None and market == "h2h" and baseline_outcome == "Not Home":
+                baseline_row = self._not_home_baseline_row(bookmaker_baseline or {})
             market_baseline = ((bookmaker_baseline or {}).get("markets") or {}).get(market) or {}
 
             # BET-01 (Fair Odds Engine): p_market_raw/p_market_fair/fair_odd
@@ -825,6 +853,16 @@ class DashboardService:
                 p_model=predicted_probability,
             )
             decision = evaluate_decision_from_fair_odds_outcome(fair_odds_outcome)
+            value_reason = decision.reason
+            low_reliability = False
+            if market in self._LINE_MARKET_ODDS_COLUMN and decision.decision == "SENZA QUOTA":
+                value_reason = "Linea non quotata dai bookmaker: manca il confronto, la probabilita' resta valida"
+                if market == "cards_line_6_5":
+                    low_reliability = True
+                    value_reason = (
+                        "Linea 6.5 non quotata: sullo storico il modello e' meno affidabile "
+                        "senza quote, previsione da usare con cautela"
+                    )
 
             # Segnale "Bet Over" (richiesto esplicitamente dall'operatore,
             # 2026-09-08): INDIPENDENTE dal pick sopra e da `decision` - non
@@ -878,7 +916,8 @@ class DashboardService:
                         else None
                     ),
                     "value_label": decision.decision,
-                    "value_reason": decision.reason,
+                    "value_reason": value_reason,
+                    "low_reliability": low_reliability,
                     "policy_version": decision.policy_version,
                     "is_official": False,
                     "settlement_status": None,
