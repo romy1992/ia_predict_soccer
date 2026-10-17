@@ -152,8 +152,10 @@ from src.service_ia.training.model_paths import resolve_model_key
 from src.storage import bucket_store
 from src.service_ia.training.model_registry import ModelRegistry
 from src.service_ia.training.prediction_logger import PredictionLogger
+from src.api import players_routes
 
 app = FastAPI(title="Soccer ML Platform API", version="0.1.0")
+app.include_router(players_routes.router)
 
 
 def _cors_origins() -> list[str]:
@@ -176,6 +178,9 @@ async def _require_auth_cookie(request: Request, call_next):
     bisogno di ricordarsi di aggiungere una dependency per route (nessun
     pattern Depends() esisteva nel progetto prima di questo)."""
     if request.url.path not in auth.PUBLIC_PATHS:
+        # Altri progetti: solo /players/* con la chiave di servizio (nessun login del pannello).
+        if request.url.path.startswith("/players/") and players_routes.service_key_ok(request.headers.get("X-Service-Key")):
+            return await call_next(request)
         token = request.cookies.get(auth.AUTH_COOKIE_NAME)
         username = auth.decode_token(token) if token else None
         if username is None:
