@@ -25,7 +25,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from src.data.player.scoring_dataset import (
-    META_COLUMNS, REGULATION_END, SHRINK_K, _appearances, _role_prior, fill_missing_roles, load_raw,
+    META_COLUMNS, REGULATION_END, SHRINK_K, _appearances, _role_prior, attach_stats, fill_missing_roles, load_raw,
+    load_stats, rolling_per90, stats_coverage,
 )
 from src.service_ia.model.match import Match
 
@@ -37,6 +38,9 @@ FEATURE_COLUMNS = [
     "starter_rate_last5", "avg_minutes_last5", "rest_days",
     "team_yc10", "opp_yc10", "ref_yc_per_match", "ref_known",
 ]
+# v2: falli per giocatore (`player_match_stats`), assenti (NaN) per le partite senza statistiche.
+STATS_FEATURES = ["fouls_c_p90_l10", "fouls_d_p90_l10", "fouls_c_p90_l5", "stats_games_l10"]
+FEATURE_COLUMNS_V2 = FEATURE_COLUMNS + STATS_FEATURES
 YELLOW_DETAILS = {"yellow card", "second yellow card"}
 # Usati solo quando non esiste ancora nessuna storia del ruolo (inizio dataset): gialli per 90'.
 FALLBACK_YELLOW_PER90 = {"F": 0.10, "M": 0.17, "D": 0.15}
@@ -82,6 +86,11 @@ def _player_features(played: pd.DataFrame) -> pd.DataFrame:
     gv_y = gv["yellows"].transform(lambda s: s.shift(1).rolling(10, min_periods=1).sum())
     gv_min = gv["minutes"].transform(lambda s: s.shift(1).rolling(10, min_periods=1).sum())
     p["rate_samevenue_shrunk"] = (gv_y.fillna(0) + SHRINK_K * p["role_rate"]) / (gv_min.fillna(0) / 90.0 + SHRINK_K)
+    # v2: i falli contano come "statistiche presenti" solo se la riga ha dati.
+    p["fouls_c_p90_l10"] = rolling_per90(p, "fouls_committed", 10)
+    p["fouls_d_p90_l10"] = rolling_per90(p, "fouls_drawn", 10)
+    p["fouls_c_p90_l5"] = rolling_per90(p, "fouls_committed", 5)
+    p["stats_games_l10"] = stats_coverage(p.assign(shots_total=p["fouls_committed"]))
     return p
 
 
@@ -130,17 +139,17 @@ def _referee_form(matches: pd.DataFrame, events: pd.DataFrame, referees: pd.Data
 
 def build_dataset(matches: pd.DataFrame, lineups: pd.DataFrame, events: pd.DataFrame,
                   referees: pd.DataFrame | None = None,
-                  upcoming_fixture_ids: Iterable[int] = ()) -> pd.DataFrame:
+                  upcoming_fixture_ids: Iterable[int] = (), stats: pd.DataFrame | None = None) -> pd.DataFrame:
     """Dataset finale: META + FEATURE + TARGET, ordinato per data.
 
     `upcoming_fixture_ids`: partite NON ancora giocate di cui si vuole la riga di previsione per i soli
     titolari della formazione ufficiale (feature solo dal passato; `yellow` vale 0 e non va usato)."""
     upcoming = set(int(x) for x in upcoming_fixture_ids)
     if matches.empty or lineups.empty:
-        return pd.DataFrame(columns=META_COLUMNS + FEATURE_COLUMNS + [TARGET])
+        return pd.DataFrame(columns=META_COLUMNS + FEATURE_COLUMNS_V2 + [TARGET])
     referees = referees if referees is not None else pd.DataFrame(columns=["fixture_id", "referee"])
     lineups = fill_missing_roles(matches, lineups)
-    a = _appearances(matches, lineups, events)
+    a = attach_stats(_appearances(matches, lineups, events), stats)
     yellows = _yellow_events(events).dropna(subset=["player_id"]).groupby(["fixture_id", "player_id"]).size().rename("yellows")
     a = a.join(yellows, on=["fixture_id", "player_id"])
     a["yellows"] = a["yellows"].fillna(0).astype(int)
@@ -160,7 +169,7 @@ def build_dataset(matches: pd.DataFrame, lineups: pd.DataFrame, events: pd.DataF
     for pos in ("F", "M", "D"):
         out[f"pos_{pos}"] = (out["position"] == pos).astype(int)
     out["is_starter"] = out["is_starter"].astype(int)
-    cols = META_COLUMNS + FEATURE_COLUMNS + [TARGET]
+    cols = META_COLUMNS + FEATURE_COLUMNS_V2 + [TARGET]
     return out[cols].sort_values(["match_date", "fixture_id", "player_id"]).reset_index(drop=True)
 
 
@@ -168,4 +177,5 @@ def build_from_session(session: Session, leagues: Sequence[int], seasons: Sequen
                        finished_statuses: Iterable[str]) -> pd.DataFrame:
     matches, lineups, events = load_raw(session, leagues, seasons, finished_statuses)
     referees = load_referees(session, matches["fixture_id"].tolist()) if not matches.empty else None
-    return build_dataset(matches, lineups, events, referees)
+    stats = load_stats(session, matches["fixture_id"].tolist()) if not matches.empty else None
+    return build_dataset(matches, lineups, events, referees, stats=stats)
