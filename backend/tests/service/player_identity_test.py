@@ -188,3 +188,67 @@ class ServiceKeyMiddlewareTest(unittest.TestCase):
                 session_cls.return_value.__enter__.return_value = object()
                 ok = client.get("/players/lookup", params={"name": "x"}, headers={"X-Service-Key": "k"})
             self.assertEqual((ok.status_code, ok.json()["status"]), (200, "not_found"))
+
+
+class RichLineupTest(_Base):
+    def snap(self):
+        snap = FotmobLineupSnapshot(fixture_id=60, fotmob_match_id=6, lineup_type="predicted", fetched_at=NOW,
+                                    reliability="partially_validated", warnings=[], content_hash="h", starter_count=2,
+                                    mapped_starters=1, payload={}, home_team_id=10, away_team_id=20)
+        self.s.add(snap)
+        self.s.flush()
+        rows = [
+            ("home", "starter", 9001, "Mapped Guy", 11, "exact_name", "9"),
+            ("home", "starter", 9002, "Unknown Guy", None, None, "27"),
+            ("home", "bench", 9003, "Bench Guy", 13, "last_name_initial", "30"),
+            ("home", "unavailable", 9004, "Hurt Guy", 14, "exact_name", "5"),
+        ]
+        for side, role, fid, name, api, method, shirt in rows:
+            self.s.add(FotmobLineupPlayer(
+                snapshot_id=snap.id, side=side, role=role, fotmob_player_id=fid, name=name, api_player_id=api,
+                map_method=method, shirt_number=shirt,
+                unavailability_type="injury" if role == "unavailable" else None,
+                expected_return="A few weeks" if role == "unavailable" else None,
+                return_certainty="doubtful" if role == "unavailable" else None))
+        self.s.commit()
+
+    def test_each_player_carries_status_method_confidence_shirt_and_absence(self):
+        self.add_lineup(1, [(11, "Mapped Guy", 10, "M", True), (13, "Bench Guy", 10, "D", False),
+                            (14, "Hurt Guy", 10, "F", False)])
+        ids.sync_api_sports_identities(self.s)
+        self.snap()
+        out = lineups.lineup_for_fixture(self.s, 60)
+        self.assertEqual((out["lineup_type"], out["unmapped_starters"]), ("predicted", 1))
+        home = out["teams"][0]
+        starter = {p["fotmob_id"]: p for p in home["starters"]}
+        self.assertEqual((starter[9001]["status"], starter[9001]["method"], starter[9001]["confidence"]),
+                         ("starter", "exact_name", 0.9))
+        self.assertEqual((starter[9002]["mapped"], starter[9002]["api_sports_id"], starter[9002]["confidence"]),
+                         (False, None, None))
+        self.assertEqual((starter[9002]["name"], starter[9002]["shirt_number"]), ("Unknown Guy", "27"))
+        self.assertEqual(home["bench"][0]["status"], "bench")
+        hurt = home["unavailable"][0]
+        self.assertEqual(hurt["status"], "unavailable")
+        self.assertEqual((hurt["absence"]["type"], hurt["absence"]["expected_return"], hurt["absence"]["certainty"]),
+                         ("injury", "A few weeks", "doubtful"))
+
+    def test_official_players_are_certain(self):
+        self.add_lineup(2, [(1000 + i, f"P{i}", 10 if i < 11 else 20, "M", True) for i in range(22)])
+        ids.sync_api_sports_identities(self.s)
+        p = lineups.lineup_for_fixture(self.s, 2)["teams"][0]["starters"][0]
+        self.assertEqual((p["status"], p["method"], p["confidence"], p["mapped"]), ("starter", "provider_id", 1.0, True))
+
+    def test_bulk_lineups_and_bulk_links(self):
+        self.add_lineup(1, [(11, "A. One", 10, "M", True), (12, "B. Two", 10, "M", True)])
+        ids.sync_api_sports_identities(self.s)
+        bulk = lineups.lineups_for_fixtures(self.s, [1, 1, 999])
+        self.assertEqual(bulk["count"], 2)
+        self.assertEqual([f["fixture_id"] for f in bulk["fixtures"]], [1, 999])
+        out = ids.register_external_links(self.s, [
+            {"api_sports_id": 11, "fotmob_id": 500, "name": "Alpha One", "birth_date": "2000-01-02"},
+            {"api_sports_id": 12, "fotmob_id": 500, "name": "Beta Two"},   # stesso fotmob_id su un'altra persona
+            {"api_sports_id": None},
+        ])
+        self.assertEqual(out["received"], 3)
+        self.assertEqual(out["errors"], 1)
+        self.assertEqual(ids.api_id_for_fotmob(self.s, 500), 12)  # il manuale/esterno piu' recente vince, nessun errore

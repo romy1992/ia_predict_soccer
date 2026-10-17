@@ -18,7 +18,7 @@ Una chiamata live da questo ambiente non è stata possibile: `RAPIDAPI_KEY` non 
 | `FOTMOB_RAPIDAPI_HOST` | `fotmob-api.p.rapidapi.com` | Host del piano. |
 | `FOTMOB_LINEUP_HOUR` | `6` | Ora locale Europe/Rome del job. |
 | `FOTMOB_LINEUP_MINUTE` | `30` | Minuto. Sta dopo il sync del calendario. |
-| `FOTMOB_HORIZON_HOURS` | `72` | Partite `NS` da guardare. |
+| `FOTMOB_HORIZON_HOURS` | `96` | Partite `NS` da guardare (4 giorni, come la finestra dell'altro progetto). |
 | `FOTMOB_MAX_REQUESTS_PER_RUN` | `120` | Tetto di chiamate per giro. |
 | `FOTMOB_REFRESH_HOURS` | `20` | Non richiama una partita già salvata in questa finestra. |
 

@@ -59,7 +59,8 @@ def _ids_by_fotmob(session: Session, fotmob_ids: list[Any]) -> dict[str, dict[st
         PlayerProviderLink.provider == ids.API, PlayerProviderLink.identity_id.in_(identity_ids or [0])
     )).scalars().all()
     api_of = {int(link.identity_id): link.provider_player_id for link in api}
-    return {link.provider_player_id: {"identity_id": int(link.identity_id), "api_id": api_of.get(int(link.identity_id))}
+    return {link.provider_player_id: {"identity_id": int(link.identity_id), "api_id": api_of.get(int(link.identity_id)),
+                                      "method": link.method, "confidence": link.confidence}
             for link in links}
 
 
@@ -73,6 +74,8 @@ def _official_payload(session: Session, fixture_id: int, rows: list[PlayerLineup
         team["starters" if row.is_starter else "bench"].append({
             "name": row.player_name, "position": row.position, "api_sports_id": int(row.player_id),
             "fotmob_id": known.get("fotmob_id"), "identity_id": known.get("identity_id"),
+            "status": "starter" if row.is_starter else "bench", "mapped": True, "method": "provider_id",
+            "confidence": 1.0, "shirt_number": None, "absence": None,
         })
     return {"fixture_id": fixture_id, "lineup_type": "official", "source": "api_sports", "teams": list(teams.values())}
 
@@ -95,12 +98,23 @@ def _predicted_payload(session: Session, fixture_id: int, snapshot: FotmobLineup
             continue
         known = fotmob_maps.get(str(p.fotmob_player_id), {})
         api_id = p.api_player_id if p.api_player_id is not None else known.get("api_id")
+        method = p.map_method if p.api_player_id is not None else known.get("method")
+        confidence = ids.METHOD_CONFIDENCE.get(method or "", None) if api_id is not None else None
+        if known.get("confidence") is not None and api_id is not None and p.api_player_id is None:
+            confidence = known["confidence"]
         side[key[p.role]].append({
             "name": p.name, "position": p.historical_position, "api_sports_id": int(api_id) if api_id is not None else None,
-            "fotmob_id": p.fotmob_player_id, "identity_id": known.get("identity_id"), "map_method": p.map_method,
+            "fotmob_id": p.fotmob_player_id, "identity_id": known.get("identity_id"),
+            "status": {"starter": "starter", "bench": "bench", "unavailable": "unavailable"}[p.role],
+            "mapped": api_id is not None, "method": method, "confidence": confidence,
+            "shirt_number": p.shirt_number, "map_method": p.map_method,
+            "absence": ({"type": p.unavailability_type, "expected_return": p.expected_return,
+                         "expected_return_date": p.expected_return_date, "certainty": p.return_certainty}
+                        if p.role == "unavailable" else None),
         })
+    unmapped = sum(1 for t in teams.values() for q in t["starters"] if q["api_sports_id"] is None)
     return {"fixture_id": fixture_id, "lineup_type": snapshot.lineup_type or "predicted", "source": "fotmob",
-            "reliability": snapshot.reliability, "fetched_at": snapshot.fetched_at.isoformat() if snapshot.fetched_at else None,
+            "reliability": snapshot.reliability, "unmapped_starters": unmapped, "fetched_at": snapshot.fetched_at.isoformat() if snapshot.fetched_at else None,
             "teams": [teams["home"], teams["away"]]}
 
 
@@ -118,6 +132,15 @@ def lineup_for_fixture(session: Session, fixture_id: int, prefer: str = "officia
         if kind == "predicted" and snapshot is not None:
             return _predicted_payload(session, fixture_id, snapshot)
     return {"fixture_id": fixture_id, "lineup_type": None, "source": None, "teams": []}
+
+
+def lineups_for_fixtures(session: Session, fixture_ids: list[int], prefer: str = "official") -> dict[str, Any]:
+    """Piu' partite in una chiamata (massimo `MAX_BULK`)."""
+    wanted = list(dict.fromkeys(int(f) for f in fixture_ids))[:MAX_BULK]
+    return {"count": len(wanted), "fixtures": [lineup_for_fixture(session, f, prefer=prefer) for f in wanted]}
+
+
+MAX_BULK = 50
 
 
 def learn_from_official(session: Session, fixture_id: int) -> dict[str, int]:

@@ -287,3 +287,18 @@ def register_external_link(session: Session, *, api_sports_id: Optional[int] = N
                                   source=source)
     session.commit()
     return {"status": status, "identity": identity_payload(session, identity)}
+
+
+def register_external_links(session: Session, items: list[dict[str, Any]], *, source: str = "external_project") -> dict[str, Any]:
+    """Collegamenti in blocco (massimo 500). Ogni voce: {api_sports_id, fotmob_id?, name?, birth_date?}."""
+    results = {"received": len(items), "created": 0, "unchanged": 0, "updated": 0, "protected": 0, "conflict": 0,
+               "api_only": 0, "errors": 0}
+    for item in items[:500]:
+        try:
+            out = register_external_link(session, api_sports_id=item.get("api_sports_id"), fotmob_id=item.get("fotmob_id"),
+                                         name=item.get("name"), birth_date=item.get("birth_date"), source=source)
+            results[out["status"]] = results.get(out["status"], 0) + 1
+        except Exception:  # noqa: BLE001 - una voce sbagliata non ferma le altre
+            session.rollback()
+            results["errors"] += 1
+    return results

@@ -55,6 +55,22 @@ def players_lineup(fixture_id: int, prefer: str = Query(default="official", patt
         return lineups.lineup_for_fixture(session, fixture_id, prefer=prefer)
 
 
+@router.get("/lineups")
+def players_lineups_bulk(
+    fixture_ids: str = Query(..., description="ID API-Sports separati da virgola (massimo 50)"),
+    prefer: str = Query(default="official", pattern="^(official|predicted)$"),
+) -> dict:
+    """Come `/players/lineups/{fixture_id}` per piu' partite in una sola chiamata."""
+    try:
+        wanted = [int(item) for item in fixture_ids.split(",") if item.strip()]
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="fixture_ids deve contenere solo numeri") from exc
+    if not wanted:
+        raise HTTPException(status_code=400, detail="fixture_ids vuoto")
+    with SessionLocal() as session:
+        return lineups.lineups_for_fixtures(session, wanted, prefer=prefer)
+
+
 @router.post("/links")
 def players_link(payload: PlayerLinkRequest) -> dict:
     """Collegamento fornito a mano o da un altro progetto (con data di nascita): ha la precedenza sugli automatici."""
@@ -65,6 +81,25 @@ def players_link(payload: PlayerLinkRequest) -> dict:
                 birth_date=payload.birth_date, source=payload.source)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+class PlayerLinkItem(BaseModel):
+    api_sports_id: int
+    fotmob_id: Optional[int] = None
+    name: Optional[str] = None
+    birth_date: Optional[str] = None
+
+
+class PlayerLinksBulkRequest(BaseModel):
+    links: list[PlayerLinkItem] = Field(..., max_length=500)
+    source: str = Field(default="external_project", pattern="^(external_project|manual)$")
+
+
+@router.post("/links/bulk")
+def players_links_bulk(payload: PlayerLinksBulkRequest) -> dict:
+    """Fino a 500 collegamenti in una chiamata (stesse regole di `/players/links`)."""
+    with SessionLocal() as session:
+        return identity.register_external_links(session, [item.model_dump() for item in payload.links], source=payload.source)
 
 
 @router.post("/sync")
