@@ -6,7 +6,7 @@ import unittest
 
 import pandas as pd
 
-from src.data.player.cards_dataset import FEATURE_COLUMNS, TARGET, build_dataset
+from src.data.player.cards_dataset import FEATURE_COLUMNS, FEATURE_COLUMNS_V2, TARGET, build_dataset
 from tests.service.player_scoring_dataset_test import COLS, _ev, _lineups, _matches
 
 
@@ -73,8 +73,27 @@ class CardsDatasetTest(unittest.TestCase):
         self.assertTrue(self.ds[self.ds.fixture_id == 1]["team_yc10"].isna().all())
 
     def test_no_infinite_values_and_all_features_present(self):
-        self.assertEqual(list(self.ds.columns[-len(FEATURE_COLUMNS) - 1:]), FEATURE_COLUMNS + [TARGET])
-        self.assertFalse(self.ds[FEATURE_COLUMNS].isin([float("inf"), float("-inf")]).any().any())
+        self.assertEqual(list(self.ds.columns[-len(FEATURE_COLUMNS_V2) - 1:]), FEATURE_COLUMNS_V2 + [TARGET])
+        self.assertFalse(self.ds[FEATURE_COLUMNS_V2].isin([float("inf"), float("-inf")]).any().any())
+
+    def test_fouls_features_are_prior_only(self):
+        # 204: falli 3 in F1 (90'), 5 in F2: alla F1 non c'e' passato, alla F2 conta solo F1.
+        stats = pd.DataFrame({
+            "fixture_id": [1, 2], "player_id": [204, 204], "shots_total": [0, 0], "shots_on": [0, 0],
+            "key_passes": [0, 0], "pen_won": [0, 0], "rating": [6.5, 6.5],
+            "fouls_committed": [3, 5], "fouls_drawn": [1, 2],
+        })
+        ds = build_dataset(_matches(), _lineups(), _events(), REFS, stats=stats)
+        f1 = ds[(ds.fixture_id == 1) & (ds.player_id == 204)].iloc[0]
+        f2 = ds[(ds.fixture_id == 2) & (ds.player_id == 204)].iloc[0]
+        self.assertTrue(pd.isna(f1.fouls_c_p90_l10))
+        self.assertEqual(f1.stats_games_l10, 0)
+        self.assertAlmostEqual(f2.fouls_c_p90_l10, 3.0)   # 3 falli in 90'
+        self.assertEqual(f2.stats_games_l10, 1)
+
+    def test_without_stats_the_new_columns_are_empty(self):
+        self.assertTrue(self.ds["fouls_c_p90_l10"].isna().all())
+        self.assertTrue((self.ds["stats_games_l10"] == 0).all())
 
     def test_empty_inputs(self):
         empty = build_dataset(_matches().iloc[0:0], _lineups().iloc[0:0], _events().iloc[0:0])
