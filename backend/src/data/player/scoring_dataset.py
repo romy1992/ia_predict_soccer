@@ -26,6 +26,7 @@ from sqlalchemy.orm import Session
 
 from src.data.player.player_lineup_models import PlayerLineup
 from src.data.player.player_models import PlayerMatchEvent
+from src.data.player.player_stats_models import PlayerMatchStats
 from src.service_ia.model.match import Match
 
 TARGET = "scored"
@@ -40,6 +41,15 @@ FEATURE_COLUMNS = [
     "goal_share_last10", "pen_taker_share_last20", "rest_days",
     "rate_samevenue_shrunk", "opp_conc_role10", "teammates_rate_sum",
 ]
+# v2: statistiche per giocatore (tiri, passaggi chiave, rigori guadagnati, voto) dal backfill `player_match_stats`.
+# Sono ASSENTI (NaN) per le partite senza statistiche: il modello le riempie con la mediana; `stats_games_l10`
+# dice quante delle ultime 10 partite avevano statistiche.
+STATS_FEATURES = [
+    "shots_p90_l10", "shots_on_p90_l10", "shots_p90_l5", "key_passes_p90_l10",
+    "pen_won_l20", "rating_l5", "stats_games_l10",
+]
+FEATURE_COLUMNS_V2 = FEATURE_COLUMNS + STATS_FEATURES
+STATS_RAW_COLUMNS = ["shots_total", "shots_on", "key_passes", "pen_won", "rating", "fouls_committed", "fouls_drawn"]
 SHRINK_K = 3.0  # peso (in "partite da 90'") del tasso di ruolo nel tasso del giocatore
 # Usati solo quando non esiste ancora nessuna storia del ruolo (inizio dataset).
 FALLBACK_RATE_PER90 = {"F": 0.30, "M": 0.10, "D": 0.04}
@@ -77,6 +87,60 @@ def load_raw(session: Session, leagues: Sequence[int], seasons: Sequence[int],
         ["fixture_id", "event_type", "event_detail", "comments", "elapsed", "team_id", "player_id", "assist_id"],
     )
     return matches, lineups, events
+
+
+def load_stats(session: Session, fixture_ids: Sequence[int]) -> pd.DataFrame:
+    """Statistiche per giocatore e partita (`player_match_stats`). Vuoto se la tabella non ha righe."""
+    cols = ["fixture_id", "player_id", *STATS_RAW_COLUMNS]
+    frames = []
+    ids = list(fixture_ids)
+    for i in range(0, len(ids), 5000):  # a blocchi: la lista di ID puo' essere molto lunga
+        stmt = select(PlayerMatchStats.fixture_id, PlayerMatchStats.player_id, PlayerMatchStats.shots_total,
+                      PlayerMatchStats.shots_on, PlayerMatchStats.key_passes, PlayerMatchStats.pen_won,
+                      PlayerMatchStats.rating, PlayerMatchStats.fouls_committed, PlayerMatchStats.fouls_drawn
+                      ).where(PlayerMatchStats.fixture_id.in_(ids[i:i + 5000]))
+        frames.append(_frame(session, stmt, cols))
+    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=cols)
+
+
+def attach_stats(a: pd.DataFrame, stats: pd.DataFrame | None) -> pd.DataFrame:
+    """Aggiunge le colonne grezze delle statistiche (NaN dove la partita non ne ha)."""
+    if stats is None or stats.empty:
+        return a.assign(**{c: np.nan for c in STATS_RAW_COLUMNS})
+    keep = stats.drop_duplicates(["fixture_id", "player_id"])[["fixture_id", "player_id", *STATS_RAW_COLUMNS]]
+    keep = keep.copy()
+    keep[STATS_RAW_COLUMNS] = keep[STATS_RAW_COLUMNS].apply(pd.to_numeric, errors="coerce")
+    return a.merge(keep, on=["fixture_id", "player_id"], how="left")
+
+
+def rolling_per90(p: pd.DataFrame, col: str, window: int) -> pd.Series:
+    """`col` per 90' nelle `window` partite PRECEDENTI del giocatore, contando solo le partite con statistiche."""
+    has = p[col].notna()
+    p = p.assign(_mins=p["minutes"].where(has))
+    g = p.groupby("player_id", sort=False)
+    num = g[col].transform(lambda s: s.shift(1).rolling(window, min_periods=1).sum())
+    den = g["_mins"].transform(lambda s: s.shift(1).rolling(window, min_periods=1).sum())
+    return (num / (den / 90.0)).where(den > 0)
+
+
+def stats_coverage(p: pd.DataFrame, window: int = 10) -> pd.Series:
+    """Quante delle `window` partite precedenti avevano statistiche (0..window)."""
+    has = p["shots_total"].notna().astype(float)
+    return has.groupby(p["player_id"], sort=False).transform(
+        lambda s: s.shift(1).rolling(window, min_periods=1).sum()).fillna(0.0)
+
+
+def _stats_features(p: pd.DataFrame) -> pd.DataFrame:
+    p = p.copy()
+    p["shots_p90_l10"] = rolling_per90(p, "shots_total", 10)
+    p["shots_on_p90_l10"] = rolling_per90(p, "shots_on", 10)
+    p["shots_p90_l5"] = rolling_per90(p, "shots_total", 5)
+    p["key_passes_p90_l10"] = rolling_per90(p, "key_passes", 10)
+    g = p.groupby("player_id", sort=False)
+    p["pen_won_l20"] = g["pen_won"].transform(lambda s: s.shift(1).rolling(20, min_periods=1).sum())
+    p["rating_l5"] = g["rating"].transform(lambda s: s.shift(1).rolling(5, min_periods=1).mean())
+    p["stats_games_l10"] = stats_coverage(p)
+    return p
 
 
 def _appearances(matches: pd.DataFrame, lineups: pd.DataFrame, events: pd.DataFrame) -> pd.DataFrame:
@@ -171,7 +235,7 @@ def _player_features(played: pd.DataFrame) -> pd.DataFrame:
     gv_goals = gv["goals"].transform(lambda s: s.shift(1).rolling(10, min_periods=1).sum())
     gv_min = gv["minutes"].transform(lambda s: s.shift(1).rolling(10, min_periods=1).sum())
     p["rate_samevenue_shrunk"] = (gv_goals.fillna(0) + SHRINK_K * p["role_rate"]) / (gv_min.fillna(0) / 90.0 + SHRINK_K)
-    return p
+    return _stats_features(p) if "shots_total" in p.columns else p
 
 
 def _team_form(matches: pd.DataFrame, events: pd.DataFrame,
@@ -240,7 +304,7 @@ def fill_missing_roles(matches: pd.DataFrame, lineups: pd.DataFrame) -> pd.DataF
 
 
 def build_dataset(matches: pd.DataFrame, lineups: pd.DataFrame, events: pd.DataFrame,
-                  upcoming_fixture_ids: Iterable[int] = ()) -> pd.DataFrame:
+                  upcoming_fixture_ids: Iterable[int] = (), stats: pd.DataFrame | None = None) -> pd.DataFrame:
     """Dataset finale: META + FEATURE + TARGET, ordinato per data.
 
     `upcoming_fixture_ids`: partite NON ancora giocate (nessun evento) di cui si vuole la riga di
@@ -248,9 +312,9 @@ def build_dataset(matches: pd.DataFrame, lineups: pd.DataFrame, events: pd.DataF
     (usano solo il passato); `scored` vale 0 e non va usato."""
     upcoming = set(int(x) for x in upcoming_fixture_ids)
     if matches.empty or lineups.empty:
-        return pd.DataFrame(columns=META_COLUMNS + FEATURE_COLUMNS + [TARGET])
+        return pd.DataFrame(columns=META_COLUMNS + FEATURE_COLUMNS_V2 + [TARGET])
     lineups = fill_missing_roles(matches, lineups)
-    a = _appearances(matches, lineups, events)
+    a = attach_stats(_appearances(matches, lineups, events), stats)
     played = a[a["played"]].copy()
     feats = _player_features(played)
     form = _team_form(matches, events, upcoming)
@@ -273,7 +337,7 @@ def build_dataset(matches: pd.DataFrame, lineups: pd.DataFrame, events: pd.DataF
     for pos in ("F", "M", "D"):
         out[f"pos_{pos}"] = (out["position"] == pos).astype(int)
     out["is_starter"] = out["is_starter"].astype(int)
-    cols = META_COLUMNS + FEATURE_COLUMNS + [TARGET]
+    cols = META_COLUMNS + FEATURE_COLUMNS_V2 + [TARGET]
     return out[cols].sort_values(["match_date", "fixture_id", "player_id"]).reset_index(drop=True)
 
 
@@ -294,4 +358,6 @@ def temporal_cv_splits(df: pd.DataFrame, n_folds: int = 3) -> list[tuple[list[in
 
 def build_from_session(session: Session, leagues: Sequence[int], seasons: Sequence[int],
                        finished_statuses: Iterable[str]) -> pd.DataFrame:
-    return build_dataset(*load_raw(session, leagues, seasons, finished_statuses))
+    matches, lineups, events = load_raw(session, leagues, seasons, finished_statuses)
+    stats = load_stats(session, matches["fixture_id"].tolist()) if not matches.empty else None
+    return build_dataset(matches, lineups, events, stats=stats)

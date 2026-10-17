@@ -9,7 +9,7 @@ import pandas as pd
 from pandas.testing import assert_frame_equal
 
 from src.data.player.scoring_dataset import (
-    FEATURE_COLUMNS, TARGET, _appearances, build_dataset, temporal_cv_splits,
+    FEATURE_COLUMNS, FEATURE_COLUMNS_V2, TARGET, _appearances, build_dataset, temporal_cv_splits,
 )
 
 DATES = {1: "2025-08-10T18:00:00+00:00", 2: "2025-08-17T18:00:00+00:00", 3: "2025-08-24T18:00:00+00:00",
@@ -159,6 +159,26 @@ class ScoringDatasetTest(unittest.TestCase):
         assert_frame_equal(before[FEATURE_COLUMNS], after[FEATURE_COLUMNS])
         assert_frame_equal(before[[TARGET]], after[[TARGET]])
 
+    def _stats(self, shots_f3):
+        return pd.DataFrame({
+            "fixture_id": [1, 2, 3], "player_id": [110, 110, 110],
+            "shots_total": [4, 2, shots_f3], "shots_on": [2, 1, 1], "key_passes": [1, 0, 0],
+            "pen_won": [0, 1, 0], "rating": [7.0, 6.0, 8.0], "fouls_committed": [1, 1, 1], "fouls_drawn": [0, 0, 0],
+        })
+
+    def test_player_stats_features_are_prior_only(self):
+        a = build_dataset(self.matches, self.lineups, self.events, stats=self._stats(1))
+        b = build_dataset(self.matches, self.lineups, self.events, stats=self._stats(9))
+        row = lambda d, f: d[(d.fixture_id == f) & (d.player_id == 110)].iloc[0]
+        # cambiare i tiri della F3 non cambia la riga della F3 (la partita stessa non conta) ne' quelle precedenti
+        for f in (1, 2, 3):
+            assert_frame_equal(a[(a.fixture_id == f)][FEATURE_COLUMNS_V2].reset_index(drop=True),
+                               b[(b.fixture_id == f)][FEATURE_COLUMNS_V2].reset_index(drop=True))
+        self.assertTrue(pd.isna(row(a, 1).shots_p90_l10))
+        self.assertEqual(row(a, 3).stats_games_l10, 2)
+        self.assertEqual(row(a, 3).pen_won_l20, 1)
+        self.assertAlmostEqual(row(a, 3).rating_l5, 6.5)
+
     def test_team_form_is_a_mean_of_previous_matches(self):
         # squadra 1: gol non autogol F1=2, F2=2, F3=0 -> media 4/3 alla partita F4
         r = self.row(4, 110)
@@ -194,11 +214,13 @@ class ScoringDatasetFromDbTest(unittest.TestCase):
 
         from src.data.player.player_lineup_models import Base, PlayerLineup
         from src.data.player.player_models import PlayerMatchEvent
+        from src.data.player.player_stats_models import PlayerMatchStats
         from src.data.player.scoring_dataset import build_from_session
         from src.service_ia.model.match import Match
 
         engine = create_engine("sqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False})
-        Base.metadata.create_all(engine, tables=[Match.__table__, PlayerLineup.__table__, PlayerMatchEvent.__table__])
+        Base.metadata.create_all(engine, tables=[Match.__table__, PlayerLineup.__table__, PlayerMatchEvent.__table__,
+                                                  PlayerMatchStats.__table__])
         s = sessionmaker(bind=engine)()
         for r in _matches().itertuples():
             s.add(Match(id_fixture=r.fixture_id, date_match=r.date_match, league_match=r.league, season=r.season,

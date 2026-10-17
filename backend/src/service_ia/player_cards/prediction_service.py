@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 from src.data.player.card_prediction_models import PlayerCardPrediction
 from src.data.player.cards_dataset import build_dataset, build_from_session, load_referees
 from src.data.player.player_lineup_models import PlayerLineup
-from src.data.player.scoring_dataset import load_raw
+from src.data.player.scoring_dataset import load_raw, load_stats
 from src.service_ia.player_cards import model_store
 from src.service_ia.scorer.prediction_service import (
     HISTORY_SEASONS_BACK, PREDICT_HORIZON_HOURS, SCORER_HISTORY_LEAGUES, SCORER_LEAGUES, fetch_official_lineups,
@@ -84,7 +84,8 @@ def predict_upcoming(session: Session, bundle: dict, *, leagues: Iterable[int] =
     matches = pd.concat([hist_matches, up], ignore_index=True)
     all_lineups = pd.concat([hist_lineups, up_lineups], ignore_index=True)
     referees = load_referees(session, matches["fixture_id"].tolist())
-    frame = build_dataset(matches, all_lineups, hist_events, referees, upcoming_fixture_ids=ready_ids)
+    stats = load_stats(session, hist_matches["fixture_id"].tolist()) if model_store.bundle_uses_stats(bundle) else None
+    frame = build_dataset(matches, all_lineups, hist_events, referees, upcoming_fixture_ids=ready_ids, stats=stats)
     frame = frame[frame["fixture_id"].isin(ready_ids)].copy()
     if frame.empty:
         return {"fixtures": len(ids), "predicted": 0, "skipped_same_lineup": 0, "no_lineup": len(ids)}

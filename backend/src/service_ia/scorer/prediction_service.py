@@ -21,7 +21,7 @@ from src.data.player.coverage_report import TOP5_LEAGUES
 from src.data.player.player_lineup_models import PlayerLineup
 from src.data.player.player_lineup_service import extract_lineup_players
 from src.data.player.scorer_prediction_models import PlayerScorerPrediction
-from src.data.player.scoring_dataset import build_dataset, load_raw
+from src.data.player.scoring_dataset import build_dataset, load_raw, load_stats
 from src.service_ia.model.match import Match
 from src.service_ia.scorer import model_store
 from src.service_ia.scorer.model_store import EURO_CUPS
@@ -138,7 +138,8 @@ def predict_upcoming(session: Session, bundle: dict, *, leagues: Iterable[int] =
     up_lineups = lineups[lineups["fixture_id"].isin(ready_ids)][hist_lineups.columns]
     matches = pd.concat([hist_matches, up], ignore_index=True)
     all_lineups = pd.concat([hist_lineups, up_lineups], ignore_index=True)
-    frame = build_dataset(matches, all_lineups, hist_events, upcoming_fixture_ids=ready_ids)
+    stats = load_stats(session, hist_matches["fixture_id"].tolist()) if model_store.bundle_uses_stats(bundle) else None
+    frame = build_dataset(matches, all_lineups, hist_events, upcoming_fixture_ids=ready_ids, stats=stats)
     frame = frame[frame["fixture_id"].isin(ready_ids)].copy()
     if frame.empty:
         return {"fixtures": len(ids), "predicted": 0, "skipped_same_lineup": 0, "no_lineup": len(ids)}
