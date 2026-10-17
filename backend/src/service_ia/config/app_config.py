@@ -156,7 +156,7 @@ class AppConfig:
     # (future_sync 04:30, daily refresh 05:00) cosi' le partite sono gia' a DB.
     fotmob_lineup_hour: int = 6
     fotmob_lineup_minute: int = 30
-    fotmob_horizon_hours: int = 72
+    fotmob_horizon_hours: int = 96
     fotmob_max_requests_per_run: int = 120
     fotmob_refresh_hours: int = 20
 
@@ -198,7 +198,7 @@ def load_app_config() -> AppConfig:
     model_consensus_refresh_interval_minutes = _int_env("MODEL_CONSENSUS_REFRESH_INTERVAL_MINUTES", default=60)
     fotmob_lineup_hour = _int_env("FOTMOB_LINEUP_HOUR", default=6)
     fotmob_lineup_minute = _int_env("FOTMOB_LINEUP_MINUTE", default=30)
-    fotmob_horizon_hours = _int_env("FOTMOB_HORIZON_HOURS", default=72)
+    fotmob_horizon_hours = _int_env("FOTMOB_HORIZON_HOURS", default=96)
     fotmob_max_requests_per_run = _int_env("FOTMOB_MAX_REQUESTS_PER_RUN", default=120)
     fotmob_refresh_hours = _int_env("FOTMOB_REFRESH_HOURS", default=20)
     database_url = os.environ.get("DATABASE_URL", DEFAULT_DATABASE_URL).strip()

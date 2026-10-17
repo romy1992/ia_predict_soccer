@@ -143,6 +143,16 @@ def _surname_subset(name: Optional[str], team_id: int, roster: TeamRoster) -> Op
     return _unique(appearances, "surname_subset", team_id, roster) if appearances else None
 
 
+def position_for(roster: TeamRoster, player_id: int) -> Optional[str]:
+    """Ruolo storico (il piu' recente) di un giocatore nella rosa, oppure None."""
+    best: Optional[RosterAppearance] = None
+    for items in roster.by_full.values():
+        for item in items:
+            if item.player_id == player_id and (best is None or _aware(item.last_seen) >= _aware(best.last_seen)):
+                best = item
+    return best.position if best is not None else None
+
+
 def map_player(name: Optional[str], team_id: int, roster: TeamRoster) -> PlayerMap:
     full, initial = player_keys(name)
     ambiguous = False

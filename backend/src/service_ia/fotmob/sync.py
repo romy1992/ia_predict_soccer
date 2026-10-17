@@ -17,7 +17,9 @@ from sqlalchemy.orm import Session
 
 from src.data.player.player_lineup_models import PlayerLineup
 from src.service_ia.fotmob.client import FotmobAuthError, FotmobClient, FotmobError
-from src.service_ia.fotmob.mapping import TeamRoster, add_appearance, empty_roster, map_player, match_fixture
+from src.service_ia.fotmob.mapping import (
+    PlayerMap, TeamRoster, add_appearance, empty_roster, map_player, match_fixture, position_for,
+)
 from src.service_ia.fotmob.models import FotmobLineupPlayer, FotmobLineupSnapshot, FotmobMatchMap
 from src.service_ia.fotmob.parse import ParsedLineup, ParsedPlayer, iter_matches, parse_lineup
 from src.service_ia.fotmob.predict import apply_initial_predictions
@@ -100,6 +102,28 @@ def _fresh(session: Session, fixture_id: int, now: datetime, refresh_hours: int)
     return fetched is not None and fetched >= now - timedelta(hours=refresh_hours)
 
 
+def _map(session: Session, player: ParsedPlayer, team_id: int, roster: TeamRoster) -> PlayerMap:
+    """Prima il collegamento gia' salvato nell'anagrafica (nessun confronto per nome), poi il nome; un abbinamento
+    nuovo e univoco viene salvato per le volte dopo."""
+    from src.service_ia.players import identity
+
+    try:
+        saved = identity.api_id_for_fotmob(session, player.fotmob_id)
+    except Exception:  # noqa: BLE001 - l'anagrafica non deve mai bloccare il job
+        logger.exception("FotMob: lettura anagrafica fallita per %s", player.fotmob_id)
+        saved = None
+    if saved is not None:
+        return PlayerMap(saved, "saved_link", position_for(roster, saved), None)
+    mapped = map_player(player.name, team_id, roster)
+    if mapped.api_player_id is not None and player.fotmob_id is not None and mapped.warning != "roster_conflict":
+        try:
+            identity.link_fotmob_to_api(session, fotmob_id=player.fotmob_id, fotmob_name=player.name,
+                                        api_player_id=int(mapped.api_player_id), method=mapped.method or "exact_name")
+        except Exception:  # noqa: BLE001
+            logger.exception("FotMob: collegamento non salvato per %s", player.fotmob_id)
+    return mapped
+
+
 def _player_row(snapshot_id: int, side: str, role: str, player: ParsedPlayer, api_team_id: int, mapped) -> FotmobLineupPlayer:
     return FotmobLineupPlayer(
         snapshot_id=snapshot_id, side=side, role=role, fotmob_player_id=player.fotmob_id,
@@ -121,7 +145,7 @@ def _store_players(session: Session, snapshot_id: int, lineup: ParsedLineup, hom
         for player, mapped in zip(team.starters, maps):
             session.add(_player_row(snapshot_id, side, "starter", player, team_id, mapped))
         for player in team.unavailable:
-            session.add(_player_row(snapshot_id, side, "unavailable", player, team_id, map_player(player.name, team_id, roster)))
+            session.add(_player_row(snapshot_id, side, "unavailable", player, team_id, _map(session, player, team_id, roster)))
         for player in team.bench:
             session.add(_player_row(snapshot_id, side, "bench", player, team_id, None))
         if team.coach_name:
@@ -150,6 +174,21 @@ def _starters(team, maps, team_id: int, team_name: Optional[str]) -> list[dict]:
             "position": mapped.position,
         })
     return rows
+
+
+def _refresh_identities(session: Session, now: datetime) -> dict[str, Any]:
+    """Anagrafica: nuovi giocatori API-Sports e apprendimento dalle formazioni ufficiali arrivate dopo l'ultimo giro."""
+    from src.service_ia.players import identity, lineups
+
+    out: dict[str, Any] = {}
+    try:
+        out.update(identity.sync_api_sports_identities(session))
+        out["learned"] = lineups.learn_recent(session, now=now)
+    except Exception as exc:  # noqa: BLE001 - mai bloccare il job
+        logger.exception("FotMob: aggiornamento anagrafica fallito")
+        session.rollback()
+        out["error"] = type(exc).__name__
+    return out
 
 
 def sync_predicted_lineups(
@@ -183,7 +222,9 @@ def sync_predicted_lineups(
         if kickoff is not None and now <= kickoff <= window_end:
             upcoming.append((row, kickoff))
 
+    report_identity = _refresh_identities(session, now)
     report: dict[str, Any] = {
+        "identity": report_identity,
         "fixtures": len(upcoming), "mapped": 0, "unmatched": 0, "snapshots": 0,
         "skipped_fresh": 0, "predicted_scorers": 0, "predicted_cards": 0,
         "validated": 0, "partially_validated": 0, "unverified": 0, "rejected": 0,
@@ -247,8 +288,8 @@ def sync_predicted_lineups(
             if parsed.away.name and not names_match(parsed.away.name, row.name_away):
                 identity_ok = False
             roster = _roster(session, [int(row.id_team_home), int(row.id_team_away)])
-            home_maps = [map_player(player.name, int(row.id_team_home), roster) for player in parsed.home.starters]
-            away_maps = [map_player(player.name, int(row.id_team_away), roster) for player in parsed.away.starters]
+            home_maps = [_map(session, player, int(row.id_team_home), roster) for player in parsed.home.starters]
+            away_maps = [_map(session, player, int(row.id_team_away), roster) for player in parsed.away.starters]
             assessment = assess(
                 parsed, home_maps, away_maps,
                 match_method=method or "teams_same_day",
