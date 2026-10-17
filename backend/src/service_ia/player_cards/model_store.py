@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+import os
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -24,7 +25,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 
-from src.data.player.cards_dataset import FEATURE_COLUMNS, TARGET
+from src.data.player.cards_dataset import FEATURE_COLUMNS, FEATURE_COLUMNS_V2, STATS_FEATURES, TARGET
 from src.ml.evaluation.classification_report import compute_compact_classification_summary
 from src.ml.evaluation.probability_metrics import compute_probability_metrics
 from src.ml.registry.promotion_policy import DEFAULT_PROMOTION_POLICY
@@ -75,21 +76,32 @@ def starters_only(dataset: pd.DataFrame) -> pd.DataFrame:
     return dataset[dataset["is_starter"] == 1]
 
 
-def _matrix(df: pd.DataFrame, medians: pd.Series) -> np.ndarray:
-    return df[FEATURE_COLUMNS].replace([np.inf, -np.inf], np.nan).fillna(medians).to_numpy(dtype=float)
+def active_columns() -> list[str]:
+    """Colonne usate per ADDESTRARE. Default v1; `PLAYER_FEATURE_SET=v2` aggiunge le statistiche per giocatore."""
+    return list(FEATURE_COLUMNS_V2 if os.getenv("PLAYER_FEATURE_SET", "v1").lower() == "v2" else FEATURE_COLUMNS)
 
 
-def train_bundle(dataset: pd.DataFrame, family: str = "voting") -> dict[str, Any]:
+def bundle_uses_stats(bundle: dict[str, Any]) -> bool:
+    return any(c in STATS_FEATURES for c in bundle.get("feature_columns", []))
+
+
+def _matrix(df: pd.DataFrame, medians: pd.Series, columns: Optional[list[str]] = None) -> np.ndarray:
+    columns = columns or list(medians.index)
+    return df[columns].replace([np.inf, -np.inf], np.nan).fillna(medians[columns]).to_numpy(dtype=float)
+
+
+def train_bundle(dataset: pd.DataFrame, family: str = "voting", columns: Optional[list[str]] = None) -> dict[str, Any]:
     """Addestra su TUTTI i titolari del dataset passato (partite concluse)."""
     dataset = starters_only(dataset).sort_values("match_date")
     if len(dataset) < MIN_TRAIN_ROWS:
         raise ValueError(f"Dataset troppo piccolo per addestrare: {len(dataset)} righe (< {MIN_TRAIN_ROWS})")
-    medians = dataset[FEATURE_COLUMNS].replace([np.inf, -np.inf], np.nan).median()
-    model = _estimator(family).fit(_matrix(dataset, medians), dataset[TARGET].to_numpy())
+    columns = columns or active_columns()
+    medians = dataset[columns].replace([np.inf, -np.inf], np.nan).median()
+    model = _estimator(family).fit(_matrix(dataset, medians, columns), dataset[TARGET].to_numpy())
     return {
         "model": model,
         "medians": medians,
-        "feature_columns": list(FEATURE_COLUMNS),
+        "feature_columns": list(columns),
         "sklearn_version": sklearn.__version__,
         "trained_at": datetime.now(timezone.utc).isoformat(),
         "n_rows": int(len(dataset)),
@@ -102,9 +114,10 @@ def train_bundle(dataset: pd.DataFrame, family: str = "voting") -> dict[str, Any
 
 
 def predict_proba(bundle: dict[str, Any], frame: pd.DataFrame) -> np.ndarray:
-    if bundle["feature_columns"] != list(FEATURE_COLUMNS):
-        raise ValueError("Le feature del bundle non coincidono con quelle del codice: riaddestrare.")
-    return bundle["model"].predict_proba(_matrix(frame, bundle["medians"]))[:, 1]
+    missing = [c for c in bundle["feature_columns"] if c not in FEATURE_COLUMNS_V2]
+    if missing:
+        raise ValueError(f"Il bundle usa feature sconosciute al codice ({missing[:3]}): riaddestrare.")
+    return bundle["model"].predict_proba(_matrix(frame, bundle["medians"], list(bundle["feature_columns"])))[:, 1]
 
 
 def registry() -> ModelRegistry:
@@ -128,7 +141,8 @@ def _group_metrics(test: pd.DataFrame, p: np.ndarray, base: float) -> dict[str, 
     return out
 
 
-def holdout_metrics(dataset: pd.DataFrame, families: tuple[str, ...] = FAMILIES) -> dict[str, Any]:
+def holdout_metrics(dataset: pd.DataFrame, families: tuple[str, ...] = FAMILIES,
+                    columns: Optional[list[str]] = None) -> dict[str, Any]:
     """Addestra ogni famiglia sul passato e la misura sulle partite piu' recenti (ultimo 20% delle DATE),
     sui soli titolari. Ritorna le metriche della famiglia VINCENTE (log loss piu' bassa) e il confronto."""
     dataset = starters_only(dataset).sort_values("match_date").reset_index(drop=True)
@@ -136,8 +150,9 @@ def holdout_metrics(dataset: pd.DataFrame, families: tuple[str, ...] = FAMILIES)
     train, test = dataset[dataset["match_date"] < cut], dataset[dataset["match_date"] >= cut]
     if len(train) < MIN_TRAIN_ROWS or test.empty or test[TARGET].nunique() < 2:
         raise ValueError("Dati insufficienti per la valutazione su holdout temporale")
-    medians = train[FEATURE_COLUMNS].replace([np.inf, -np.inf], np.nan).median()
-    x_train, y_train, x_test = _matrix(train, medians), train[TARGET].to_numpy(), _matrix(test, medians)
+    columns = columns or active_columns()
+    medians = train[columns].replace([np.inf, -np.inf], np.nan).median()
+    x_train, y_train, x_test = _matrix(train, medians, columns), train[TARGET].to_numpy(), _matrix(test, medians, columns)
     base = float(train[TARGET].mean())
     baseline = float(-np.mean(test[TARGET] * np.log(base) + (1 - test[TARGET]) * np.log(1 - base)))
 
@@ -166,17 +181,18 @@ def holdout_metrics(dataset: pd.DataFrame, families: tuple[str, ...] = FAMILIES)
 def train_candidate(dataset: pd.DataFrame, *, reg: Optional[ModelRegistry] = None) -> dict[str, Any]:
     """Sceglie la famiglia migliore sull'holdout, riaddestra quella su tutto, salva il bundle e registra un
     run `candidate`. La promozione e' un passo separato (`auto_promote`)."""
-    metrics = holdout_metrics(dataset)
+    columns = active_columns()
+    metrics = holdout_metrics(dataset, columns=columns)
     family = metrics["best_family"]
-    bundle = train_bundle(dataset, family)
+    bundle = train_bundle(dataset, family, columns)
     key = f"{BUNDLE_PREFIX}/v{bundle['version']}.joblib"
     bucket_store.put_joblib(key, bundle)
     metrics["rows"] = bundle["n_rows"]
     return (reg or registry()).register(
         model_path=key, market=MARKET, model_name=family, metrics=metrics,
-        feature_names=list(FEATURE_COLUMNS),
+        feature_names=list(bundle["feature_columns"]),
         params={"family": family, "target": "yellow_card_regulation", "population": "starters"},
-        extra={"sklearn_version": bundle["sklearn_version"], "n_fixtures": bundle["n_fixtures"],
+        extra={"sklearn_version": bundle["sklearn_version"], "feature_set": "v2" if bundle_uses_stats(bundle) else "v1", "n_fixtures": bundle["n_fixtures"],
                "train_until": bundle["train_until"], "dataset_version": f"player_cards:{bundle['train_until']}"},
         stage="candidate",
     )
@@ -222,7 +238,7 @@ def load_production_bundle(*, reg: Optional[ModelRegistry] = None) -> Optional[d
     except Exception:  # noqa: BLE001 - bucket non raggiungibile = nessun modello, non un crash del job
         logger.exception("Gialli: impossibile leggere il modello production")
         return None
-    if bundle.get("sklearn_version") != sklearn.__version__ or bundle.get("feature_columns") != list(FEATURE_COLUMNS):
+    if bundle.get("sklearn_version") != sklearn.__version__ or not set(bundle.get("feature_columns", [])) <= set(FEATURE_COLUMNS_V2):
         logger.warning("Gialli: modello production non compatibile (sklearn o feature cambiate): riaddestrare")
         return None
     bundle["run_id"] = run["run_id"]
