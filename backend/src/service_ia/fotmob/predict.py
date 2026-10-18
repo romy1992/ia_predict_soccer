@@ -42,6 +42,19 @@ def _latest(session: Session, model, fixture_id: int):
     return int(revision), {int(row.player_id) for row in rows}, (rows[0].lineup_type or "official")
 
 
+OUTFIELD_ROLES = {"F", "M", "D"}
+
+
+def _same_saved_lineup(previous, starters: list[dict]) -> bool:
+    """La revisione salvata contiene solo i giocatori di movimento (il dataset esclude i portieri), quindi va
+    confrontata con i titolari F/M/D e non con tutti e 22. Se i ruoli mancano il confronto esatto avviene dopo
+    il calcolo delle feature."""
+    if not previous or previous[2] != "predicted":
+        return False
+    outfield = {int(item["player_id"]) for item in starters if item.get("position") in OUTFIELD_ROLES}
+    return bool(outfield) and previous[1] == outfield
+
+
 def _save(session: Session, model, frame: pd.DataFrame, names: pd.DataFrame, *, fixture_id: int,
           kickoff: str, revision: int, model_version: str) -> None:
     indexed = names.set_index("player_id")
@@ -67,10 +80,9 @@ def _one_market(session: Session, model, bundle: dict, build, *, fixture_id: int
                 league: int, season: int, home_id: int, away_id: int, starters: list[dict],
                 history_leagues: list[int], seasons: list[int], extra_frame) -> str:
     previous = _latest(session, model, fixture_id)
-    player_ids = {int(item["player_id"]) for item in starters}
     if previous and previous[2] == "official":
         return "gia_ufficiale"
-    if previous and previous[1] == player_ids and previous[2] == "predicted":
+    if _same_saved_lineup(previous, starters):
         return "stessa_formazione"
     matches, lineups, events = load_raw(session, history_leagues, seasons, _FINISHED)
     upcoming_match = pd.DataFrame(
@@ -87,6 +99,8 @@ def _one_market(session: Session, model, bundle: dict, build, *, fixture_id: int
     frame = frame[frame["fixture_id"] == fixture_id].copy()
     if frame.empty:
         return "senza_feature"
+    if previous and previous[2] == "predicted" and previous[1] == {int(p) for p in frame["player_id"]}:
+        return "stessa_formazione"
     from src.service_ia.player_cards import model_store as cards_store
     from src.service_ia.scorer import model_store as scorer_store
 
