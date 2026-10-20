@@ -6,13 +6,11 @@ from dataclasses import dataclass
 from dotenv import load_dotenv
 
 
-# Default runtime DB: punta SEMPRE al DB "dev" remoto ospitato su Railway
-# (richiesto esplicitamente 2026-09-04, vedi README_PLATFORM.md sezione
-# "Policy DATABASE_URL"). Usato SOLO se la env var DATABASE_URL non e'
-# valorizzata affatto (nessun properties/config.env caricato). Vecchio
-# valore locale (Postgres nativo Windows), mantenuto solo come riferimento:
-# DEFAULT_DATABASE_URL = "postgresql://postgres:postgres@localhost:5432/match_db"
-DEFAULT_DATABASE_URL = "postgresql://postgres:zwOQshmeSysBkmIefrYVqMQTgMKckJAz@sakura.proxy.rlwy.net:18862/railway"
+# Default runtime DB: SOLO un Postgres locale, senza password. Le credenziali
+# vere arrivano sempre dalla variabile d'ambiente DATABASE_URL (Railway o
+# properties/config.env locale, che NON va committato). Usato solo se
+# DATABASE_URL non e' valorizzata affatto.
+DEFAULT_DATABASE_URL = "postgresql://postgres@localhost:5432/match_db"  # solo sviluppo locale: in produzione DATABASE_URL arriva dall'ambiente
 DEFAULT_DATABASE_SCHEMA = "public"
 _ENV_LOADED = False
 
