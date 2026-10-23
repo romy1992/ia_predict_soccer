@@ -10,6 +10,8 @@ frontend/dist/
 /backups/
 # log di output di test run manuali (non vanno versionati)
 *.log
+# credenziali e configurazione locale: non versionare mai
+/backend/properties/config.env
 # database SQLite locale/runtime: può contenere dati reali e non va versionato
 /previsioni.db
 

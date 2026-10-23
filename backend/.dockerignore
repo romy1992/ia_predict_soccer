@@ -6,6 +6,7 @@ __pycache__
 **/__pycache__
 *.py[cod]
 *.log
+properties/config.env
 frontend/node_modules
 frontend/dist
 best_models
@@ -30,4 +31,3 @@ src/backup_db
 /service_ia
 src/service_ia/training/under_over/inconsistent
 src/service_ia/dataset
-
