@@ -120,6 +120,14 @@ class ApiSportsProvider:
                 self._mark_quota_exhausted(response, errors)
                 raise ApiSportsQuotaExceededError(str(errors))
 
+            if errors and not self._is_rate_limit_error(errors):
+                # Errore della singola richiesta (piano, parametri, token):
+                # ritentare non serve e non e' un problema di quota.
+                logging.warning("API-Sports errore non di quota path=%s errors=%s", path, errors)
+                raise ApiSportsUnavailableError(
+                    f"API-Sports ha rifiutato '{path}': {self._format_errors(errors)}"
+                )
+
             if errors:
                 # BUGFIX 2026-09-06: rate-limit AL MINUTO (chiave
                 # "rateLimit", NON "requests") e' TRANSITORIO - la finestra
@@ -194,10 +202,24 @@ class ApiSportsProvider:
             return False
         if isinstance(errors, dict):
             keys = {str(k).lower() for k in errors.keys()}
+            if "requests" in keys:
+                return True
             if keys.issubset({"ratelimit"}):
                 return False
-            return True
+            # Altre chiavi (es. "plan", "token", "fixture", "date"): errore
+            # di QUESTA richiesta, non quota esaurita - a meno che il testo
+            # non parli di limite giornaliero. Segnarla come quota metteva
+            # in pausa tutti i job per un parametro sbagliato.
+            text = " ".join(str(v) for v in errors.values()).lower()
+            return "request limit" in text or "limit for the day" in text
         return True
+
+    @staticmethod
+    def _is_rate_limit_error(errors: Any) -> bool:
+        """Solo rate-limit al minuto (transitorio, vale il retry)."""
+        if not isinstance(errors, dict):
+            return bool(errors)
+        return {str(k).lower() for k in errors.keys()}.issubset({"ratelimit"})
 
     def _parse_response(
         self,
@@ -342,7 +364,7 @@ class ApiSportsProvider:
             # mostrare "riprova tra un minuto" invece di "quota esaurita".
             errors = payload.get("errors")
             if not self._is_daily_quota_error(errors):
-                logging.warning("API-Sports /status rate-limit transitorio (minuto): %s", errors)
+                logging.warning("API-Sports /status errore non di quota: %s", errors)
                 return {
                     "requests_current": None,
                     "requests_limit_day": None,
