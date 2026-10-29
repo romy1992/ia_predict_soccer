@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import JobRunProgress from "../shared/JobRunProgress";
+import AccountCredentialsSection from "./AccountCredentialsSection";
 
 function pad2(value) {
   return String(value).padStart(2, "0");
@@ -396,6 +397,7 @@ export default function SettingsPage({
           {jobs.length === 0 && !isLoading && <div className="empty-panel">Nessun job trovato.</div>}
         </div>
       </section>
+      <AccountCredentialsSection />
     </section>
   );
 }

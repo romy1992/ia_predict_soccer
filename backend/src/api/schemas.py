@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class HealthResponse(BaseModel):
@@ -12,6 +12,22 @@ class HealthResponse(BaseModel):
 class LoginRequest(BaseModel):
     username: str
     password: str
+
+
+class ChangeCredentialsRequest(BaseModel):
+    current_password: str = Field(min_length=1, max_length=200)
+    new_username: Optional[str] = Field(default=None, min_length=1, max_length=150)
+    new_password: Optional[str] = Field(default=None, min_length=8, max_length=200)
+
+    @model_validator(mode="after")
+    def _at_least_one_change(self):
+        if self.new_username is not None:
+            self.new_username = self.new_username.strip()
+            if not self.new_username:
+                raise ValueError("new_username non puo' essere vuoto")
+        if self.new_username is None and self.new_password is None:
+            raise ValueError("Indica new_username e/o new_password")
+        return self
 
 
 class LoginResponse(BaseModel):

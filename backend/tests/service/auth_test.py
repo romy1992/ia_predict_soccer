@@ -68,7 +68,9 @@ def test_login_logout_and_protected_route_end_to_end():
         mock.patch.object(auth, "ADMIN_USERNAME", "admin"),
         mock.patch.object(auth, "ADMIN_PASSWORD_HASH", _hash("s3cret")),
         mock.patch.object(auth, "COOKIE_SECURE", False),
+        mock.patch.object(auth, "load_override", return_value=None),
     ):
+        auth.reset_credentials_cache()
         from src.api.main import app
 
         client = TestClient(app)
@@ -98,3 +100,57 @@ def test_login_logout_and_protected_route_end_to_end():
         logout_response = client.post("/auth/logout")
         assert logout_response.status_code == 200
         assert client.get("/auth/me").status_code == 401
+
+
+def test_change_credentials_end_to_end():
+    store = {}
+
+    def fake_save(username, password_hash):
+        version = (store["creds"].version + 1) if "creds" in store else 1
+        store["creds"] = auth.Credentials(username, password_hash, version)
+        auth.reset_credentials_cache()
+        return store["creds"]
+
+    with (
+        mock.patch.object(auth, "JWT_SECRET", "unit-test-secret"),
+        mock.patch.object(auth, "ADMIN_USERNAME", "admin"),
+        mock.patch.object(auth, "ADMIN_PASSWORD_HASH", _hash("s3cret")),
+        mock.patch.object(auth, "COOKIE_SECURE", False),
+        mock.patch.object(auth, "load_override", side_effect=lambda: store.get("creds")),
+        mock.patch.object(auth, "save_override", side_effect=fake_save),
+    ):
+        auth.reset_credentials_cache()
+        from src.api.main import app
+
+        client = TestClient(app)
+        assert client.post("/auth/login", json={"username": "admin", "password": "s3cret"}).status_code == 200
+        old_cookie = client.cookies.get(auth.AUTH_COOKIE_NAME)
+
+        # Senza login: negato. Password attuale errata: 403, nulla cambia.
+        anonymous = TestClient(app)
+        assert anonymous.post("/auth/credentials", json={"current_password": "s3cret", "new_password": "nuova-password"}).status_code == 401
+        wrong = client.post("/auth/credentials", json={"current_password": "no", "new_password": "nuova-password"})
+        assert wrong.status_code == 403
+        assert "creds" not in store
+
+        # Nessuna modifica richiesta / password troppo corta: 422.
+        assert client.post("/auth/credentials", json={"current_password": "s3cret"}).status_code == 422
+        assert client.post("/auth/credentials", json={"current_password": "s3cret", "new_password": "corta"}).status_code == 422
+
+        ok = client.post(
+            "/auth/credentials",
+            json={"current_password": "s3cret", "new_username": "capo", "new_password": "nuova-password"},
+        )
+        assert ok.status_code == 200 and ok.json() == {"username": "capo"}
+        assert client.get("/auth/me").json() == {"username": "capo"}
+
+        # Il cookie precedente al cambio non vale piu'.
+        stale = TestClient(app)
+        stale.cookies.set(auth.AUTH_COOKIE_NAME, old_cookie)
+        assert stale.get("/auth/me").status_code == 401
+
+        # Vecchie credenziali rifiutate, nuove accettate.
+        fresh = TestClient(app)
+        assert fresh.post("/auth/login", json={"username": "admin", "password": "s3cret"}).status_code == 401
+        assert fresh.post("/auth/login", json={"username": "capo", "password": "nuova-password"}).status_code == 200
+    auth.reset_credentials_cache()

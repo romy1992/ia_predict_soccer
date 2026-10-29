@@ -41,6 +41,17 @@ export function login(username, password) {
   });
 }
 
+export function changeCredentials(currentPassword, newUsername, newPassword) {
+  const body = { current_password: currentPassword };
+  if (newUsername) body.new_username = newUsername;
+  if (newPassword) body.new_password = newPassword;
+  return request("/auth/credentials", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
 export function logout() {
   return request("/auth/logout", { method: "POST" });
 }
