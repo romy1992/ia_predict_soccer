@@ -30,6 +30,11 @@ class ChangeCredentialsRequest(BaseModel):
         return self
 
 
+class UpdateProviderKeyRequest(BaseModel):
+    current_password: str = Field(min_length=1, max_length=200)
+    value: str = Field(min_length=8, max_length=500)
+
+
 class LoginResponse(BaseModel):
     username: str
 

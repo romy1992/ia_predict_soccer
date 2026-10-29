@@ -66,9 +66,8 @@ def test_login_logout_and_protected_route_end_to_end():
     with (
         mock.patch.object(auth, "JWT_SECRET", "unit-test-secret"),
         mock.patch.object(auth, "ADMIN_USERNAME", "admin"),
-        mock.patch.object(auth, "ADMIN_PASSWORD_HASH", _hash("s3cret")),
         mock.patch.object(auth, "COOKIE_SECURE", False),
-        mock.patch.object(auth, "load_override", return_value=None),
+        mock.patch.object(auth, "load_override", return_value=auth.Credentials("admin", _hash("s3cret"), 0)),
     ):
         auth.reset_credentials_cache()
         from src.api.main import app
@@ -105,7 +104,7 @@ def test_login_logout_and_protected_route_end_to_end():
 def test_change_credentials_end_to_end():
     store = {}
 
-    def fake_save(username, password_hash):
+    def fake_save(username, password_hash, password_plain=None):
         version = (store["creds"].version + 1) if "creds" in store else 1
         store["creds"] = auth.Credentials(username, password_hash, version)
         auth.reset_credentials_cache()
@@ -114,9 +113,11 @@ def test_change_credentials_end_to_end():
     with (
         mock.patch.object(auth, "JWT_SECRET", "unit-test-secret"),
         mock.patch.object(auth, "ADMIN_USERNAME", "admin"),
-        mock.patch.object(auth, "ADMIN_PASSWORD_HASH", _hash("s3cret")),
         mock.patch.object(auth, "COOKIE_SECURE", False),
-        mock.patch.object(auth, "load_override", side_effect=lambda: store.get("creds")),
+        mock.patch.object(
+            auth, "load_override",
+            side_effect=lambda: store.get("creds") or auth.Credentials("admin", _hash("s3cret"), 0),
+        ),
         mock.patch.object(auth, "save_override", side_effect=fake_save),
     ):
         auth.reset_credentials_cache()

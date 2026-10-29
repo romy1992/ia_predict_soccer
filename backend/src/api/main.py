@@ -61,6 +61,7 @@ from src.api.schemas import (
     LiveFixtureStatisticsResponse,
     LiveFixturesResponse,
     ChangeCredentialsRequest,
+    UpdateProviderKeyRequest,
     LoginRequest,
     LoginResponse,
     MetricsResponse,
@@ -245,10 +246,52 @@ def update_credentials(payload: ChangeCredentialsRequest, response: Response) ->
     password_hash = (
         auth.hash_password(payload.new_password) if payload.new_password else creds.password_hash
     )
-    new = auth.save_override(username, password_hash)
+    new = auth.save_override(username, password_hash, payload.new_password)
     token = auth.create_access_token(new.username, new.version)
     response.set_cookie(auth.AUTH_COOKIE_NAME, token, **auth.cookie_kwargs())
     return LoginResponse(username=new.username)
+
+
+@app.get("/auth/credentials/reveal")
+def reveal_credentials() -> dict:
+    """Username e password in chiaro per l'"occhio" (protetto dal cookie di
+    login). `password` e' null se non disponibile (l'ambiente ha solo l'hash:
+    si popola al primo cambio password dal portale)."""
+    creds = auth.current_credentials()
+    return {"username": creds.username, "password": auth.reveal_password()}
+
+
+@app.get("/settings/provider-keys")
+def list_provider_keys() -> dict:
+    from src.service_ia.config import secret_store
+
+    items = []
+    for name, (label, _env) in secret_store.PROVIDER_SECRETS.items():
+        value = secret_store.get_secret(name)
+        items.append({"name": name, "label": label, "configured": bool(value), "masked": secret_store.mask(value) if value else ""})
+    return {"keys": items}
+
+
+@app.get("/settings/provider-keys/{name}/reveal")
+def reveal_provider_key(name: str) -> dict:
+    from src.service_ia.config import secret_store
+
+    if name not in secret_store.PROVIDER_SECRETS:
+        raise HTTPException(status_code=404, detail="Chiave sconosciuta")
+    return {"name": name, "value": secret_store.get_secret(name)}
+
+
+@app.put("/settings/provider-keys/{name}")
+def update_provider_key(name: str, payload: UpdateProviderKeyRequest) -> dict:
+    from src.service_ia.config import secret_store
+
+    if name not in secret_store.PROVIDER_SECRETS:
+        raise HTTPException(status_code=404, detail="Chiave sconosciuta")
+    creds = auth.current_credentials()
+    if not auth.verify_password(payload.current_password, creds.password_hash):
+        raise HTTPException(status_code=403, detail="Password attuale errata")
+    secret_store.set_secret(name, payload.value.strip())
+    return {"ok": True, "name": name}
 
 
 @app.get("/auth/me", response_model=AuthMeResponse)

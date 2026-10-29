@@ -68,18 +68,26 @@ class ApiSportsProvider:
         if config is None:
             config = ApiSportsProviderConfig(
                 base_url=(os.environ.get("API_SPORTS_BASE") or "").rstrip("/"),
-                api_key=os.environ.get("API_SPORTS_KEY") or "",
+                api_key="",  # vuota = si legge dal DB a ogni richiesta (secret_store)
             )
         self.config = config
 
+    def _api_key(self) -> str:
+        if self.config.api_key:
+            return self.config.api_key
+        from src.service_ia.config.secret_store import get_secret
+
+        return get_secret("api_sports_key")
+
     def request(self, path: str, params: Optional[dict[str, Any]] = None) -> list[dict[str, Any]]:
-        if not self.config.base_url or not self.config.api_key:
+        api_key = self._api_key()
+        if not self.config.base_url or not api_key:
             logging.warning("API-Sports config non completa: base_url o api_key mancante")
             return []
 
         url = f"{self.config.base_url}/{path.lstrip('/')}"
         request_params = dict(params or {})
-        headers = {"x-apisports-key": self.config.api_key}
+        headers = {"x-apisports-key": api_key}
 
         for attempt in range(1, self.config.max_retries + 1):
             try:
@@ -327,12 +335,13 @@ class ApiSportsProvider:
         periodico. Ritorna `None` solo per veri fallimenti (rete, config
         mancante, payload del tutto inatteso) - il chiamante ricade
         sull'ultimo snapshot noto."""
-        if not self.config.base_url or not self.config.api_key:
+        api_key = self._api_key()
+        if not self.config.base_url or not api_key:
             logging.warning("API-Sports config non completa: base_url o api_key mancante")
             return None
 
         url = f"{self.config.base_url}/status"
-        headers = {"x-apisports-key": self.config.api_key}
+        headers = {"x-apisports-key": api_key}
         try:
             response = requests.get(url=url, headers=headers, timeout=self.config.timeout_seconds)
         except requests.RequestException as exc:

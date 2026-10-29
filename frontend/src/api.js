@@ -52,6 +52,26 @@ export function changeCredentials(currentPassword, newUsername, newPassword) {
   });
 }
 
+export function revealCredentials() {
+  return request("/auth/credentials/reveal");
+}
+
+export function getProviderKeys() {
+  return request("/settings/provider-keys");
+}
+
+export function revealProviderKey(name) {
+  return request(`/settings/provider-keys/${encodeURIComponent(name)}/reveal`);
+}
+
+export function updateProviderKey(name, value, currentPassword) {
+  return request(`/settings/provider-keys/${encodeURIComponent(name)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ value, current_password: currentPassword }),
+  });
+}
+
 export function logout() {
   return request("/auth/logout", { method: "POST" });
 }

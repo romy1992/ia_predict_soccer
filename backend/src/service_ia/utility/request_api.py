@@ -12,9 +12,7 @@ logging.basicConfig(level=logging.DEBUG)
 # LOAD PROPERTIES
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 load_dotenv(dotenv_path=os.path.join(PROJECT_ROOT, "properties", "config.env"))
-API_SPORTS_KEY = os.environ.get('API_SPORTS_KEY')
 API_SPORTS_BASE = os.environ.get('API_SPORTS_BASE')
-API_ODDS_KEY = os.environ.get('API_ODDS_KEY')
 API_ODDS_BASE = os.environ.get('API_ODDS_BASE')
 API_ODDS_ACTUAL_BASE = os.environ.get('API_ODDS_ACTUAL_BASE')
 API_ODDS_HISTORIACAL_BASE = os.environ.get('API_ODDS_HISTORIACAL_BASE')
@@ -28,7 +26,9 @@ def get_api_sports_provider() -> ApiSportsProvider:
 def base_api_odds(type_api=None, path='', params=None):
     if not params:
         params = {}
-    params.update({'apiKey': API_ODDS_KEY})
+    from src.service_ia.config.secret_store import get_secret
+
+    params.update({'apiKey': get_secret('api_odds_key')})
 
     def split_api():
         match type_api:

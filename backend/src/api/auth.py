@@ -1,7 +1,8 @@
-"""Login JWT (cookie httpOnly) per le API - un solo account fisso via env var.
+"""Login JWT (cookie httpOnly) per le API - un solo account, salvato nel DB.
 
-Nessuna tabella utenti/registrazione: ``ADMIN_USERNAME``/``ADMIN_PASSWORD_HASH``
-sono impostate su Railway (hash bcrypt, mai la password in chiaro). Il
+Le credenziali vivono in ``admin_credential`` (modificabili dal portale).
+``ADMIN_USERNAME``/``ADMIN_PASSWORD_HASH`` servono solo come seme la prima
+volta, poi vale solo il DB. Il
 token non e' mai letto da JS lato frontend - viaggia solo nel cookie
 httpOnly settato da ``/auth/login`` e allegato automaticamente dal browser.
 
@@ -61,20 +62,34 @@ _CREDENTIALS_TTL_SECONDS = 10.0
 _cache: Optional[tuple[float, Credentials]] = None
 
 
-def _env_credentials() -> Credentials:
-    return Credentials(ADMIN_USERNAME, ADMIN_PASSWORD_HASH, 0)
-
-
 def load_override() -> Optional[Credentials]:
-    """Riga `admin_credential` (None se mai modificate dal portale)."""
+    """Riga `admin_credential`. Se manca, la prima volta viene seminata dalle
+    variabili d'ambiente (`ADMIN_USERNAME`/`ADMIN_PASSWORD_HASH`): da quel momento
+    vale solo il DB. None se non c'e' nulla da seminare."""
     from src.repository.base.repository_db import SessionLocal
     from src.service_ia.model.admin_credential import AdminCredential
 
     with SessionLocal() as session:
         row = session.get(AdminCredential, 1)
         if row is None:
-            return None
+            if not (ADMIN_USERNAME and ADMIN_PASSWORD_HASH):
+                return None
+            row = AdminCredential(id=1, username=ADMIN_USERNAME, password_hash=ADMIN_PASSWORD_HASH, version=1)
+            session.add(row)
+            session.commit()
         return Credentials(row.username, row.password_hash, int(row.version))
+
+
+def reveal_password() -> Optional[str]:
+    """Password in chiaro (None se non disponibile: l'ambiente ha solo l'hash,
+    quindi resta nascosta finche' non viene reimpostata dal portale)."""
+    from src.repository.base.repository_db import SessionLocal
+    from src.service_ia.config.secret_store import decrypt
+    from src.service_ia.model.admin_credential import AdminCredential
+
+    with SessionLocal() as session:
+        row = session.get(AdminCredential, 1)
+        return decrypt(row.password_enc) if row is not None else None
 
 
 def current_credentials() -> Credentials:
@@ -86,12 +101,12 @@ def current_credentials() -> Credentials:
     if _cache is not None and now - _cache[0] < _CREDENTIALS_TTL_SECONDS:
         return _cache[1]
     try:
-        creds = load_override() or _env_credentials()
+        creds = load_override() or Credentials("", "", 0)
     except Exception:  # noqa: BLE001 - DB irraggiungibile: non bloccare il pannello
         logging.exception("Credenziali admin: lettura dal DB fallita")
         if _cache is not None:
             return _cache[1]
-        creds = _env_credentials()
+        creds = Credentials("", "", 0)
     _cache = (now, creds)
     return creds
 
@@ -101,9 +116,10 @@ def reset_credentials_cache() -> None:
     _cache = None
 
 
-def save_override(username: str, password_hash: str) -> Credentials:
+def save_override(username: str, password_hash: str, password_plain: Optional[str] = None) -> Credentials:
     """Salva le nuove credenziali (riga unica) e incrementa la versione."""
     from src.repository.base.repository_db import SessionLocal
+    from src.service_ia.config.secret_store import encrypt
     from src.service_ia.model.admin_credential import AdminCredential
 
     with SessionLocal() as session:
@@ -115,6 +131,8 @@ def save_override(username: str, password_hash: str) -> Credentials:
             row.username = username
             row.password_hash = password_hash
             row.version = int(row.version) + 1
+        if password_plain is not None:
+            row.password_enc = encrypt(password_plain)
         session.commit()
         creds = Credentials(row.username, row.password_hash, int(row.version))
     reset_credentials_cache()
