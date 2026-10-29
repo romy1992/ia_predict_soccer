@@ -41,6 +41,37 @@ export function login(username, password) {
   });
 }
 
+export function changeCredentials(currentPassword, newUsername, newPassword) {
+  const body = { current_password: currentPassword };
+  if (newUsername) body.new_username = newUsername;
+  if (newPassword) body.new_password = newPassword;
+  return request("/auth/credentials", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+export function revealCredentials() {
+  return request("/auth/credentials/reveal");
+}
+
+export function getProviderKeys() {
+  return request("/settings/provider-keys");
+}
+
+export function revealProviderKey(name) {
+  return request(`/settings/provider-keys/${encodeURIComponent(name)}/reveal`);
+}
+
+export function updateProviderKey(name, value, currentPassword) {
+  return request(`/settings/provider-keys/${encodeURIComponent(name)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ value, current_password: currentPassword }),
+  });
+}
+
 export function logout() {
   return request("/auth/logout", { method: "POST" });
 }

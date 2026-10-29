@@ -68,18 +68,26 @@ class ApiSportsProvider:
         if config is None:
             config = ApiSportsProviderConfig(
                 base_url=(os.environ.get("API_SPORTS_BASE") or "").rstrip("/"),
-                api_key=os.environ.get("API_SPORTS_KEY") or "",
+                api_key="",  # vuota = si legge dal DB a ogni richiesta (secret_store)
             )
         self.config = config
 
+    def _api_key(self) -> str:
+        if self.config.api_key:
+            return self.config.api_key
+        from src.service_ia.config.secret_store import get_secret
+
+        return get_secret("api_sports_key")
+
     def request(self, path: str, params: Optional[dict[str, Any]] = None) -> list[dict[str, Any]]:
-        if not self.config.base_url or not self.config.api_key:
+        api_key = self._api_key()
+        if not self.config.base_url or not api_key:
             logging.warning("API-Sports config non completa: base_url o api_key mancante")
             return []
 
         url = f"{self.config.base_url}/{path.lstrip('/')}"
         request_params = dict(params or {})
-        headers = {"x-apisports-key": self.config.api_key}
+        headers = {"x-apisports-key": api_key}
 
         for attempt in range(1, self.config.max_retries + 1):
             try:
@@ -119,6 +127,14 @@ class ApiSportsProvider:
                 logging.error("API-Sports quota GIORNALIERA esaurita path=%s errors=%s", path, errors)
                 self._mark_quota_exhausted(response, errors)
                 raise ApiSportsQuotaExceededError(str(errors))
+
+            if errors and not self._is_rate_limit_error(errors):
+                # Errore della singola richiesta (piano, parametri, token):
+                # ritentare non serve e non e' un problema di quota.
+                logging.warning("API-Sports errore non di quota path=%s errors=%s", path, errors)
+                raise ApiSportsUnavailableError(
+                    f"API-Sports ha rifiutato '{path}': {self._format_errors(errors)}"
+                )
 
             if errors:
                 # BUGFIX 2026-09-06: rate-limit AL MINUTO (chiave
@@ -194,10 +210,24 @@ class ApiSportsProvider:
             return False
         if isinstance(errors, dict):
             keys = {str(k).lower() for k in errors.keys()}
+            if "requests" in keys:
+                return True
             if keys.issubset({"ratelimit"}):
                 return False
-            return True
+            # Altre chiavi (es. "plan", "token", "fixture", "date"): errore
+            # di QUESTA richiesta, non quota esaurita - a meno che il testo
+            # non parli di limite giornaliero. Segnarla come quota metteva
+            # in pausa tutti i job per un parametro sbagliato.
+            text = " ".join(str(v) for v in errors.values()).lower()
+            return "request limit" in text or "limit for the day" in text
         return True
+
+    @staticmethod
+    def _is_rate_limit_error(errors: Any) -> bool:
+        """Solo rate-limit al minuto (transitorio, vale il retry)."""
+        if not isinstance(errors, dict):
+            return bool(errors)
+        return {str(k).lower() for k in errors.keys()}.issubset({"ratelimit"})
 
     def _parse_response(
         self,
@@ -305,12 +335,13 @@ class ApiSportsProvider:
         periodico. Ritorna `None` solo per veri fallimenti (rete, config
         mancante, payload del tutto inatteso) - il chiamante ricade
         sull'ultimo snapshot noto."""
-        if not self.config.base_url or not self.config.api_key:
+        api_key = self._api_key()
+        if not self.config.base_url or not api_key:
             logging.warning("API-Sports config non completa: base_url o api_key mancante")
             return None
 
         url = f"{self.config.base_url}/status"
-        headers = {"x-apisports-key": self.config.api_key}
+        headers = {"x-apisports-key": api_key}
         try:
             response = requests.get(url=url, headers=headers, timeout=self.config.timeout_seconds)
         except requests.RequestException as exc:
@@ -342,7 +373,7 @@ class ApiSportsProvider:
             # mostrare "riprova tra un minuto" invece di "quota esaurita".
             errors = payload.get("errors")
             if not self._is_daily_quota_error(errors):
-                logging.warning("API-Sports /status rate-limit transitorio (minuto): %s", errors)
+                logging.warning("API-Sports /status errore non di quota: %s", errors)
                 return {
                     "requests_current": None,
                     "requests_limit_day": None,

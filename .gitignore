@@ -19,3 +19,6 @@ frontend/dist/
 /backend/src/service_ia/dataset/odds/odds_dataset.xlsx
 /backend/src/service_ia/dataset/statistics/dataset_statistics_history.xlsx
 /backend/src/service_ia/migrate/dataset_mean_history.xlsx
+
+# Segreti locali: mai nel repo
+backend/properties/config.env

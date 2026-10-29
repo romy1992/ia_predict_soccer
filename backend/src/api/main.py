@@ -60,6 +60,8 @@ from src.api.schemas import (
     LiveFixtureEventsResponse,
     LiveFixtureStatisticsResponse,
     LiveFixturesResponse,
+    ChangeCredentialsRequest,
+    UpdateProviderKeyRequest,
     LoginRequest,
     LoginResponse,
     MetricsResponse,
@@ -182,7 +184,7 @@ async def _require_auth_cookie(request: Request, call_next):
         if request.url.path.startswith("/players/") and players_routes.service_key_ok(request.headers.get("X-Service-Key")):
             return await call_next(request)
         token = request.cookies.get(auth.AUTH_COOKIE_NAME)
-        username = auth.decode_token(token) if token else None
+        username = auth.decode_valid_token(token)
         if username is None:
             return JSONResponse(status_code=401, content={"detail": "Non autenticato"})
     return await call_next(request)
@@ -216,11 +218,12 @@ app.add_middleware(
 
 @app.post("/auth/login", response_model=LoginResponse)
 def login(payload: LoginRequest, response: Response) -> LoginResponse:
-    if payload.username != auth.ADMIN_USERNAME or not auth.verify_password(
-        payload.password, auth.ADMIN_PASSWORD_HASH
+    creds = auth.current_credentials()
+    if payload.username != creds.username or not auth.verify_password(
+        payload.password, creds.password_hash
     ):
         raise HTTPException(status_code=401, detail="Credenziali non valide")
-    token = auth.create_access_token(payload.username)
+    token = auth.create_access_token(payload.username, creds.version)
     response.set_cookie(auth.AUTH_COOKIE_NAME, token, **auth.cookie_kwargs())
     return LoginResponse(username=payload.username)
 
@@ -231,9 +234,69 @@ def logout(response: Response) -> dict[str, bool]:
     return {"ok": True}
 
 
+@app.post("/auth/credentials", response_model=LoginResponse)
+def update_credentials(payload: ChangeCredentialsRequest, response: Response) -> LoginResponse:
+    """Cambia username e/o password del pannello. Richiede la password attuale
+    (403, non 401: il frontend non deve leggerlo come sessione scaduta). I
+    token precedenti smettono di valere; il cookie nuovo parte subito."""
+    creds = auth.current_credentials()
+    if not auth.verify_password(payload.current_password, creds.password_hash):
+        raise HTTPException(status_code=403, detail="Password attuale errata")
+    username = payload.new_username or creds.username
+    password_hash = (
+        auth.hash_password(payload.new_password) if payload.new_password else creds.password_hash
+    )
+    new = auth.save_override(username, password_hash, payload.new_password)
+    token = auth.create_access_token(new.username, new.version)
+    response.set_cookie(auth.AUTH_COOKIE_NAME, token, **auth.cookie_kwargs())
+    return LoginResponse(username=new.username)
+
+
+@app.get("/auth/credentials/reveal")
+def reveal_credentials() -> dict:
+    """Username e password in chiaro per l'"occhio" (protetto dal cookie di
+    login). `password` e' null se non disponibile (l'ambiente ha solo l'hash:
+    si popola al primo cambio password dal portale)."""
+    creds = auth.current_credentials()
+    return {"username": creds.username, "password": auth.reveal_password()}
+
+
+@app.get("/settings/provider-keys")
+def list_provider_keys() -> dict:
+    from src.service_ia.config import secret_store
+
+    items = []
+    for name, (label, _env) in secret_store.PROVIDER_SECRETS.items():
+        value = secret_store.get_secret(name)
+        items.append({"name": name, "label": label, "configured": bool(value), "masked": secret_store.mask(value) if value else ""})
+    return {"keys": items}
+
+
+@app.get("/settings/provider-keys/{name}/reveal")
+def reveal_provider_key(name: str) -> dict:
+    from src.service_ia.config import secret_store
+
+    if name not in secret_store.PROVIDER_SECRETS:
+        raise HTTPException(status_code=404, detail="Chiave sconosciuta")
+    return {"name": name, "value": secret_store.get_secret(name)}
+
+
+@app.put("/settings/provider-keys/{name}")
+def update_provider_key(name: str, payload: UpdateProviderKeyRequest) -> dict:
+    from src.service_ia.config import secret_store
+
+    if name not in secret_store.PROVIDER_SECRETS:
+        raise HTTPException(status_code=404, detail="Chiave sconosciuta")
+    creds = auth.current_credentials()
+    if not auth.verify_password(payload.current_password, creds.password_hash):
+        raise HTTPException(status_code=403, detail="Password attuale errata")
+    secret_store.set_secret(name, payload.value.strip())
+    return {"ok": True, "name": name}
+
+
 @app.get("/auth/me", response_model=AuthMeResponse)
 def auth_me(request: Request) -> AuthMeResponse:
-    username = auth.decode_token(request.cookies.get(auth.AUTH_COOKIE_NAME))
+    username = auth.decode_valid_token(request.cookies.get(auth.AUTH_COOKIE_NAME))
     return AuthMeResponse(username=username)
 
 

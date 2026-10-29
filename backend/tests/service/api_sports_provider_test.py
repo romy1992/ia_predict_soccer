@@ -40,6 +40,13 @@ class TestIsDailyQuotaError(unittest.TestCase):
         errors = {"rateLimit": "...", "requests": "..."}
         self.assertTrue(ApiSportsProvider._is_daily_quota_error(errors))
 
+    def test_other_errors_are_not_daily_quota_error(self):
+        self.assertFalse(ApiSportsProvider._is_daily_quota_error({"plan": "Free plans do not have access to this season"}))
+        self.assertFalse(ApiSportsProvider._is_daily_quota_error({"token": "Error/Missing application key"}))
+
+    def test_limit_text_under_other_key_is_daily_quota_error(self):
+        self.assertTrue(ApiSportsProvider._is_daily_quota_error({"x": "You have reached the request limit for the day"}))
+
     def test_empty_errors_is_not_daily_quota_error(self):
         self.assertFalse(ApiSportsProvider._is_daily_quota_error({}))
         self.assertFalse(ApiSportsProvider._is_daily_quota_error(None))
@@ -94,6 +101,15 @@ class TestRequestNonRitornaListaVuotaSuFallimento(unittest.TestCase):
         # e va ritentato (bug fix 2026-09-06), ma se NON rientra il chiamante
         # deve saperlo invece di ricevere una lista vuota.
         self.assertEqual(get.call_count, 3)
+
+    def test_errore_non_di_quota_solleva_subito_senza_segnare_quota(self):
+        risposta = _risposta(payload={"errors": {"plan": "piano senza accesso a questa stagione"}})
+        with mock.patch("requests.get", return_value=risposta) as get, \
+                mock.patch("src.service_ia.pre_processing.api_sports_provider.record_status_snapshot") as snap:
+            with self.assertRaises(ApiSportsUnavailableError):
+                _provider().request(path="fixtures", params={"league": 135})
+        self.assertEqual(get.call_count, 1)
+        snap.assert_not_called()
 
     def test_5xx_ripetuti_sollevano(self):
         with mock.patch("requests.get", return_value=_risposta(status_code=503)) as get:
