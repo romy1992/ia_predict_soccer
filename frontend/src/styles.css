@@ -1771,3 +1771,18 @@ th {
 
 
 
+
+/* Impostazioni: credenziali e chiavi */
+.cred-panel { display: flex; flex-direction: column; gap: 16px; }
+.cred-grid { display: grid; gap: 16px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.cred-block { border-top: 1px solid #e2e8f0; display: flex; flex-direction: column; gap: 14px; padding-top: 16px; }
+.cred-block h3 { margin: 0; }
+.cred-field { display: flex; flex-direction: column; gap: 6px; margin: 0; min-width: 0; }
+.cred-label { font-size: 13px; font-weight: 700; }
+.cred-field-row { align-items: stretch; display: flex; gap: 8px; }
+.cred-field-row input { flex: 1; min-width: 0; width: 100%; }
+.cred-eye { flex: 0 0 44px; padding: 0; }
+.cred-error { color: #b42318; }
+.cred-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+@media (max-width: 720px) { .cred-grid { grid-template-columns: 1fr; } }
+.cred-field-pad::after { content: ""; flex: 0 0 44px; }

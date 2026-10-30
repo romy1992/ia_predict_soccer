@@ -38,9 +38,9 @@ export default function SecretField({ label, value, onChange, onReveal, readOnly
 
   const shown = onReveal ? (visible ? revealed ?? "" : value ?? "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022") : value;
   return (
-    <label>
-      {label}
-      <span style={{ display: "flex", gap: 8, alignItems: "center" }}>
+    <label className="cred-field">
+      <span className="cred-label">{label}</span>
+      <span className="cred-field-row">
         <input
           type={onReveal || visible ? "text" : "password"}
           value={shown}
@@ -50,13 +50,12 @@ export default function SecretField({ label, value, onChange, onReveal, readOnly
           autoComplete={autoComplete}
           disabled={disabled}
           required={required}
-          style={{ flex: 1 }}
         />
-        <button type="button" onClick={toggle} disabled={loading} aria-label={visible ? `Nascondi ${label}` : `Mostra ${label}`} title={visible ? "Nascondi" : "Mostra"}>
+        <button type="button" className="btn-secondary cred-eye" onClick={toggle} disabled={loading} aria-label={visible ? `Nascondi ${label}` : `Mostra ${label}`} title={visible ? "Nascondi" : "Mostra"}>
           {visible ? "\u{1F648}" : "\u{1F441}"}
         </button>
       </span>
-      {error && <small className="error-box">{error}</small>}
+      {error && <small className="cred-error">{error}</small>}
     </label>
   );
 }
