@@ -212,6 +212,7 @@ export default function SettingsPage({
   quotaPaused,
   quotaPausedSince,
 }) {
+  const [tab, setTab] = useState("job");
   const percentage = quota?.daily_used_percentage ?? null;
   const barWidth = Math.min(Math.max(percentage ?? 0, 0), 100);
   const barClass = quotaBarClass(percentage);
@@ -245,6 +246,16 @@ export default function SettingsPage({
         </article>
       </section>
 
+      <div className="tabs" role="tablist">
+        <button type="button" role="tab" aria-selected={tab === "job"} className={`tab ${tab === "job" ? "active" : ""}`} onClick={() => setTab("job")}>
+          Job e quota
+        </button>
+        <button type="button" role="tab" aria-selected={tab === "credenziali"} className={`tab ${tab === "credenziali" ? "active" : ""}`} onClick={() => setTab("credenziali")}>
+          Credenziali e chiavi
+        </button>
+      </div>
+
+      {tab === "job" && (<>
       <section className="panel">
         <div className="panel-header">
           <h3>Quota giornaliera API-Sports</h3>
@@ -397,7 +408,9 @@ export default function SettingsPage({
           {jobs.length === 0 && !isLoading && <div className="empty-panel">Nessun job trovato.</div>}
         </div>
       </section>
-      <AccountCredentialsSection />
+      </>)}
+
+      {tab === "credenziali" && <AccountCredentialsSection />}
     </section>
   );
 }

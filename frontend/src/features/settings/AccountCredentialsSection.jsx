@@ -1,5 +1,4 @@
-import { useState } from "react";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { changeCredentials, getProviderKeys, revealCredentials, revealProviderKey, updateProviderKey } from "../../api";
 import SecretField from "./SecretField";
 
@@ -23,15 +22,14 @@ function CurrentCredentials({ refreshKey }) {
     revealCredentials().then((r) => setUsername(r?.username || "")).catch(() => setUsername(""));
   }, [refreshKey]);
   return (
-    <div key={refreshKey}>
-      <label>
-        Username attuale
-        <input type="text" value={username} readOnly />
+    <div className="cred-grid" key={refreshKey}>
+      <label className="cred-field">
+        <span className="cred-label">Username attuale</span>
+        <span className="cred-field-row cred-field-pad">
+          <input type="text" value={username} readOnly />
+        </span>
       </label>
-      <SecretField
-        label="Password attuale (salvata)"
-        onReveal={async () => (await revealCredentials())?.password}
-      />
+      <SecretField label="Password salvata" onReveal={async () => (await revealCredentials())?.password} />
     </div>
   );
 }
@@ -75,25 +73,42 @@ function ProviderKeysSection() {
   }
 
   return (
-    <section className="panel">
+    <section className="panel cred-panel">
       <div className="panel-header">
         <h2>Chiavi dei provider</h2>
       </div>
-      <p>Salvate cifrate nel database: le variabili d'ambiente servono solo come seme al primo avvio.</p>
-      {keys.map((k) => (
-        <div key={`${k.name}-${version}`}>
-          <SecretField label={`${k.label} (attuale)`} onReveal={async () => (await revealProviderKey(k.name))?.value} />
+      <p className="muted">Salvate cifrate nel database: le variabili d'ambiente servono solo come seme al primo avvio.</p>
+      <div className="cred-block">
+        <div className="cred-grid">
           <SecretField
-            label={`Nuova ${k.label.toLowerCase()}`}
-            value={values[k.name] || ""}
-            onChange={(v) => setValues((cur) => ({ ...cur, [k.name]: v }))}
-            placeholder={k.configured ? "Incolla la nuova chiave" : "Non configurata: incolla la chiave"}
+            label="Password attuale (conferma per salvare)"
+            value={currentPassword}
+            onChange={setCurrentPassword}
+            autoComplete="current-password"
             disabled={Boolean(busy)}
           />
-          <button type="button" onClick={() => save(k.name)} disabled={Boolean(busy)}>Salva {k.label}</button>
+        </div>
+      </div>
+      {keys.map((k) => (
+        <div className="cred-block" key={`${k.name}-${version}`}>
+          <h3>{k.label}</h3>
+          <div className="cred-grid">
+            <SecretField label="Chiave attuale" onReveal={async () => (await revealProviderKey(k.name))?.value} />
+            <SecretField
+              label="Nuova chiave"
+              value={values[k.name] || ""}
+              onChange={(v) => setValues((cur) => ({ ...cur, [k.name]: v }))}
+              placeholder={k.configured ? "Incolla la nuova chiave" : "Non configurata: incolla la chiave"}
+              disabled={Boolean(busy)}
+            />
+          </div>
+          <div className="cred-actions">
+            <button type="button" className="btn-primary" onClick={() => save(k.name)} disabled={Boolean(busy)}>
+              Salva {k.label}
+            </button>
+          </div>
         </div>
       ))}
-      <SecretField label="Password attuale (conferma)" value={currentPassword} onChange={setCurrentPassword} autoComplete="current-password" disabled={Boolean(busy)} />
       {message && <div className="success-box">{message}</div>}
       {error && <div className="error-box">Errore: {error}</div>}
     </section>
@@ -142,27 +157,36 @@ export default function AccountCredentialsSection() {
   }
 
   return (
-    <>
-    <section className="panel">
-      <div className="panel-header">
-        <h2>Credenziali di accesso</h2>
-      </div>
-      <CurrentCredentials refreshKey={message} />
-      <p>Lascia vuoto ciò che non vuoi cambiare. Dopo il cambio, le altre sessioni aperte vengono disconnesse.</p>
-      <form onSubmit={handleSubmit}>
-        <label>
-          Nuovo username
-          <input type="text" value={newUsername} onChange={(e) => setNewUsername(e.target.value)} autoComplete="username" disabled={busy} />
-        </label>
-        <SecretField label="Nuova password" value={newPassword} onChange={setNewPassword} autoComplete="new-password" disabled={busy} />
-        <SecretField label="Conferma nuova password" value={confirmPassword} onChange={setConfirmPassword} autoComplete="new-password" disabled={busy} />
-        <SecretField label="Password attuale" value={currentPassword} onChange={setCurrentPassword} autoComplete="current-password" required disabled={busy} />
-        <button type="submit" disabled={busy}>Aggiorna credenziali</button>
-      </form>
-      {message && <div className="success-box">{message}</div>}
-      {error && <div className="error-box">Errore: {error}</div>}
-    </section>
-    <ProviderKeysSection />
-    </>
+    <div className="stack">
+      <section className="panel cred-panel">
+        <div className="panel-header">
+          <h2>Credenziali di accesso</h2>
+        </div>
+        <CurrentCredentials refreshKey={message} />
+        <form className="cred-block" onSubmit={handleSubmit}>
+          <h3>Cambia credenziali</h3>
+          <p className="muted">
+            Lascia vuoto ciò che non vuoi cambiare. Dopo il cambio, le altre sessioni aperte vengono disconnesse.
+          </p>
+          <div className="cred-grid">
+            <label className="cred-field">
+              <span className="cred-label">Nuovo username</span>
+              <span className="cred-field-row cred-field-pad">
+                <input type="text" value={newUsername} onChange={(e) => setNewUsername(e.target.value)} autoComplete="username" disabled={busy} />
+              </span>
+            </label>
+            <SecretField label="Nuova password" value={newPassword} onChange={setNewPassword} autoComplete="new-password" disabled={busy} />
+            <SecretField label="Conferma nuova password" value={confirmPassword} onChange={setConfirmPassword} autoComplete="new-password" disabled={busy} />
+            <SecretField label="Password attuale" value={currentPassword} onChange={setCurrentPassword} autoComplete="current-password" required disabled={busy} />
+          </div>
+          <div className="cred-actions">
+            <button type="submit" className="btn-primary" disabled={busy}>Aggiorna credenziali</button>
+          </div>
+        </form>
+        {message && <div className="success-box">{message}</div>}
+        {error && <div className="error-box">Errore: {error}</div>}
+      </section>
+      <ProviderKeysSection />
+    </div>
   );
 }
