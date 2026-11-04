@@ -236,13 +236,17 @@ def evaluate_decision(
     blend_unavailable = (
         p_model is not None and compute_model_void_odd(p_model) is not None and p_effective is None
     )
-    model_void_odd = compute_model_void_odd(p_effective)
+    # Senza probabilita' di mercato non si puo' ridurre: la quota void mostrata
+    # resta quella del modello grezzo, ma nessun prob_edge/EV (decisione NO BET).
+    p_display = p_effective if p_effective is not None else p_model
+    model_void_odd = compute_model_void_odd(p_display)
     market_fair_odd = _market_fair_odd(p_market_fair)
     valid_probability = model_void_odd is not None
-    probability_value = float(p_effective) if valid_probability else None
-    prob_edge = compute_prob_edge(probability_value, p_market_fair) if valid_probability else None
+    probability_value = float(p_display) if valid_probability else None
+    has_blend = valid_probability and not blend_unavailable
+    prob_edge = compute_prob_edge(probability_value, p_market_fair) if has_blend else None
     valid_odd = odd is not None and _is_positive_number(odd)
-    ev = compute_expected_value(probability_value, odd) if valid_probability and valid_odd else None
+    ev = compute_expected_value(probability_value, odd) if has_blend and valid_odd else None
     odd_value = float(odd) if valid_odd else None
     play_threshold_odd = (
         model_void_odd * (1.0 + thresholds.min_edge_percent / 100.0)
@@ -261,12 +265,12 @@ def evaluate_decision(
     )
     expected_roi_percent = ev * 100.0 if ev is not None else None
 
-    if blend_unavailable:
-        decision, reason = NO_BET, "Probabilita' di mercato non disponibile per la riduzione verso il mercato"
-    elif not valid_probability:
+    if not valid_probability:
         decision, reason = NOT_AVAILABLE, "Probabilita' modello non disponibile o non valida"
     elif not valid_odd:
         decision, reason = WITHOUT_ODD, "Quota mercato non disponibile"
+    elif blend_unavailable:
+        decision, reason = NO_BET, "Probabilita' di mercato non disponibile per la riduzione verso il mercato"
     elif odd_value < model_void_odd:
         decision, reason = NO_BET, "Quota inferiore alla quota void IA"
     elif thresholds.min_odd is not None and odd_value < thresholds.min_odd:

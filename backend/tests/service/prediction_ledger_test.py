@@ -22,7 +22,11 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from src.oracle.backtest.betting_backtester import bet_profit as backtest_bet_profit, BacktestBet
-from src.oracle.decision_engine.decision_policy import evaluate_decision
+from src.oracle.decision_engine.decision_policy import (
+    DECISION_POLICY_V2,
+    DECISION_POLICY_V3,
+    evaluate_decision as _evaluate_decision,
+)
 from src.oracle.ledger.ledger_service import PredictionLedgerService
 from src.oracle.ledger.prediction_ledger import (
     SETTLED,
@@ -39,6 +43,33 @@ from src.repository.base.crud_repository import CrudRepository
 from src.repository.match_repository import MatchRepository
 from src.repository.prediction_ledger_repository import PredictionLedgerRepository
 from src.service_ia.model.match import Base, Match, PredictionLedger, Statistics
+
+
+# I test del ledger verificano persistenza/settlement con la policy v2 (nessuna
+# riduzione verso il mercato), cosi' le giocate PLAY di prova restano tali.
+def evaluate_decision(*args, policy=DECISION_POLICY_V2, **kwargs):
+    return _evaluate_decision(*args, policy=policy, **kwargs)
+
+
+class TestBuildPredictionRecordV3Fields(unittest.TestCase):
+    def test_record_carries_adjusted_probability_and_weight(self):
+        decision = evaluate_decision(
+            market="under_over_2_5", outcome="Over", p_model=0.75, p_market_fair=0.60,
+            odd=1.38, samples=4, policy=DECISION_POLICY_V3,
+        )
+        record = build_prediction_record(fixture_id=1, decision=decision, model_run_id="run_v3")
+
+        self.assertEqual(record.p_model, 0.75)
+        self.assertAlmostEqual(record.p_adjusted, 0.675, places=6)
+        self.assertEqual(record.model_weight, 0.5)
+        self.assertEqual(record.policy_version, "decision_policy_v3_market_blend")
+
+    def test_v2_record_has_unit_weight(self):
+        decision = evaluate_decision(market="h2h", outcome="Home", p_model=0.7, p_market_fair=0.5, odd=2.0, samples=5)
+        record = build_prediction_record(fixture_id=1, decision=decision, model_run_id="run_v2")
+
+        self.assertEqual(record.model_weight, 1.0)
+        self.assertEqual(record.p_adjusted, 0.7)
 
 
 class TestBuildPredictionRecord(unittest.TestCase):

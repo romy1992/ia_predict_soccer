@@ -320,6 +320,15 @@ class TestMarketBlendPolicyV3(unittest.TestCase):
         self.assertEqual(decision.decision, NO_BET)
         self.assertIn("mercato", decision.reason)
 
+    def test_v3_missing_odd_and_market_probability_is_without_odd(self):
+        decision = _evaluate_decision(
+            market="under_over_2_5", outcome="Over", p_model=0.80, p_market_fair=None, odd=None, samples=0,
+            policy=DECISION_POLICY_V3,
+        )
+        self.assertEqual(decision.decision, WITHOUT_ODD)
+        self.assertAlmostEqual(decision.model_void_odd, 1.25, places=6)
+        self.assertIsNone(decision.ev)
+
     def test_v3_invalid_model_probability_stays_not_available(self):
         decision = _evaluate_decision(
             market="under_over_2_5", outcome="Over", p_model=None, p_market_fair=0.6, odd=2.0, samples=4,

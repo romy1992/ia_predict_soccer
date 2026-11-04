@@ -205,6 +205,10 @@ class PredictionLedger(Base):
     model_name = Column(String, nullable=True)
     policy_version = Column(String, nullable=True)
     p_model = Column(Float, nullable=True)
+    # Probabilita' effettivamente usata per EV/PLAY (policy v3: ridotta verso il
+    # mercato) e peso del modello usato; p_model resta quella grezza del modello.
+    p_adjusted = Column(Float, nullable=True)
+    model_weight = Column(Float, nullable=True)
     p_market_raw = Column(Float, nullable=True)
     p_market_fair = Column(Float, nullable=True)
     odd = Column(Float, nullable=True)

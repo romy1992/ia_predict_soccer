@@ -76,6 +76,8 @@ class PredictionRecord:
     model_name: Optional[str] = None
     policy_version: Optional[str] = None
     p_model: Optional[float] = None
+    p_adjusted: Optional[float] = None
+    model_weight: Optional[float] = None
     p_market_fair: Optional[float] = None
     odd: Optional[float] = None
     fair_odd: Optional[float] = None
@@ -150,6 +152,8 @@ def build_prediction_record(
         model_name=model_name,
         policy_version=decision.policy_version,
         p_model=decision.p_model,
+        p_adjusted=decision.p_adjusted,
+        model_weight=decision.model_weight,
         p_market_fair=decision.p_market_fair,
         odd=decision.odd,
         fair_odd=fair_odd_from_probability(decision.p_market_fair),

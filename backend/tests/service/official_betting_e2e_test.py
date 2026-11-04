@@ -32,7 +32,7 @@ class _Snapshots:
         return {
             "under_over_2_5": {
                 "prediction": 1,
-                "probability": 0.75,
+                "probability": 0.80,  # p_adj v3 = 0.5*0.80 + 0.5*0.487 = 0.644 >= 0.62 (PLAY)
                 "model_name": "test_champion",
                 "run_id": "run-e2e",
             }
