@@ -435,6 +435,7 @@ def download_import_matches(
     statuses: Optional[str] = None,
     days_ahead: Optional[int] = None,
     provider: Optional[ApiSportsProvider] = None,
+    only_fixture_ids: Optional[list[int]] = None,
 ):
     """
     Scarica tutte le partite storiche o successive con odds, statistiche e dettagli vari salvandoli a db
@@ -447,6 +448,9 @@ def download_import_matches(
     :param fixture_date: filtro singola data (YYYY-MM-DD)
     :param statuses: stati fixture separati da '-' o ','
     :param days_ahead: se valorizzato costruisce una finestra futura da oggi
+    :param only_fixture_ids: se valorizzato, dell'elenco restituito dal provider (una sola chiamata per
+        lega/data) elabora SOLO queste fixture: niente statistiche/quote/eventi delle altre (uso: aggiornamento
+        puntuale di una partita)
     :return: report import con inserted/updated/skipped/failed
     """
     cfg = load_app_config()
@@ -561,6 +565,12 @@ def download_import_matches(
                     'error': f'API-Sports non disponibile (season={season}, league={league}): {unavailable_exc}',
                 })
                 continue
+            if only_fixture_ids:
+                wanted_ids = {int(x) for x in only_fixture_ids}
+                fixtures = [
+                    fx for fx in fixtures
+                    if str(((fx or {}).get('fixture') or {}).get('id')) in {str(i) for i in wanted_ids}
+                ]
             report['fixtures_seen'] += len(fixtures)
 
             for fixture in fixtures:

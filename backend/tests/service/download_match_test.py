@@ -429,6 +429,51 @@ class TestDownloadMatch(unittest.TestCase):
         self.assertEqual(mean_stats["id_team"], 10)
 
 
+class TestDownloadImportOnlyFixtureIds(unittest.TestCase):
+    @patch("src.service_ia.pre_processing.download_match_service.repo_player.has_stats_for_fixture", return_value=True)
+    @patch("src.service_ia.pre_processing.download_match_service.repo_player.has_lineup_for_fixture", return_value=True)
+    @patch("src.service_ia.pre_processing.download_match_service.repo_player.has_events_for_fixture", return_value=True)
+    @patch("src.service_ia.pre_processing.download_match_service.BET_BOOKMAKERS", [{"id": 1}])
+    @patch("src.service_ia.pre_processing.download_match_service.form_last_5_tot", return_value=None)
+    @patch("src.service_ia.pre_processing.download_match_service.repo_snapshot.save_many")
+    @patch("src.service_ia.pre_processing.download_match_service.repo_match.save")
+    @patch("src.service_ia.pre_processing.download_match_service.repo_match.upsert_base_by_fixture")
+    @patch("src.service_ia.pre_processing.download_match_service.repo_match.filter_by")
+    def test_only_requested_fixture_is_processed(
+        self, mock_filter_by, mock_upsert, _mock_save, _mock_snapshot, _mock_form, _ev, _lu, _st
+    ):
+        """Aggiornamento puntuale: dell'elenco della lega/data si elabora solo la fixture richiesta."""
+        mock_filter_by.return_value.first.return_value = None
+        mock_upsert.return_value = ("id-x", True)
+        provider = FakeProvider(
+            fixtures=[_sample_fixture(fixture_id=111), _sample_fixture(fixture_id=222)],
+            statistics=_sample_statistics(),
+            odds=_sample_odds_payload(),
+        )
+
+        report = download_import_matches(
+            seasons=[2026], leagues=[135], fixture_date="2026-09-01", statuses="FT",
+            provider=provider, only_fixture_ids=[222],
+        )
+
+        self.assertEqual(report["fixtures_seen"], 1)
+        self.assertEqual(report["inserted"], 1)
+        mock_upsert.assert_called_once()
+        self.assertEqual(mock_upsert.call_args[0][0]["id_fixture"], 222)
+
+    @patch("src.service_ia.pre_processing.download_match_service.repo_match.upsert_base_by_fixture")
+    def test_fixture_not_in_provider_list_processes_nothing(self, mock_upsert):
+        provider = FakeProvider(fixtures=[_sample_fixture(fixture_id=111)])
+
+        report = download_import_matches(
+            seasons=[2026], leagues=[135], fixture_date="2026-09-01", statuses="FT",
+            provider=provider, only_fixture_ids=[999],
+        )
+
+        self.assertEqual(report["fixtures_seen"], 0)
+        mock_upsert.assert_not_called()
+
+
 class FakeProviderQuotaExceededOnOdds(FakeProvider):
     """Simula la quota GIORNALIERA che si esaurisce DURANTE il processing
     di una fixture (su `get_fixture_odds`), non durante `get_fixtures`."""

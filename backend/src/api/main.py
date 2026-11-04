@@ -586,6 +586,21 @@ def dashboard_match_recompute_predictions(
     return RecomputePredictionsResponse(**result)
 
 
+@app.post("/dashboard/matches/{fixture_id}/refresh")
+def dashboard_match_refresh(fixture_id: int) -> dict:
+    """Aggiornamento PUNTUALE di una partita (bottone sulla card, solo super admin lato BFF): riscarica
+    risultato/statistiche/quote di QUESTA fixture, riconcilia ledger e schedine e ricalcola le predizioni di
+    tutti i mercati. Sincrono (decine di secondi al massimo). Vedi `run_single_fixture_refresh`."""
+    from src.jobs.scheduler import run_single_fixture_refresh
+
+    result = run_single_fixture_refresh(fixture_id)
+    if not result.get("found"):
+        raise HTTPException(status_code=404, detail=f"Fixture non trovata: {fixture_id}")
+    if result.get("skipped_busy"):
+        raise HTTPException(status_code=409, detail="Un altro aggiornamento e' in corso: riprova tra poco")
+    return result
+
+
 @app.get("/dashboard/match/{fixture_id}/consensus", response_model=ModelConsensusResponse)
 def dashboard_match_consensus(fixture_id: int, market: str) -> ModelConsensusResponse:
     """Model Consensus per spiegabilita' (ORACLE-04): output dei singoli

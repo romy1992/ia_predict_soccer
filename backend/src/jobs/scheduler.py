@@ -467,6 +467,90 @@ def run_manual_settlement(
             raise
 
 
+# Stati con cui si importa UNA partita: qualunque, anche non ancora iniziata o in corso.
+_SINGLE_FIXTURE_STATUSES = "TBD-NS-1H-HT-2H-ET-BT-P-SUSP-INT-LIVE-FT-AET-PEN-PST-CANC-ABD-AWD-WO"
+
+
+def run_single_fixture_refresh(fixture_id: int) -> dict:
+    """Aggiornamento PUNTUALE di una partita (bottone sulla card, super admin):
+
+    1) riscarica dal provider risultato, statistiche, quote ed eventi di QUESTA fixture
+       (una sola chiamata di elenco per lega/data, poi solo le chiamate di questa partita);
+    2) riconcilia il settlement di ledger e schedine (solo database locale, nessuna chiamata);
+    3) ricalcola la predizione di TUTTI i mercati della partita (`recompute_predictions`, riga nuova);
+    4) aggiorna formazioni, marcatori e cartellini giocatori: fasi "morbide" che lavorano sull'insieme delle
+       partite imminenti (non solo questa), idempotenti.
+    Le fasi 2-4 sono morbide: se falliscono, i dati importati restano e l'errore e' nel report.
+    Ritorna `{"found": False}` se la partita non e' nel database locale."""
+    from src.api.dashboard_service import DashboardService
+    from src.repository.base.repository_db import SessionLocal
+    from src.service_ia.model.match import Match
+
+    with SessionLocal() as session:
+        row = session.query(Match).filter(Match.id_fixture == int(fixture_id)).first()
+        if row is None:
+            return {"found": False, "fixture_id": int(fixture_id)}
+        league, season, date_raw = row.current_league, row.season, row.date_match
+    try:
+        day = datetime.fromisoformat(str(date_raw).replace("Z", "+00:00")).date().isoformat()
+    except ValueError:
+        day = str(date_raw)[:10]
+
+    history = JobHistory()
+    params = {"fixture_id": int(fixture_id), "league": league, "season": season, "date": day}
+    started = history.create_job(
+        job_type="single_fixture_refresh", status="running", params=params, started_at=JobHistory._now_iso()
+    )
+    job_id = started["job_id"]
+    start = time.perf_counter()
+    with job_lock(LOCK_IMPORT_MATCH, obbligatorio=False) as lock_preso:
+        if not lock_preso:
+            return {**_esito_job_saltato(history=history, job_id=job_id, start=start), "found": True,
+                    "fixture_id": int(fixture_id), "skipped_busy": True}
+        try:
+            errors: dict = {}
+            import_report = download_import_matches(
+                seasons=[season],
+                leagues=[league],
+                fixture_date=day,
+                statuses=_SINGLE_FIXTURE_STATUSES,
+                only_fixture_ids=[int(fixture_id)],
+            )
+            settlement: dict = {}
+
+            def _settle() -> dict:
+                out: dict = {}
+                out.update(PredictionLedgerService().settle_pending())
+                out.update(OfficialBetslipService().settle_pending())
+                out["shadow_betslips"] = BetslipProposalSnapshotService().settle_pending()
+                return out
+
+            settlement = _soft_phase("settlement", _settle, errors)
+            predictions = _soft_phase(
+                "predictions", lambda: DashboardService().recompute_predictions(fixture_id=int(fixture_id)), errors
+            )
+            scorers = _soft_phase("scorers", run_scorer_predictions, errors)
+            cards = _soft_phase("player_cards", run_player_cards_predictions, errors)
+            summary = {
+                "fixture_id": int(fixture_id),
+                "import": import_report,
+                "settlement": settlement,
+                "predictions": predictions,
+                "scorers": scorers,
+                "player_cards": cards,
+                "errors": errors,
+                "duration_seconds": time.perf_counter() - start,
+            }
+            history.mark_success(job_id=job_id, summary=summary)
+            return {"found": True, "job_id": job_id, **summary}
+        except Exception as exc:
+            history.mark_failed(
+                job_id=job_id,
+                error={"message": str(exc), "duration_seconds": time.perf_counter() - start, "params": params},
+            )
+            raise
+
+
 def run_official_prediction_capture(job_id: Optional[str] = None) -> dict:
     """Cattura deterministica delle PLAY ufficiali, indipendente dal frontend."""
     cfg = load_app_config()
