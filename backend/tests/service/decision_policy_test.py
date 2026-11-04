@@ -2,6 +2,8 @@ import unittest
 
 from src.oracle.fair_odds.fair_odds_engine import FairOddsOutcome
 from src.oracle.decision_engine.decision_policy import (
+    DECISION_POLICY_V2,
+    DECISION_POLICY_V3,
     DEFAULT_DECISION_POLICY,
     DEFAULT_THRESHOLDS,
     BORDERLINE,
@@ -11,10 +13,20 @@ from src.oracle.decision_engine.decision_policy import (
     Decision,
     DecisionPolicy,
     DecisionThresholds,
-    evaluate_decision,
-    evaluate_decision_from_fair_odds_outcome,
+    evaluate_decision as _evaluate_decision,
+    evaluate_decision_from_fair_odds_outcome as _evaluate_from_fair,
     compute_model_void_odd,
 )
+
+
+# I test storici verificano la policy v2 (nessuna riduzione verso il mercato):
+# restano invariati. La v3 (riduzione verso il mercato) ha test dedicati in fondo.
+def evaluate_decision(*args, policy=DECISION_POLICY_V2, **kwargs):
+    return _evaluate_decision(*args, policy=policy, **kwargs)
+
+
+def evaluate_decision_from_fair_odds_outcome(outcome, policy=DECISION_POLICY_V2):
+    return _evaluate_from_fair(outcome, policy=policy)
 
 
 class TestDecisionThresholdsValidation(unittest.TestCase):
@@ -62,7 +74,7 @@ class TestDefaultPolicyMatchesBet02Behaviour(unittest.TestCase):
 
     def test_policy_version_is_reported(self):
         decision = evaluate_decision(market="h2h", outcome="Home", p_model=0.5, p_market_fair=0.5, odd=2.0, samples=0)
-        self.assertEqual(decision.policy_version, DEFAULT_DECISION_POLICY.version)
+        self.assertEqual(decision.policy_version, DECISION_POLICY_V2.version)
 
 
 class TestMinSamplesFilter(unittest.TestCase):
@@ -270,6 +282,50 @@ class TestModelBreakEvenDecisionPolicy(unittest.TestCase):
         self.assertAlmostEqual(decision.model_void_odd, 1.6666667, places=6)
         self.assertEqual(decision.market_fair_odd, 2.0)
         self.assertNotEqual(decision.model_void_odd, decision.market_fair_odd)
+
+
+class TestMarketBlendPolicyV3(unittest.TestCase):
+    def test_default_policy_is_v3(self):
+        self.assertIs(DEFAULT_DECISION_POLICY, DECISION_POLICY_V3)
+        self.assertEqual(DECISION_POLICY_V3.default.model_weight, 0.5)
+
+    def test_model_weight_must_be_between_0_and_1(self):
+        with self.assertRaises(ValueError):
+            DecisionThresholds(model_weight=1.2)
+        with self.assertRaises(ValueError):
+            DecisionThresholds(model_weight=-0.1)
+
+    def test_weight_one_matches_v2(self):
+        kwargs = dict(market="h2h", outcome="Home", p_model=0.70, p_market_fair=0.55, odd=1.8, samples=3)
+        v2 = _evaluate_decision(policy=DECISION_POLICY_V2, **kwargs)
+        w1 = _evaluate_decision(policy=DecisionPolicy(version="w1", default=DecisionThresholds(model_weight=1.0)), **kwargs)
+        self.assertEqual((v2.decision, v2.ev, v2.model_void_odd), (w1.decision, w1.ev, w1.model_void_odd))
+
+    def test_v3_blends_probability_and_can_downgrade_play(self):
+        kwargs = dict(market="under_over_2_5", outcome="Over", p_model=0.75, p_market_fair=0.60, odd=1.38, samples=4)
+        v2 = _evaluate_decision(policy=DECISION_POLICY_V2, **kwargs)
+        v3 = _evaluate_decision(policy=DECISION_POLICY_V3, **kwargs)
+        self.assertEqual(v2.decision, PLAY)
+        self.assertAlmostEqual(v3.p_adjusted, 0.675, places=6)
+        self.assertEqual(v3.p_model, 0.75)
+        self.assertEqual(v3.model_weight, 0.5)
+        self.assertNotEqual(v3.decision, PLAY)
+        self.assertAlmostEqual(v3.ev, 0.675 * 1.38 - 1.0, places=6)
+
+    def test_v3_without_market_probability_is_no_bet(self):
+        decision = _evaluate_decision(
+            market="under_over_2_5", outcome="Over", p_model=0.80, p_market_fair=None, odd=2.0, samples=4,
+            policy=DECISION_POLICY_V3,
+        )
+        self.assertEqual(decision.decision, NO_BET)
+        self.assertIn("mercato", decision.reason)
+
+    def test_v3_invalid_model_probability_stays_not_available(self):
+        decision = _evaluate_decision(
+            market="under_over_2_5", outcome="Over", p_model=None, p_market_fair=0.6, odd=2.0, samples=4,
+            policy=DECISION_POLICY_V3,
+        )
+        self.assertEqual(decision.decision, "N/D")
 
 
 if __name__ == "__main__":

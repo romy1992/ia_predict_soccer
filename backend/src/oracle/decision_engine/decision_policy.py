@@ -72,6 +72,13 @@ class DecisionThresholds:
     min_odd: Optional[float] = None
     max_odd: Optional[float] = None
     min_edge_percent: float = 2.0
+    # Peso del modello nella probabilita' usata per EV/PLAY:
+    # p_adj = w*p_model + (1-w)*p_market_fair. 1.0 = nessuna riduzione
+    # (comportamento v2 invariato). Motivo: in produzione (official_paper,
+    # 2026-09-12 -> 2026-11-01) il log-loss peggiora monotonicamente al
+    # crescere di w su tutti i mercati e il modello e' troppo sicuro
+    # (dichiara 75%, osserva 67%).
+    model_weight: float = 1.0
 
     def __post_init__(self) -> None:
         # Fail-fast su una configurazione palesemente inconsistente (mai
@@ -84,6 +91,8 @@ class DecisionThresholds:
             raise ValueError(f"min_samples non puo' essere negativo: {self.min_samples}")
         if self.min_edge_percent < 0:
             raise ValueError(f"min_edge_percent non puo' essere negativo: {self.min_edge_percent}")
+        if not 0.0 <= self.model_weight <= 1.0:
+            raise ValueError(f"model_weight deve essere in [0, 1]: {self.model_weight}")
 
 
 DEFAULT_THRESHOLDS = DecisionThresholds()
@@ -122,7 +131,18 @@ class DecisionPolicy:
 # specifica per mercato in questo task): la POLICY di default resta
 # equivalente a `DEFAULT_POLICY` (BET-02) per ogni mercato finche' un
 # override non viene esplicitamente configurato dal chiamante.
-DEFAULT_DECISION_POLICY = DecisionPolicy(version="decision_policy_v2_model_break_even")
+DECISION_POLICY_V2 = DecisionPolicy(version="decision_policy_v2_model_break_even")
+
+# v3 (2026-11-04): EV/PLAY calcolati su una probabilita' ridotta verso il
+# mercato (peso modello 0.5, PROVVISORIO: da tarare per mercato fuori
+# campione quando il ledger avra' >=300 casi chiusi per mercato). Senza
+# probabilita' di mercato non e' possibile ridurre: la decisione e' NO BET.
+DECISION_POLICY_V3 = DecisionPolicy(
+    version="decision_policy_v3_market_blend",
+    default=DecisionThresholds(model_weight=0.5),
+)
+
+DEFAULT_DECISION_POLICY = DECISION_POLICY_V3
 
 
 @dataclass
@@ -150,6 +170,29 @@ class Decision:
     expected_roi_percent: Optional[float] = None
     play_threshold_odd: Optional[float] = None
     min_edge_percent: float = 0.0
+    # Probabilita' effettivamente usata per EV/PLAY (dopo la riduzione verso
+    # il mercato). `p_model` resta la probabilita' grezza del modello.
+    p_adjusted: Optional[float] = None
+    model_weight: float = 1.0
+
+
+def blend_probability(
+    p_model: Optional[float], p_market_fair: Optional[float], model_weight: float
+) -> Optional[float]:
+    """p_adj = w*p_model + (1-w)*p_market_fair. Con w=1 restituisce p_model
+    invariata; con w<1 e probabilita' di mercato mancante/non valida
+    restituisce None (mai una riduzione silenziosa verso un valore finto)."""
+    if p_model is None:
+        return None
+    if model_weight >= 1.0:
+        return float(p_model)
+    try:
+        fair = float(p_market_fair) if p_market_fair is not None else None
+    except (TypeError, ValueError):
+        fair = None
+    if fair is None or not 0.0 < fair <= 1.0:
+        return None
+    return model_weight * float(p_model) + (1.0 - model_weight) * fair
 
 
 def compute_model_void_odd(p_model: Optional[float]) -> Optional[float]:
@@ -189,10 +232,14 @@ def evaluate_decision(
     riusando `compute_prob_edge`/`compute_expected_value` (BET-02, MAI
     duplicati: la formula resta unica in tutto il progetto)."""
     thresholds = policy.thresholds_for(market=market, outcome=outcome)
-    model_void_odd = compute_model_void_odd(p_model)
+    p_effective = blend_probability(p_model, p_market_fair, thresholds.model_weight)
+    blend_unavailable = (
+        p_model is not None and compute_model_void_odd(p_model) is not None and p_effective is None
+    )
+    model_void_odd = compute_model_void_odd(p_effective)
     market_fair_odd = _market_fair_odd(p_market_fair)
     valid_probability = model_void_odd is not None
-    probability_value = float(p_model) if valid_probability else None
+    probability_value = float(p_effective) if valid_probability else None
     prob_edge = compute_prob_edge(probability_value, p_market_fair) if valid_probability else None
     valid_odd = odd is not None and _is_positive_number(odd)
     ev = compute_expected_value(probability_value, odd) if valid_probability and valid_odd else None
@@ -214,7 +261,9 @@ def evaluate_decision(
     )
     expected_roi_percent = ev * 100.0 if ev is not None else None
 
-    if not valid_probability:
+    if blend_unavailable:
+        decision, reason = NO_BET, "Probabilita' di mercato non disponibile per la riduzione verso il mercato"
+    elif not valid_probability:
         decision, reason = NOT_AVAILABLE, "Probabilita' modello non disponibile o non valida"
     elif not valid_odd:
         decision, reason = WITHOUT_ODD, "Quota mercato non disponibile"
@@ -256,7 +305,7 @@ def evaluate_decision(
     return Decision(
         market=market,
         outcome=outcome,
-        p_model=probability_value,
+        p_model=float(p_model) if p_model is not None and compute_model_void_odd(p_model) is not None else None,
         p_market_fair=p_market_fair,
         odd=odd,
         samples=samples,
@@ -272,6 +321,8 @@ def evaluate_decision(
         expected_roi_percent=expected_roi_percent,
         play_threshold_odd=play_threshold_odd,
         min_edge_percent=thresholds.min_edge_percent,
+        p_adjusted=probability_value,
+        model_weight=thresholds.model_weight,
     )
 
 
