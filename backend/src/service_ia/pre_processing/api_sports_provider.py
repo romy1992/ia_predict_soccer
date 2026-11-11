@@ -10,6 +10,19 @@ import requests
 
 from src.jobs.api_quota_state import record_quota_snapshot, record_status_snapshot
 from src.service_ia.config.app_config import load_app_config
+from src.service_ia.utility.resilience import CircuitBreaker, backoff_delay
+
+_RETRY_AFTER_CAP_SECONDS = 120.0
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if raw in (None, ""):
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
 
 
 @dataclass
@@ -18,7 +31,17 @@ class ApiSportsProviderConfig:
     api_key: str
     timeout_seconds: int = 20
     max_retries: int = 3
+    # Base del backoff ESPONENZIALE con jitter (attesa prima del tentativo
+    # n+1: fra meta' e l'intero di `base * 2^(n-1)`, con tetto a
+    # `retry_backoff_max_seconds`). 0 = nessuna attesa (test).
     retry_backoff_seconds: float = 1.5
+    retry_backoff_max_seconds: float = 30.0
+    # Circuit breaker di processo: dopo N richieste consecutive fallite per
+    # indisponibilita' (rete, 429/5xx, rate-limit al minuto mai rientrato) le
+    # chiamate successive falliscono subito per `circuit_recovery_seconds`,
+    # invece di consumare ogni volta `max_retries` timeout. 0 = disattivato.
+    circuit_failure_threshold: int = 5
+    circuit_recovery_seconds: float = 60.0
 
 
 class ApiSportsQuotaExceededError(RuntimeError):
@@ -58,8 +81,17 @@ class ApiSportsUnavailableError(RuntimeError):
     resta SCRITTO da qualche parte invece di sparire."""
 
 
+class ApiSportsCircuitOpenError(ApiSportsUnavailableError):
+    """Sollevata SENZA chiamare il provider quando il circuit breaker e'
+    aperto. E' una `ApiSportsUnavailableError`: chi gia' gestisce
+    l'indisponibilita' (es. `download_import_matches`, che registra la lega
+    fallita e continua) non deve cambiare nulla, ma il fallimento arriva
+    subito invece che dopo `max_retries` timeout per ogni richiesta."""
+
+
 class ApiSportsProvider:
-    """Provider API-Sports con retry e gestione centralizzata del rate limit."""
+    """Provider API-Sports con retry (backoff esponenziale + jitter), circuit
+    breaker e gestione centralizzata del rate limit."""
 
     def __init__(self, config: Optional[ApiSportsProviderConfig] = None):
         # Garantisce il caricamento di properties/config.env anche in esecuzione locale.
@@ -69,8 +101,53 @@ class ApiSportsProvider:
             config = ApiSportsProviderConfig(
                 base_url=(os.environ.get("API_SPORTS_BASE") or "").rstrip("/"),
                 api_key="",  # vuota = si legge dal DB a ogni richiesta (secret_store)
+                retry_backoff_max_seconds=_env_float("API_SPORTS_RETRY_BACKOFF_MAX_SECONDS", 30.0),
+                circuit_failure_threshold=int(_env_float("API_SPORTS_CIRCUIT_FAILURE_THRESHOLD", 5)),
+                circuit_recovery_seconds=_env_float("API_SPORTS_CIRCUIT_RECOVERY_SECONDS", 60.0),
             )
         self.config = config
+        self._breaker = CircuitBreaker(
+            failure_threshold=config.circuit_failure_threshold,
+            recovery_seconds=config.circuit_recovery_seconds,
+        )
+
+    @property
+    def circuit_state(self) -> str:
+        return self._breaker.state
+
+    def _retry_delay(self, attempt: int, response: Optional[requests.Response] = None) -> float:
+        delay = backoff_delay(
+            attempt,
+            base_seconds=self.config.retry_backoff_seconds,
+            max_seconds=self.config.retry_backoff_max_seconds,
+        )
+        if response is not None and self.config.retry_backoff_seconds > 0:
+            # `Retry-After` (secondi) del provider vince sul backoff calcolato,
+            # con un tetto: un valore anomalo non deve bloccare un job per ore.
+            headers = getattr(response, "headers", None) or {}
+            try:
+                retry_after = float(headers.get("Retry-After") or 0)
+            except (TypeError, ValueError):
+                retry_after = 0.0
+            if retry_after > 0:
+                delay = max(delay, min(retry_after, _RETRY_AFTER_CAP_SECONDS))
+        return delay
+
+    def _sleep_before_retry(self, attempt: int, response: Optional[requests.Response] = None) -> None:
+        delay = self._retry_delay(attempt, response)
+        if delay > 0:
+            time.sleep(delay)
+
+    def _unavailable(self, message: str) -> ApiSportsUnavailableError:
+        """Registra il fallimento sul circuit breaker e costruisce l'eccezione."""
+        if self._breaker.record_failure():
+            logging.error(
+                "API-Sports circuit breaker APERTO dopo %s richieste fallite consecutive: "
+                "chiamate sospese per %ss",
+                self.config.circuit_failure_threshold,
+                self.config.circuit_recovery_seconds,
+            )
+        return ApiSportsUnavailableError(message)
 
     def _api_key(self) -> str:
         if self.config.api_key:
@@ -85,10 +162,36 @@ class ApiSportsProvider:
             logging.warning("API-Sports config non completa: base_url o api_key mancante")
             return []
 
+        if not self._breaker.allow_request():
+            raise ApiSportsCircuitOpenError(
+                f"API-Sports temporaneamente sospeso (circuit breaker aperto) su '{path}': "
+                f"nuovo tentativo fra circa {self._breaker.seconds_until_retry():.0f}s"
+            )
+
         url = f"{self.config.base_url}/{path.lstrip('/')}"
         request_params = dict(params or {})
         headers = {"x-apisports-key": api_key}
 
+        try:
+            rows = self._request_with_retries(path=path, url=url, headers=headers, request_params=request_params)
+        except ApiSportsUnavailableError:
+            raise
+        except Exception:
+            # Quota esaurita o errore inatteso: nessun verdetto sulla salute
+            # del provider, si libera solo l'eventuale sonda half-open.
+            self._breaker.release_probe()
+            raise
+        self._breaker.record_success()
+        return rows
+
+    def _request_with_retries(
+        self,
+        *,
+        path: str,
+        url: str,
+        headers: dict[str, str],
+        request_params: dict[str, Any],
+    ) -> list[dict[str, Any]]:
         for attempt in range(1, self.config.max_retries + 1):
             try:
                 response = requests.get(
@@ -100,10 +203,10 @@ class ApiSportsProvider:
             except requests.RequestException as exc:
                 logging.warning("API-Sports request error attempt=%s path=%s err=%s", attempt, path, exc)
                 if attempt >= self.config.max_retries:
-                    raise ApiSportsUnavailableError(
+                    raise self._unavailable(
                         f"API-Sports irraggiungibile su '{path}' dopo {attempt} tentativi: {exc}"
                     ) from exc
-                time.sleep(self.config.retry_backoff_seconds * attempt)
+                self._sleep_before_retry(attempt)
                 continue
 
             # Legge il body SUBITO (anche su status_code non-200): serve per
@@ -132,6 +235,9 @@ class ApiSportsProvider:
                 # Errore della singola richiesta (piano, parametri, token):
                 # ritentare non serve e non e' un problema di quota.
                 logging.warning("API-Sports errore non di quota path=%s errors=%s", path, errors)
+                # Il provider ha risposto: e' un rifiuto di QUESTA richiesta,
+                # non un segnale di indisponibilita' - non conta per il breaker.
+                self._breaker.release_probe()
                 raise ApiSportsUnavailableError(
                     f"API-Sports ha rifiutato '{path}': {self._format_errors(errors)}"
                 )
@@ -157,11 +263,11 @@ class ApiSportsProvider:
                     errors,
                 )
                 if attempt >= self.config.max_retries:
-                    raise ApiSportsUnavailableError(
+                    raise self._unavailable(
                         f"API-Sports rate-limit al minuto non rientrato su '{path}' "
                         f"dopo {attempt} tentativi: {self._format_errors(errors)}"
                     )
-                time.sleep(self.config.retry_backoff_seconds * attempt)
+                self._sleep_before_retry(attempt, response)
                 continue
 
             if response.status_code in {429, 500, 502, 503, 504}:
@@ -172,11 +278,11 @@ class ApiSportsProvider:
                     path,
                 )
                 if attempt >= self.config.max_retries:
-                    raise ApiSportsUnavailableError(
+                    raise self._unavailable(
                         f"API-Sports ha risposto {response.status_code} su '{path}' "
                         f"per {attempt} tentativi consecutivi"
                     )
-                time.sleep(self.config.retry_backoff_seconds * attempt)
+                self._sleep_before_retry(attempt, response)
                 continue
 
             return self._parse_response(path=path, payload=payload, response=response)
@@ -184,7 +290,7 @@ class ApiSportsProvider:
         # Irraggiungibile con la logica sopra (ogni ramo o ritorna o solleva
         # all'ultimo tentativo), ma se un domani un `continue` sfuggisse non
         # deve tornare una lista vuota indistinguibile da "nessun dato".
-        raise ApiSportsUnavailableError(
+        raise self._unavailable(
             f"API-Sports: nessuna risposta valida su '{path}' dopo {self.config.max_retries} tentativi"
         )
 

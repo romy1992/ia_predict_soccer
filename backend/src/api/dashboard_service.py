@@ -243,6 +243,73 @@ class DashboardService:
         odds_obj = db_match.odds[0].to_dict()
         return [m for m in missing if not odds_obj.get(self._LINE_MARKET_ODDS_COLUMN.get(m, m))]
 
+    # Motivi per cui un mercato registrato non ha una previsione. Campo
+    # aggiuntivo (`markets_missing_reasons`): `markets_unavailable` resta
+    # com'era, perche' il frontend lo usa per il badge "In coda".
+    REASON_MATCH_NOT_IN_DB = "match_not_in_db"
+    REASON_NO_ODDS_ROW = "no_odds_row"
+    REASON_NO_ODDS_FOR_MARKET = "no_odds_for_market"
+    REASON_NOT_COMPUTED = "not_computed"
+
+    def _markets_missing_reasons(
+        self, db_match: Optional[Match], markets: list[str], predictions: dict[str, Any]
+    ) -> dict[str, str]:
+        """Per ogni mercato richiesto e SENZA previsione dice il motivo che
+        si puo' verificare dai dati gia' in memoria (nessuna query, nessuna
+        chiamata esterna):
+
+        - `match_not_in_db`: la partita non e' ancora nel DB locale;
+        - `no_odds_row`: la partita non ha alcuna riga quote;
+        - `no_odds_for_market`: le quote ci sono ma non per questo mercato
+          (stesso criterio di `_markets_without_odds`);
+        - `not_computed`: le quote ci sono, la previsione no - modello non
+          promosso, feature insufficienti o calcolo non ancora eseguito. Non
+          si distingue oltre: servirebbe interrogare il registry."""
+        missing = [m for m in markets if m not in predictions]
+        if not missing:
+            return {}
+        if db_match is None:
+            return {m: self.REASON_MATCH_NOT_IN_DB for m in missing}
+        if not db_match.odds:
+            return {m: self.REASON_NO_ODDS_ROW for m in missing}
+        odds_obj = db_match.odds[0].to_dict()
+        return {
+            m: (
+                self.REASON_NOT_COMPUTED
+                if odds_obj.get(self._LINE_MARKET_ODDS_COLUMN.get(m, m))
+                else self.REASON_NO_ODDS_FOR_MARKET
+            )
+            for m in missing
+        }
+
+    @staticmethod
+    def _row_data_quality(db_match: Optional[Match]) -> Optional[dict[str, Any]]:
+        """Disponibilita' REALE degli input pre-partita, letta dalla riga del
+        match gia' caricata. `None` se la partita non e' nel DB: non si
+        dichiara nulla che non si possa verificare.
+
+        `xg_available` e' vero solo se la media xG pre-partita esiste per
+        entrambe le squadre: quando manca, le feature `mean_expected_goals_*`
+        arrivano al modello senza valore reale."""
+        if db_match is None:
+            return None
+        means = db_match.mean_statistics
+        teams = [item for item in means if isinstance(item, dict)] if isinstance(means, list) else []
+        stats_available = len(teams) >= 2
+
+        def _has_number(value: Any) -> bool:
+            try:
+                return value is not None and float(value) == float(value)
+            except (TypeError, ValueError):
+                return False
+
+        xg_available = stats_available and all(_has_number(team.get("mean_expected_goals")) for team in teams[:2])
+        return {
+            "odds_available": bool(db_match.odds),
+            "team_statistics_available": stats_available,
+            "xg_available": bool(xg_available),
+        }
+
     @classmethod
     def _cache_get(cls, key: str, ttl_seconds: Optional[int] = None) -> Optional[Any]:
         item = cls._api_cache.get(key)
@@ -1410,6 +1477,8 @@ class DashboardService:
             # (vedi `_markets_without_odds`) - default vuoto finche' non
             # calcolato, stesso pattern di `predictions`.
             "markets_unavailable": [],
+            "markets_missing_reasons": {},
+            "data_quality": self._row_data_quality(db_match),
             # MATCH-01: badge decision/edge/EV per la vista lista, vedi
             # `_decisions_for_row` - default vuoto finche' non calcolato.
             "decision_cards": [],
@@ -1430,6 +1499,7 @@ class DashboardService:
                 self._annotate_prediction_correctness(predictions, stat_home, stat_away, has_full_stats)
             row["predictions"] = predictions
             row["markets_unavailable"] = self._markets_without_odds(db_match, markets, predictions)
+            row["markets_missing_reasons"] = self._markets_missing_reasons(db_match, markets, predictions)
             row["decision_cards"], row["best_decision"] = self._decisions_for_row(
                 row=row, predictions=predictions, db_match=db_match
             )
@@ -1658,6 +1728,8 @@ class DashboardService:
             # (vedi `_markets_without_odds`) - default vuoto finche' non
             # calcolato, stesso pattern di `predictions`.
             "markets_unavailable": [],
+            "markets_missing_reasons": {},
+            "data_quality": self._row_data_quality(match),
             # MATCH-01: badge decision/edge/EV per la vista lista, vedi
             # `_decisions_for_row` - default vuoto finche' non calcolato.
             "decision_cards": [],
@@ -1678,6 +1750,7 @@ class DashboardService:
                 self._annotate_prediction_correctness(predictions, stat_home, stat_away, has_full_stats)
             row["predictions"] = predictions
             row["markets_unavailable"] = self._markets_without_odds(match, markets, predictions)
+            row["markets_missing_reasons"] = self._markets_missing_reasons(match, markets, predictions)
             # Riga gia' dal DB locale: `match.odds` e' gia' caricato via
             # `selectinload` dalla query unica di `_fetch_matches` (nessuna
             # nuova query/fetch per calcolare il badge decision).
@@ -2118,6 +2191,8 @@ class DashboardService:
             self._annotate_prediction_correctness(predictions, stat_home, stat_away, has_full_stats)
         fixture_row["predictions"] = predictions
         fixture_row["markets_unavailable"] = self._markets_without_odds(db_match, model_markets, predictions)
+        fixture_row["markets_missing_reasons"] = self._markets_missing_reasons(db_match, model_markets, predictions)
+        fixture_row["data_quality"] = self._row_data_quality(db_match)
 
         events = self._fetch_api_events(fixture_id, long_ttl=fixture_row.get("phase") == "finished")
         timeline = self._serialize_events(events)

@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Callable, Optional, Protocol
 
+from src.jobs.api_quota_state import is_quota_exhausted_today
 from src.repository.match_repository import MatchRepository
 from src.repository.odds_snapshot_repository import OddsSnapshotRepository
 from src.service_ia.model.match import Match
@@ -122,10 +123,20 @@ class SettlementService:
         match_repo: Optional[MatchRepository] = None,
         snapshot_repo: Optional[OddsSnapshotRepository] = None,
         import_runner: Optional[Callable[..., dict[str, Any]]] = None,
+        quota_exhausted_check: Optional[Callable[[], bool]] = None,
     ):
         self.match_repo = match_repo or MatchRepository()
         self.snapshot_repo = snapshot_repo or OddsSnapshotRepository()
         self.import_runner = import_runner or download_import_matches
+        self.quota_exhausted_check = quota_exhausted_check or is_quota_exhausted_today
+
+    def _quota_exhausted_today(self) -> bool:
+        try:
+            return bool(self.quota_exhausted_check())
+        except Exception:
+            # Stato quota illeggibile: si procede come sempre, l'import
+            # segnalera' da solo un'eventuale quota esaurita.
+            return False
 
     def run_settlement(
         self,
@@ -137,21 +148,31 @@ class SettlementService:
         hook: Optional[SettlementHook] = None,
     ) -> dict[str, Any]:
         hook = hook or NoOpSettlementHook()
-        provider = provider or get_api_sports_provider()
 
         today = datetime.now(timezone.utc).date()
         from_day = _parse_iso_date(from_date, fallback=today - timedelta(days=3))
         to_day = _parse_iso_date(to_date, fallback=today)
 
-        import_report = self.import_runner(
-            seasons=seasons,
-            leagues=leagues,
-            from_date=from_day.isoformat(),
-            to_date=to_day.isoformat(),
-            statuses="FT-AET-PEN-ABD",
-            provider=provider,
-            is_next=False,
-        )
+        if self._quota_exhausted_today():
+            # Quota API-Sports esaurita oggi (check autoritativo): l'import
+            # fallirebbe comunque alla prima chiamata. Si salta SOLO quello e
+            # si prosegue con la riconciliazione sui dati gia' a DB, cosi' il
+            # job resta davvero "locale" quando il provider non e' usabile.
+            import_report = {
+                "skipped": True,
+                "reason": "api_sports_quota_exhausted_today",
+            }
+        else:
+            provider = provider or get_api_sports_provider()
+            import_report = self.import_runner(
+                seasons=seasons,
+                leagues=leagues,
+                from_date=from_day.isoformat(),
+                to_date=to_day.isoformat(),
+                statuses="FT-AET-PEN-ABD",
+                provider=provider,
+                is_next=False,
+            )
 
         # Fix prestazioni 2026-09-15: PRIMA era un `search_filter` senza
         # alcun vincolo di data, che caricava TUTTI i match con stato finale
@@ -173,6 +194,7 @@ class SettlementService:
             "from_date": from_day.isoformat(),
             "to_date": to_day.isoformat(),
             "import_report": import_report,
+            "provider_import_skipped": bool(import_report.get("skipped")) if isinstance(import_report, dict) else False,
             "final_matches_seen": 0,
             "updated": 0,
             "unchanged": 0,

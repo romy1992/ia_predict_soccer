@@ -17,7 +17,13 @@ from src.data.live.live_sync_job import run_manual_live_sync
 from src.data.quality_report_service import DataQualityService
 from src.jobs.job_history import JobHistory
 from src.jobs.job_lock import LOCK_IMPORT_MATCH, job_lock
-from src.jobs.job_settings import JOB_DEFINITIONS, is_job_enabled, resolve_job_schedule
+from src.jobs.job_settings import (
+    JOB_DEFINITIONS,
+    QUOTA_SENSITIVE_JOB_IDS,
+    is_job_enabled,
+    resolve_job_schedule,
+    sync_job_settings_with_quota,
+)
 from src.ml.datasets.point_in_time_builder import FINAL_STATUSES
 from src.ml.ensemble.model_consensus import build_model_consensus_for_fixture
 from src.ml.experts.team_strength.team_strength_expert import TeamStrengthExpert
@@ -1485,13 +1491,59 @@ def _is_job_due(job_id: str, cfg: AppConfig) -> bool:
     return elapsed >= interval_seconds
 
 
+# Intervallo minimo fra due riallineamenti quota/Impostazioni fatti dallo
+# scheduler. Ogni riallineamento legge due oggetti dal bucket
+# (`api_quota_state.json`, `quota_pause_state.json`): con ~10 job sensibili
+# alla quota su un heartbeat di 30s, farlo ad ogni tick di ogni job sarebbero
+# decine di letture al minuto per un'informazione che cambia poche volte al
+# giorno. 60s bastano perche' la pausa scatti entro due tick.
+_QUOTA_SYNC_MIN_INTERVAL_SECONDS = 60.0
+_last_quota_sync_monotonic: Optional[float] = None
+
+
+def _sync_quota_pause_if_needed(job_id: str) -> None:
+    """Riallinea le Impostazioni con lo stato della quota API-Sports PRIMA
+    di decidere se un job che chiama il provider va eseguito.
+
+    Prima di questa modifica `sync_job_settings_with_quota` veniva chiamata
+    solo dagli endpoint delle Impostazioni (`src/api/main.py`): a quota
+    esaurita lo scheduler continuava a lanciare gli import finche' qualcuno
+    non apriva quella pagina, e - peggio - dopo il reset UTC i job restavano
+    in pausa finche' qualcuno non la riapriva. Ora pausa e ripristino
+    avvengono anche senza alcun intervento.
+
+    Solo per i job in `QUOTA_SENSITIVE_JOB_IDS` (gli altri non sono toccati
+    dalla pausa) e al massimo una volta ogni
+    `_QUOTA_SYNC_MIN_INTERVAL_SECONDS` per processo. Mai un'eccezione
+    propagata: un problema qui non deve fermare il tick."""
+    global _last_quota_sync_monotonic
+    if job_id not in QUOTA_SENSITIVE_JOB_IDS:
+        return
+    now = time.monotonic()
+    if (
+        _last_quota_sync_monotonic is not None
+        and now - _last_quota_sync_monotonic < _QUOTA_SYNC_MIN_INTERVAL_SECONDS
+    ):
+        return
+    _last_quota_sync_monotonic = now
+    try:
+        sync_job_settings_with_quota()
+    except Exception as exc:  # pragma: no cover - la funzione gia' non solleva
+        logging.warning("Riallineamento quota/Impostazioni fallito (ignorato): %s", exc)
+
+
 def _run_if_due(job_id: str, func, *, cfg: AppConfig, **kwargs) -> Optional[dict]:
     """Esegue `func` SOLO se il job e' (1) abilitato in `job_settings.json`
     (pagina Impostazioni) E (2) dovuto secondo lo `schedule` corrente
     (`_is_job_due`) - entrambi controllati ad OGNI tick dell'heartbeat, non
     solo alla registrazione: un toggle o un cambio orario da frontend ha
     quindi effetto immediato, senza richiedere il restart del container
-    `scheduler`."""
+    `scheduler`.
+
+    Per i job che chiamano API-Sports, prima del controllo (1) viene
+    riallineata l'auto-pausa per quota esaurita
+    (`_sync_quota_pause_if_needed`)."""
+    _sync_quota_pause_if_needed(job_id)
     if not is_job_enabled(job_id):
         logging.debug("Job '%s' disabilitato da Impostazioni: skip.", job_id)
         return None

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import hashlib
+import logging
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 import numpy as np
@@ -158,7 +160,18 @@ class PredictionSnapshotService:
             "probability": float(snapshot.probability),
             "model_name": snapshot.model_name,
             "run_id": snapshot.model_run_id,
+            # Istante REALE in cui questa previsione e' stata calcolata
+            # (colonna `computed_at` dello snapshot), non l'ora della richiesta.
+            "computed_at": PredictionSnapshotService._iso_utc(getattr(snapshot, "computed_at", None)),
         }
+
+    @staticmethod
+    def _iso_utc(value: Any) -> Optional[str]:
+        if not isinstance(value, datetime):
+            return None
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc).isoformat()
 
     def resolve_predictions(
         self,
@@ -252,9 +265,18 @@ class PredictionSnapshotService:
             X = frame.drop(columns=["market", "id_fixture", "season", "league", "prediction_at"], errors="ignore")
             selected_features = model_meta.get("feature_names") or []
             if selected_features:
-                for feature_name in selected_features:
-                    if feature_name not in X.columns:
-                        X[feature_name] = 0.0
+                absent = [name for name in selected_features if name not in X.columns]
+                if absent:
+                    # Una feature attesa dal modello ma assente dal frame vale 0.0:
+                    # in training lo stesso dato mancante puo' avere un altro
+                    # valore (imputazione). Il log rende misurabile quanto spesso
+                    # succede, prima di decidere se cambiare il riempimento.
+                    logging.info(
+                        "Predizione fixture=%s mercato=%s: %s feature su %s assenti dal frame, riempite con 0.0 (es. %s)",
+                        fixture_id, market, len(absent), len(selected_features), ", ".join(absent[:5]),
+                    )
+                for feature_name in absent:
+                    X[feature_name] = 0.0
                 X = X[selected_features]
 
             model_run_id = model_meta.get("run_id")
@@ -276,11 +298,13 @@ class PredictionSnapshotService:
             except Exception:
                 continue
 
+            computed_at = datetime.now(timezone.utc)
             entry = {
                 "prediction": int(prediction),
                 "probability": float(probability),
                 "model_name": model_meta.get("model_name"),
                 "run_id": model_run_id,
+                "computed_at": computed_at.isoformat(),
             }
             payload[market] = entry
 
@@ -293,6 +317,7 @@ class PredictionSnapshotService:
                     model_name=entry["model_name"],
                     model_run_id=model_run_id,
                     feature_fingerprint=fingerprint,
+                    computed_at=computed_at,
                 )
             )
 

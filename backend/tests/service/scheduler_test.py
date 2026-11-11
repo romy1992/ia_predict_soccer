@@ -451,6 +451,12 @@ class TestRunIfDue(unittest.TestCase):
     """`_run_if_due` combina enabled (Impostazioni) + due (`_is_job_due`) -
     entrambi devono essere veri perche' la funzione reale venga chiamata."""
 
+    def setUp(self):
+        # Il riallineamento quota legge il bucket: qui non e' l'oggetto del test.
+        patcher = mock.patch.object(scheduler_module, "sync_job_settings_with_quota", return_value=False)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_skips_when_disabled_even_if_due(self):
         called = []
         with mock.patch.object(scheduler_module, "is_job_enabled", return_value=False), \
@@ -489,6 +495,90 @@ class TestRunIfDue(unittest.TestCase):
             result = scheduler_module._run_if_due("data_daily_refresh", fake, cfg=_cfg(), days_ahead=7)
         self.assertEqual(received["days_ahead"], 7)
         self.assertEqual(result, "done")
+
+
+class TestQuotaSyncInScheduler(unittest.TestCase):
+    """Lo scheduler riallinea l'auto-pausa per quota esaurita PRIMA di
+    valutare un job che chiama API-Sports. Prima succedeva solo aprendo la
+    pagina Impostazioni: a quota esaurita gli import continuavano a partire
+    e, dopo il reset UTC, i job restavano in pausa finche' qualcuno non
+    riapriva quella pagina."""
+
+    def setUp(self):
+        scheduler_module._last_quota_sync_monotonic = None
+        self.addCleanup(setattr, scheduler_module, "_last_quota_sync_monotonic", None)
+
+    def test_sync_chiamata_prima_del_controllo_enabled_per_job_sensibili(self):
+        ordine = []
+        with mock.patch.object(
+            scheduler_module, "sync_job_settings_with_quota", side_effect=lambda: ordine.append("sync") or True
+        ), mock.patch.object(
+            scheduler_module, "is_job_enabled", side_effect=lambda job_id: ordine.append("enabled") or False
+        ), mock.patch.object(scheduler_module, "_is_job_due", return_value=True):
+            result = scheduler_module._run_if_due("data_sync_today", lambda: {"ran": True}, cfg=_cfg())
+        self.assertIsNone(result)
+        self.assertEqual(ordine, ["sync", "enabled"])
+
+    def test_job_messo_in_pausa_dalla_sync_non_viene_eseguito(self):
+        """Scenario completo: la sync rileva quota esaurita e disattiva il
+        job; `is_job_enabled`, letto DOPO, lo vede disattivato."""
+        stato = {"data_sync_today": True}
+        chiamato = []
+
+        def fake_sync():
+            stato["data_sync_today"] = False
+            return True
+
+        with mock.patch.object(scheduler_module, "sync_job_settings_with_quota", side_effect=fake_sync), \
+             mock.patch.object(scheduler_module, "is_job_enabled", side_effect=lambda job_id: stato[job_id]), \
+             mock.patch.object(scheduler_module, "_is_job_due", return_value=True):
+            result = scheduler_module._run_if_due(
+                "data_sync_today", lambda: chiamato.append(True) or {"ran": True}, cfg=_cfg()
+            )
+        self.assertIsNone(result)
+        self.assertEqual(chiamato, [])
+
+    def test_job_ripristinato_dalla_sync_dopo_il_reset_riparte(self):
+        stato = {"data_sync_today": False}
+
+        def fake_sync():
+            stato["data_sync_today"] = True
+            return False
+
+        with mock.patch.object(scheduler_module, "sync_job_settings_with_quota", side_effect=fake_sync), \
+             mock.patch.object(scheduler_module, "is_job_enabled", side_effect=lambda job_id: stato[job_id]), \
+             mock.patch.object(scheduler_module, "_is_job_due", return_value=True):
+            result = scheduler_module._run_if_due("data_sync_today", lambda: {"ran": True}, cfg=_cfg())
+        self.assertEqual(result, {"ran": True})
+
+    def test_job_non_sensibili_alla_quota_non_innescano_la_sync(self):
+        self.assertNotIn("data_settlement", scheduler_module.QUOTA_SENSITIVE_JOB_IDS)
+        with mock.patch.object(scheduler_module, "sync_job_settings_with_quota") as sync, \
+             mock.patch.object(scheduler_module, "is_job_enabled", return_value=True), \
+             mock.patch.object(scheduler_module, "_is_job_due", return_value=True):
+            result = scheduler_module._run_if_due("data_settlement", lambda: {"ran": True}, cfg=_cfg())
+        sync.assert_not_called()
+        self.assertEqual(result, {"ran": True})
+
+    def test_sync_limitata_a_una_volta_per_intervallo(self):
+        orologio = [100.0]
+        with mock.patch.object(scheduler_module.time, "monotonic", side_effect=lambda: orologio[0]), \
+             mock.patch.object(scheduler_module, "sync_job_settings_with_quota") as sync, \
+             mock.patch.object(scheduler_module, "is_job_enabled", return_value=False):
+            scheduler_module._run_if_due("data_sync_today", lambda: None, cfg=_cfg())
+            scheduler_module._run_if_due("data_future_sync", lambda: None, cfg=_cfg())
+            self.assertEqual(sync.call_count, 1)
+            orologio[0] += scheduler_module._QUOTA_SYNC_MIN_INTERVAL_SECONDS + 1
+            scheduler_module._run_if_due("data_sync_today", lambda: None, cfg=_cfg())
+            self.assertEqual(sync.call_count, 2)
+
+    def test_errore_nella_sync_non_ferma_il_job(self):
+        with mock.patch.object(
+            scheduler_module, "sync_job_settings_with_quota", side_effect=RuntimeError("bucket giu'")
+        ), mock.patch.object(scheduler_module, "is_job_enabled", return_value=True), \
+             mock.patch.object(scheduler_module, "_is_job_due", return_value=True):
+            result = scheduler_module._run_if_due("data_sync_today", lambda: {"ran": True}, cfg=_cfg())
+        self.assertEqual(result, {"ran": True})
 
 
 if __name__ == "__main__":

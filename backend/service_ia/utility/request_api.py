@@ -15,6 +15,8 @@ API_ODDS_KEY = os.environ.get('API_ODDS_KEY')
 API_ODDS_BASE = os.environ.get('API_ODDS_BASE')
 API_ODDS_ACTUAL_BASE = os.environ.get('API_ODDS_ACTUAL_BASE')
 API_ODDS_HISTORIACAL_BASE = os.environ.get('API_ODDS_HISTORIACAL_BASE')
+# Timeout esplicito: senza, una connessione appesa blocca il job a tempo indefinito.
+API_ODDS_TIMEOUT_SECONDS = float(os.environ.get('API_ODDS_TIMEOUT_SECONDS') or 30)
 
 
 def base_api_odds(type_api=None, path='', params=None):
@@ -32,17 +34,26 @@ def base_api_odds(type_api=None, path='', params=None):
                 return API_ODDS_BASE
 
     def check_response(response):
-        # Check per utilizzo API
-        used = int(response.headers.get("X-Requests-Used", 0))
-        remaining = int(response.headers.get("X-Requests-Remaining", 0))
-        percent_used = (used / (used + remaining)) * 100
-        logging.info(f'Percent used {percent_used}%')
-        if percent_used > 99:
-            raise Exception(f'Stop API : Used {percent_used}%.')
+        # Check per utilizzo API. Gli header possono mancare (errori 4xx/5xx,
+        # proxy): senza entrambi non si calcola nessuna percentuale invece di
+        # dividere per zero.
+        used = float(response.headers.get("X-Requests-Used", 0) or 0)
+        remaining = float(response.headers.get("X-Requests-Remaining", 0) or 0)
+        total = used + remaining
+        if total > 0:
+            percent_used = (used / total) * 100
+            logging.info(f'Percent used {percent_used}%')
+            if percent_used > 99:
+                raise Exception(f'Stop API : Used {percent_used}%.')
 
-        return response.json() if response.status_code == 200 and response.json() else []
+        if response.status_code != 200:
+            return []
+        payload = response.json()
+        return payload if payload else []
 
-    return check_response(requests.get(url=f'{split_api()}/{path}', params=params))
+    return check_response(
+        requests.get(url=f'{split_api()}/{path}', params=params, timeout=API_ODDS_TIMEOUT_SECONDS)
+    )
 
 
 def base_api_statistics(path='', params=None):

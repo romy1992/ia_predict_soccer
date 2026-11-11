@@ -20,15 +20,21 @@ _SCHEDULE_LOCK = threading.Lock()
 # il toggle da questa pagina Impostazioni disattiva/riattiva ESATTAMENTE il
 # job schedulato corrispondente (nessun mapping duplicato altrove).
 #
-# `calls_api_sports` distingue i job che chiamano DAVVERO il provider
-# esterno (consumano quota) da quelli che lavorano SOLO sui dati gia' a DB
-# (`data_settlement`: riconciliazione locale; `ml_training`: training sui
-# dati gia' scaricati) - usato da `sync_job_settings_with_quota` per capire
-# QUALI job auto-mettere in pausa quando la quota e' esaurita: mettere in
-# pausa anche settlement/training non avrebbe alcun senso (non consumano
-# quota, quindi possono continuare a lavorare sui dati gia' presenti anche
-# a quota esaurita) - stessa distinzione gia' applicata lato frontend per
-# decidere quali bottoni disabilitare (Data Center/ML Lab).
+# `calls_api_sports` distingue i job che NON possono lavorare senza il
+# provider esterno da quelli che possono continuare sui dati gia' a DB
+# (`ml_training`: training sui dati gia' scaricati) - usato da
+# `sync_job_settings_with_quota` per capire QUALI job auto-mettere in pausa
+# quando la quota e' esaurita - stessa distinzione gia' applicata lato
+# frontend per decidere quali bottoni disabilitare (Data Center/ML Lab).
+#
+# `data_settlement` e' un caso a parte e resta `False` di proposito: in
+# condizioni normali INIZIA con un import da API-Sports delle partite
+# concluse nella finestra recente (`SettlementService.run_settlement` ->
+# `download_import_matches`, quindi consuma quota), ma la riconciliazione
+# vera e propria (completezza, ledger, schedine) lavora sul DB. Metterlo in
+# pausa a quota esaurita fermerebbe anche quella parte: invece resta attivo
+# e, quando `is_quota_exhausted_today()` e' vero, salta il solo import dal
+# provider (vedi `SettlementService.run_settlement`).
 #
 # `data_sync_live` di default DISABILITATO (richiesto esplicitamente
 # 2026-09-05): e' il job piu' "costoso" in termini di chiamate API-Sports
@@ -66,7 +72,11 @@ JOB_DEFINITIONS: dict[str, dict[str, Any]] = {
     },
     "data_settlement": {
         "label": "Settlement partite concluse",
-        "description": "Riconcilia le partite concluse per il settlement (dashboard/paper betting).",
+        "description": (
+            "Riconcilia le partite concluse per il settlement (dashboard/paper betting). "
+            "Prima aggiorna da API-Sports i risultati degli ultimi giorni; a quota esaurita "
+            "salta l'aggiornamento e lavora solo sui dati gia' presenti."
+        ),
         "default_enabled": True,
         "calls_api_sports": False,
         "schedule_kind": "interval_minutes",
@@ -325,7 +335,7 @@ def get_job_settings() -> dict[str, bool]:
     note (anche se l'oggetto sul bucket e' vuoto/parziale/mancante): un job
     nuovo aggiunto in futuro a `JOB_DEFINITIONS` risultera' comunque
     presente con il suo default, mai un KeyError lato scheduler/frontend.
-    Chiamata PRIMA di ogni esecuzione schedulata (`_run_if_enabled`): un
+    Chiamata PRIMA di ogni esecuzione schedulata (`scheduler._run_if_due`): un
     fallimento di rete verso il bucket non deve mai bloccare il tick dello
     scheduler, uso i default come fallback."""
     try:
@@ -549,9 +559,10 @@ def get_quota_pause_state() -> dict[str, Any]:
 
 
 def sync_job_settings_with_quota(quota_snapshot: Optional[dict[str, Any]] = None) -> bool:
-    """Auto-pausa SOLO i job che chiamano davvero API-Sports
-    (`QUOTA_SENSITIVE_JOB_IDS` - MAI `data_settlement`/`ml_training`, che
-    lavorano solo su dati gia' a DB e possono continuare tranquillamente)
+    """Auto-pausa SOLO i job che non possono lavorare senza API-Sports
+    (`QUOTA_SENSITIVE_JOB_IDS` - MAI `ml_training`, che lavora solo su dati
+    gia' a DB, ne' `data_settlement`, che a quota esaurita salta da solo
+    l'import dal provider e continua con la riconciliazione locale)
     quando la quota giornaliera risulta esaurita da un check AUTORITATIVO
     di OGGI (`is_quota_exhausted_today`, MAI dalla sola stima passiva -
     vedi `api_quota_state.py`), e li riattiva automaticamente al reset del
@@ -569,10 +580,12 @@ def sync_job_settings_with_quota(quota_snapshot: Optional[dict[str, Any]] = None
     "acceso" fino al giorno dopo, inutilmente destinato a fallire di nuovo
     contro un provider che risponderebbe comunque "quota esaurita".
 
-    Chiamata ad OGNI tick dello scheduler (vedi
-    `src/jobs/scheduler.py::_run_if_enabled`) e ad ogni lettura/scrittura
-    delle Impostazioni (`src/api/main.py`) - mai un'eccezione propagata: un
-    fallimento qui non deve MAI bloccare l'esecuzione normale dei job.
+    Chiamata dallo scheduler prima di valutare un job che chiama API-Sports
+    (vedi `src/jobs/scheduler.py::_run_if_due` ->
+    `_sync_quota_pause_if_needed`, al massimo una volta al minuto per
+    processo) e ad ogni lettura/scrittura delle Impostazioni
+    (`src/api/main.py`) - mai un'eccezione propagata: un fallimento qui non
+    deve MAI bloccare l'esecuzione normale dei job.
     Ritorna True se una pausa e' (rimasta) attiva."""
     try:
         snapshot = quota_snapshot if quota_snapshot is not None else get_quota_snapshot()
