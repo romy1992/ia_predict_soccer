@@ -26,6 +26,14 @@ class TestQuotaPause(unittest.TestCase):
         self.assertNotIn("data_settlement", js.QUOTA_SENSITIVE_JOB_IDS)
         self.assertNotIn("ml_training", js.QUOTA_SENSITIVE_JOB_IDS)
 
+    def test_settlement_dichiarato_parziale_nelle_definizioni(self):
+        righe = {r["job_id"]: r for r in js.list_job_definitions()}
+        self.assertFalse(righe["data_settlement"]["calls_api_sports"])
+        self.assertTrue(righe["data_settlement"]["partially_calls_api_sports"])
+        self.assertFalse(righe["ml_training"]["partially_calls_api_sports"])
+        from src.api.schemas import JobSettingRow
+        JobSettingRow(**righe["data_settlement"])
+
     def test_quota_non_esaurita_non_tocca_nulla(self):
         self.assertFalse(js.sync_job_settings_with_quota({}))
         self.assertEqual(js.get_quota_pause_state(), {})

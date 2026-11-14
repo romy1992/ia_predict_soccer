@@ -220,9 +220,14 @@ class JobSettingRow(BaseModel):
     enabled: bool
     # True per i job che chiamano DAVVERO il provider esterno API-Sports
     # (quindi coinvolti dall'auto-pausa per quota esaurita - vedi
-    # `src/jobs/job_settings.py::QUOTA_SENSITIVE_JOB_IDS`): `data_settlement`
-    # e `ml_training` lavorano solo su dati gia' a DB e restano `False`.
+    # `src/jobs/job_settings.py::QUOTA_SENSITIVE_JOB_IDS`): `ml_training` lavora
+    # solo su dati gia' a DB e resta `False`; `data_settlement` resta `False`
+    # (mai in pausa automatica) ma vedi `partially_calls_api_sports`.
     calls_api_sports: bool = False
+    # Campo additivo: True se il job usa API-Sports solo in un passo iniziale
+    # che viene saltato a quota esaurita (`data_settlement`), senza essere
+    # messo in pausa. Il frontend puo' ignorarlo.
+    partially_calls_api_sports: bool = False
     # Orario/intervallo editabile (2026-09-09): `schedule_kind` distingue la
     # FORMA dello `schedule` ("daily" -> {"hour","minute"}, "interval_minutes"
     # -> {"interval_minutes"}, "interval_seconds" -> {"interval_seconds"}) -

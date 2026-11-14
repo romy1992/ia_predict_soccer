@@ -79,6 +79,9 @@ JOB_DEFINITIONS: dict[str, dict[str, Any]] = {
         ),
         "default_enabled": True,
         "calls_api_sports": False,
+        # Additivo: il job consuma quota API-Sports solo nel passo iniziale di
+        # import (saltato a quota esaurita); non e' in pausa automatica.
+        "partially_calls_api_sports": True,
         "schedule_kind": "interval_minutes",
         "job_history_type": "settlement",
         "cfg_fields": {"interval_minutes": "settlement_interval_minutes"},
@@ -406,6 +409,7 @@ def list_job_definitions(cfg: Optional[AppConfig] = None) -> list[dict[str, Any]
                 "description": definition["description"],
                 "enabled": settings.get(job_id, definition["default_enabled"]),
                 "calls_api_sports": bool(definition.get("calls_api_sports")),
+                "partially_calls_api_sports": bool(definition.get("partially_calls_api_sports")),
                 "schedule_kind": definition["schedule_kind"],
                 "schedule": resolve_job_schedule(job_id, cfg=cfg),
                 "schedule_is_default": job_id not in get_job_schedule_overrides(),
