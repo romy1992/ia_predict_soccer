@@ -62,6 +62,17 @@ class TestBaseApiOdds(unittest.TestCase):
         result, _ = self._call(_risposta(payload=None, headers={"X-Requests-Used": "1", "X-Requests-Remaining": "9"}))
         self.assertEqual(result, [])
 
+    def test_errore_di_rete_non_espone_la_chiave_nel_messaggio(self):
+        errore = request_api.requests.ConnectionError(
+            "Max retries exceeded with url: /v4/sports?apiKey=SEGRETO-DI-PROVA"
+        )
+        with mock.patch("src.service_ia.config.secret_store.get_secret", return_value="SEGRETO-DI-PROVA"), \
+                mock.patch.object(request_api.requests, "get", side_effect=errore):
+            with self.assertRaises(request_api.requests.RequestException) as ctx:
+                request_api.base_api_odds(path="sports")
+        self.assertNotIn("SEGRETO-DI-PROVA", str(ctx.exception))
+        self.assertNotIn("SEGRETO-DI-PROVA", repr(ctx.exception.__cause__))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -59,9 +59,15 @@ def base_api_odds(type_api=None, path='', params=None):
         payload = response.json()
         return payload if payload else []
 
-    return check_response(
-        requests.get(url=f'{split_api()}/{path}', params=params, timeout=API_ODDS_TIMEOUT_SECONDS)
-    )
+    try:
+        response = requests.get(url=f'{split_api()}/{path}', params=params, timeout=API_ODDS_TIMEOUT_SECONDS)
+    except requests.RequestException as exc:
+        # Il messaggio originale di requests puo' contenere l'URL completo con
+        # `apiKey` nella query: si rilancia solo il tipo di errore.
+        raise requests.RequestException(
+            f'The Odds API non raggiungibile su {path!r}: {type(exc).__name__}'
+        ) from None
+    return check_response(response)
 
 
 def base_api_statistics(path='', params=None):
