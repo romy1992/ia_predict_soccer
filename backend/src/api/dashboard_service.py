@@ -7,6 +7,7 @@ import json
 import os
 import re
 import threading
+import time as _time
 from typing import Any, Optional
 from zoneinfo import ZoneInfo
 
@@ -262,9 +263,10 @@ class DashboardService:
         - `no_odds_row`: la partita non ha alcuna riga quote;
         - `no_odds_for_market`: le quote ci sono ma non per questo mercato
           (stesso criterio di `_markets_without_odds`);
-        - `not_computed`: le quote ci sono, la previsione no - modello non
-          promosso, feature insufficienti o calcolo non ancora eseguito. Non
-          si distingue oltre: servirebbe interrogare il registry."""
+        - `no_model_registered` / `model_retired` / `model_file_missing`: le
+          quote ci sono ma il registry non offre un modello utilizzabile;
+        - `not_computed`: modello presente, previsione no - feature
+          insufficienti, inferenza fallita o calcolo non ancora eseguito."""
         missing = [m for m in markets if m not in predictions]
         if not missing:
             return {}
@@ -275,12 +277,31 @@ class DashboardService:
         odds_obj = db_match.odds[0].to_dict()
         return {
             m: (
-                self.REASON_NOT_COMPUTED
+                self._model_reason(m) or self.REASON_NOT_COMPUTED
                 if odds_obj.get(self._LINE_MARKET_ODDS_COLUMN.get(m, m))
                 else self.REASON_NO_ODDS_FOR_MARKET
             )
             for m in missing
         }
+
+    _MODEL_REASON_TTL_SECONDS = 60.0
+    _model_reason_cache: dict[str, tuple[float, Optional[str]]] = {}
+
+    def _model_reason(self, market: str) -> Optional[str]:
+        """`no_model_registered` / `model_retired` / `model_file_missing` se il
+        registry non offre un modello utilizzabile per `market`, altrimenti
+        `None`. Cache breve di classe: la lista giornata chiede lo stesso
+        mercato per decine di righe."""
+        explain = getattr(getattr(self, "_snapshot_service", None), "explain_missing_market", None)
+        if explain is None:
+            return None
+        now = _time.monotonic()
+        hit = DashboardService._model_reason_cache.get(market)
+        if hit is not None and now - hit[0] < self._MODEL_REASON_TTL_SECONDS:
+            return hit[1]
+        reason = explain(market)
+        DashboardService._model_reason_cache[market] = (now, reason)
+        return reason
 
     @staticmethod
     def _row_data_quality(db_match: Optional[Match]) -> Optional[dict[str, Any]]:

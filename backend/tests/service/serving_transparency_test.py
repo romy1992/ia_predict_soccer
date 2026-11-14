@@ -206,5 +206,81 @@ class TestComputedAt(unittest.TestCase):
         self.assertEqual(PredictionSnapshotService._iso_utc(saved.computed_at), payload["h2h"]["computed_at"])
 
 
+class TestMotivoMancanzaModello(unittest.TestCase):
+    def setUp(self):
+        DashboardService._model_reason_cache.clear()
+        self.addCleanup(DashboardService._model_reason_cache.clear)
+
+    def _snapshot_service(self, production=None, latest=None):
+        svc = PredictionSnapshotService.__new__(PredictionSnapshotService)
+        svc.registry = mock.Mock()
+        svc.registry.get_production = lambda market: production
+        svc.registry.get_latest = lambda market: latest
+        return svc
+
+    def test_senza_modello_nel_registry(self):
+        self.assertEqual(self._snapshot_service().explain_missing_market("h2h"), "no_model_registered")
+
+    def test_modello_ritirato(self):
+        svc = self._snapshot_service(latest={"current_stage": "retired", "model_path": "x"})
+        self.assertEqual(svc.explain_missing_market("corners"), "model_retired")
+
+    def test_file_modello_mancante(self):
+        svc = self._snapshot_service(production={"model_path": "best_models/nonesiste.pkl"})
+        self.assertEqual(svc.explain_missing_market("h2h"), "model_file_missing")
+
+    def test_modello_presente_nessun_motivo(self):
+        path = "best_models/h2h/trasparenza_test.pkl"
+        bucket_store.put_json(path, {"placeholder": True})
+        svc = self._snapshot_service(production={"model_path": path})
+        self.assertIsNone(svc.explain_missing_market("h2h"))
+
+    def test_dashboard_raffina_not_computed_con_il_motivo_del_registry(self):
+        service = _service()
+        service._snapshot_service = mock.Mock()
+        service._snapshot_service.explain_missing_market = lambda m: "no_model_registered" if m == "goal_no_goal" else None
+        match = _match(odds={"h2h": {"home_Bet365": "1.8"}, "goal_no_goal": {"yes": "1.7"}})
+        reasons = service._markets_missing_reasons(match, ["h2h", "goal_no_goal"], {})
+        self.assertIn(reasons["goal_no_goal"], {"not_computed", "no_model_registered", "no_odds_for_market"})
+        self.assertEqual(reasons["h2h"], "not_computed")
+
+    def test_feature_riempite_con_zero_sono_dichiarate_e_probabilita_invariata(self):
+        model_path = "best_models/h2h/trasparenza_feat_test.pkl"
+        bucket_store.put_json(model_path, {"placeholder": True})
+        frame = pd.DataFrame(
+            [{"id_fixture": 9, "season": 2026, "league": 39, "market": "h2h", "prediction_at": "2026-09-09", "odds_avg": 1.8}]
+        )
+        engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+        Base.metadata.create_all(engine)
+        seen = {}
+
+        class _Model:
+            def predict_proba(self, X):
+                seen["X"] = X.copy()
+                return [[0.3, 0.7]]
+
+        with mock.patch(
+            "src.repository.match_prediction_snapshot_repository.SessionLocal",
+            new=sessionmaker(bind=engine, expire_on_commit=False),
+        ):
+            service = PredictionSnapshotService()
+            service.filter_service = _FakeFilterService({"h2h": frame})
+            service.registry = mock.Mock()
+            service.registry.get_production = lambda market: {
+                "model_path": model_path,
+                "model_name": "logistic",
+                "run_id": "r",
+                "feature_names": ["odds_avg", "mean_expected_goals_home_stat", "mean_expected_goals_away_stat"],
+            }
+            service.registry.get_latest = lambda market: None
+            with mock.patch.object(PredictionSnapshotService, "_load_model", classmethod(lambda cls, path: _Model())):
+                payload = service.resolve_predictions(fixture_id=9, markets=["h2h"], status="NS")
+        entry = payload["h2h"]
+        self.assertEqual(entry["features_defaulted"], ["mean_expected_goals_home_stat", "mean_expected_goals_away_stat"])
+        self.assertEqual(entry["features_defaulted_count"], 2)
+        self.assertEqual(entry["probability"], 0.7)
+        self.assertEqual(float(seen["X"]["mean_expected_goals_home_stat"].iloc[0]), 0.0)
+
+
 if __name__ == "__main__":
     unittest.main()
