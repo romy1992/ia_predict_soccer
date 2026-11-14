@@ -558,6 +558,30 @@ def get_quota_pause_state() -> dict[str, Any]:
     return _read_quota_pause_state()
 
 
+def remember_operator_toggles_during_pause(updates: dict[str, bool]) -> bool:
+    """Se l'auto-pausa per quota e' attiva, memorizza nella baseline di
+    ripristino i toggle ESPLICITI dell'operatore sui job quota-sensitive.
+
+    Senza questo, un job spento a mano durante la pausa verrebbe riacceso
+    di nascosto al reset (si ripristina lo stato pre-pausa) e uno acceso a
+    mano verrebbe dimenticato. Ritorna True se la baseline e' stata
+    aggiornata. Mai un'eccezione propagata."""
+    try:
+        state = _read_quota_pause_state()
+        previous = state.get("previous_settings")
+        if not state.get("paused_date") or not isinstance(previous, dict):
+            return False
+        touched = {j: bool(v) for j, v in updates.items() if j in QUOTA_SENSITIVE_JOB_IDS}
+        if not touched:
+            return False
+        previous = {**previous, **touched}
+        _write_quota_pause_state({**state, "previous_settings": previous})
+        return True
+    except Exception as exc:  # pragma: no cover
+        logger.warning("remember_operator_toggles_during_pause fallita (ignorata): %s", exc)
+        return False
+
+
 def sync_job_settings_with_quota(quota_snapshot: Optional[dict[str, Any]] = None) -> bool:
     """Auto-pausa SOLO i job che non possono lavorare senza API-Sports
     (`QUOTA_SENSITIVE_JOB_IDS` - MAI `ml_training`, che lavora solo su dati
@@ -601,6 +625,12 @@ def sync_job_settings_with_quota(quota_snapshot: Optional[dict[str, Any]] = None
                 # quota-sensitive) PRIMA di disattivarli, cosi' da poterla
                 # ripristinare esattamente al reset della quota.
                 previous = {job_id: current[job_id] for job_id in QUOTA_SENSITIVE_JOB_IDS}
+                if paused_date and pause_state.get("previous_settings"):
+                    # Pausa di un giorno precedente mai ripristinata (es. quota
+                    # di nuovo esaurita prima del primo tick dopo il reset):
+                    # `current` e' gia' tutto disattivato dalla pausa, NON e'
+                    # la baseline. Si conserva quella originale.
+                    previous = dict(pause_state["previous_settings"])
                 _write_quota_pause_state({"paused_date": today_iso, "previous_settings": previous})
                 logger.warning(
                     "Quota API-Sports esaurita (100%%): job che chiamano il provider esterno (%s) "
