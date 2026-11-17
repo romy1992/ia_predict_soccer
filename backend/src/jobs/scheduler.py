@@ -1506,10 +1506,12 @@ def _is_job_due(job_id: str, cfg: AppConfig) -> bool:
 
 # Intervallo minimo fra due riallineamenti quota/Impostazioni fatti dallo
 # scheduler. Ogni riallineamento legge due oggetti dal bucket
-# (`api_quota_state.json`, `quota_pause_state.json`): con ~10 job sensibili
-# alla quota su un heartbeat di 30s, farlo ad ogni tick di ogni job sarebbero
-# decine di letture al minuto per un'informazione che cambia poche volte al
-# giorno. 60s bastano perche' la pausa scatti entro due tick.
+# (`api_quota_state.json`, `quota_pause_state.json`; tre a quota esaurita,
+# anche `job_settings.json`) e NON chiama mai il provider. Con i 6 job
+# sensibili alla quota (`QUOTA_SENSITIVE_JOB_IDS`) su un heartbeat di 30s,
+# farlo ad ogni tick di ogni job sarebbero 24-36 letture al minuto per
+# un'informazione che cambia poche volte al giorno: cosi' sono 2-3. 60s
+# bastano perche' la pausa scatti entro due tick.
 _QUOTA_SYNC_MIN_INTERVAL_SECONDS = 60.0
 _last_quota_sync_monotonic: Optional[float] = None
 # I job dello stesso tick girano su thread diversi (executor di APScheduler):
