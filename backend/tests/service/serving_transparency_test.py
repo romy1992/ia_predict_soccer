@@ -29,9 +29,11 @@ def _service() -> DashboardService:
     return DashboardService.__new__(DashboardService)
 
 
-def _match(odds=None, mean_statistics=None):
+def _match(odds=None, mean_statistics=None, id_team_home=1, id_team_away=2):
     odds_rows = [SimpleNamespace(to_dict=lambda: odds)] if odds is not None else []
-    return SimpleNamespace(odds=odds_rows, mean_statistics=mean_statistics)
+    return SimpleNamespace(
+        odds=odds_rows, mean_statistics=mean_statistics, id_team_home=id_team_home, id_team_away=id_team_away
+    )
 
 
 class TestMarketsMissingReasons(unittest.TestCase):
@@ -114,6 +116,67 @@ class TestRowDataQuality(unittest.TestCase):
             quality = DashboardService._row_data_quality(match)
             self.assertFalse(quality["xg_available"], value)
             self.assertFalse(quality["odds_available"])
+
+    def test_xg_a_zero_conta_come_mancante(self):
+        """`calculate_mean` azzera l'xG assente prima di fare la media: "mai
+        rilevato" arriva come 0.0, non come None. Dichiararlo disponibile
+        sarebbe falso proprio nel caso che il campo deve segnalare."""
+        for value in (0, 0.0, "0", "0.0"):
+            match = _match(
+                odds={"h2h": {}},
+                mean_statistics=[
+                    {"id_team": 1, "mean_expected_goals": 1.3},
+                    {"id_team": 2, "mean_expected_goals": value},
+                ],
+            )
+            quality = DashboardService._row_data_quality(match)
+            self.assertTrue(quality["team_statistics_available"], value)
+            self.assertFalse(quality["xg_available"], value)
+
+    def test_medie_di_squadre_diverse_da_quelle_in_campo_non_contano(self):
+        """Stessa risoluzione del serving (`_resolve_mean_stats`, per id
+        squadra): se le medie non sono di casa/trasferta il modello non riceve
+        alcuna feature `mean_*`."""
+        from src.service_ia.training.market_service.filter_market_service import FilterMarketService
+
+        means = [{"id_team": 7, "mean_expected_goals": 1.4}, {"id_team": 8, "mean_expected_goals": 0.9}]
+        match = _match(odds={"h2h": {}}, mean_statistics=means, id_team_home=1, id_team_away=2)
+        self.assertEqual(
+            DashboardService._row_data_quality(match),
+            {"odds_available": True, "team_statistics_available": False, "xg_available": False},
+        )
+        self.assertEqual(
+            FilterMarketService._extract_mean_features(
+                {"mean_statistics": means, "id_team_home": 1, "id_team_away": 2}
+            ),
+            {},
+        )
+
+    def test_coerente_con_le_feature_che_il_serving_costruisce(self):
+        """`team_statistics_available` vero <=> `_extract_mean_features` produce
+        le feature `mean_*`; xG a zero <=> feature xG a 0.0."""
+        from src.service_ia.training.market_service.filter_market_service import FilterMarketService
+
+        means = [
+            {"id_team": 1, "mean_expected_goals": 0.0, "mean_Fouls": 11.0},
+            {"id_team": 2, "mean_expected_goals": 1.1, "mean_Fouls": 9.0},
+        ]
+        match = _match(odds={"h2h": {}}, mean_statistics=means)
+        quality = DashboardService._row_data_quality(match)
+        features = FilterMarketService._extract_mean_features(
+            {"mean_statistics": means, "id_team_home": 1, "id_team_away": 2}
+        )
+        self.assertTrue(quality["team_statistics_available"])
+        self.assertFalse(quality["xg_available"])
+        self.assertEqual(features["mean_expected_goals_home_stat"], 0.0)
+        self.assertEqual(features["mean_fouls_home_stat"], 11.0)
+
+    def test_json_delle_medie_malformato_non_solleva(self):
+        match = _match(odds={"h2h": {}}, mean_statistics=["non-un-dict", 3])
+        self.assertEqual(
+            DashboardService._row_data_quality(match),
+            {"odds_available": True, "team_statistics_available": False, "xg_available": False},
+        )
 
     def test_medie_statistiche_assenti(self):
         for means in (None, [], [{"id_team": 1, "mean_expected_goals": 1.0}], "non-una-lista"):

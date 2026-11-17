@@ -309,25 +309,47 @@ class DashboardService:
         match gia' caricata. `None` se la partita non e' nel DB: non si
         dichiara nulla che non si possa verificare.
 
-        `xg_available` e' vero solo se la media xG pre-partita esiste per
-        entrambe le squadre: quando manca, le feature `mean_expected_goals_*`
-        arrivano al modello senza valore reale."""
+        `team_statistics_available` usa la STESSA risoluzione del serving
+        (`FilterMarketService._resolve_mean_stats`: medie di entrambe le
+        squadre, trovate per `id_team`): quando e' falso il modello non riceve
+        alcuna feature `mean_*` e quelle attese valgono 0.0.
+
+        `xg_available` e' vero solo se la media xG pre-partita e' un numero
+        MAGGIORE DI ZERO per entrambe le squadre. Lo zero conta come dato
+        mancante: `calculate_mean` azzera l'xG assente PRIMA di fare la media
+        (`download_match_service.py`, `get_value`), quindi "xG mai rilevato"
+        arriva qui come `mean_expected_goals = 0.0`, non come `None` (export
+        `h2h_raw.csv`: zero per almeno una squadra in 7.163 righe su 15.749,
+        `None` in 200). Limite dichiarato: se l'xG manca solo in ALCUNE delle
+        partite precedenti la media e' positiva ma sottostimata, e da qui non
+        si puo' riconoscere. Il campo descrive i dati, non cambia la
+        previsione."""
         if db_match is None:
             return None
-        means = db_match.mean_statistics
-        teams = [item for item in means if isinstance(item, dict)] if isinstance(means, list) else []
-        stats_available = len(teams) >= 2
+        try:
+            mean_home, mean_away = FilterMarketService._resolve_mean_stats(
+                {
+                    "mean_statistics": getattr(db_match, "mean_statistics", None),
+                    "id_team_home": getattr(db_match, "id_team_home", None),
+                    "id_team_away": getattr(db_match, "id_team_away", None),
+                }
+            )
+        except Exception:  # noqa: BLE001 - JSON malformato: nessuna media utilizzabile
+            mean_home, mean_away = None, None
+        stats_available = isinstance(mean_home, dict) and isinstance(mean_away, dict) and bool(mean_home) and bool(mean_away)
 
-        def _has_number(value: Any) -> bool:
+        def _positive_number(value: Any) -> bool:
             try:
-                return value is not None and float(value) == float(value)
+                return value is not None and float(value) > 0.0
             except (TypeError, ValueError):
                 return False
 
-        xg_available = stats_available and all(_has_number(team.get("mean_expected_goals")) for team in teams[:2])
+        xg_available = stats_available and all(
+            _positive_number(team.get("mean_expected_goals")) for team in (mean_home, mean_away)
+        )
         return {
             "odds_available": bool(db_match.odds),
-            "team_statistics_available": stats_available,
+            "team_statistics_available": bool(stats_available),
             "xg_available": bool(xg_available),
         }
 
