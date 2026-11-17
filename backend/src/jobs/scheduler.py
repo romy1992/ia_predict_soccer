@@ -3,6 +3,7 @@ from __future__ import annotations
 import functools
 import logging
 import os
+import threading
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -1499,6 +1500,11 @@ def _is_job_due(job_id: str, cfg: AppConfig) -> bool:
 # giorno. 60s bastano perche' la pausa scatti entro due tick.
 _QUOTA_SYNC_MIN_INTERVAL_SECONDS = 60.0
 _last_quota_sync_monotonic: Optional[float] = None
+# I job dello stesso tick girano su thread diversi (executor di APScheduler):
+# chi arriva mentre un riallineamento e' in corso deve ASPETTARLO, non
+# saltarlo, altrimenti legge `is_job_enabled` prima che la pausa sia stata
+# scritta e parte comunque.
+_quota_sync_lock = threading.Lock()
 
 
 def _sync_quota_pause_if_needed(job_id: str) -> None:
@@ -1519,17 +1525,18 @@ def _sync_quota_pause_if_needed(job_id: str) -> None:
     global _last_quota_sync_monotonic
     if job_id not in QUOTA_SENSITIVE_JOB_IDS:
         return
-    now = time.monotonic()
-    if (
-        _last_quota_sync_monotonic is not None
-        and now - _last_quota_sync_monotonic < _QUOTA_SYNC_MIN_INTERVAL_SECONDS
-    ):
-        return
-    _last_quota_sync_monotonic = now
-    try:
-        sync_job_settings_with_quota()
-    except Exception as exc:  # pragma: no cover - la funzione gia' non solleva
-        logging.warning("Riallineamento quota/Impostazioni fallito (ignorato): %s", exc)
+    with _quota_sync_lock:
+        now = time.monotonic()
+        if (
+            _last_quota_sync_monotonic is not None
+            and now - _last_quota_sync_monotonic < _QUOTA_SYNC_MIN_INTERVAL_SECONDS
+        ):
+            return
+        _last_quota_sync_monotonic = now
+        try:
+            sync_job_settings_with_quota()
+        except Exception as exc:  # la funzione gia' non solleva: difesa in piu'
+            logging.warning("Riallineamento quota/Impostazioni fallito (ignorato): %s", exc)
 
 
 def _run_if_due(job_id: str, func, *, cfg: AppConfig, **kwargs) -> Optional[dict]:

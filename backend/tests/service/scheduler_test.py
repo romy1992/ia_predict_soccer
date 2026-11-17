@@ -580,6 +580,53 @@ class TestQuotaSyncInScheduler(unittest.TestCase):
             result = scheduler_module._run_if_due("data_sync_today", lambda: {"ran": True}, cfg=_cfg())
         self.assertEqual(result, {"ran": True})
 
+    def test_job_dello_stesso_tick_aspetta_la_sync_in_corso(self):
+        """I job dello stesso heartbeat girano su thread diversi. Il secondo
+        job sensibile non deve leggere `is_job_enabled` mentre la sync del
+        primo e' ancora in corso (limitata a una per minuto, prima veniva
+        semplicemente SALTATA): altrimenti partirebbe con lo stato pre-pausa."""
+        import threading
+
+        sync_iniziata = threading.Event()
+        lascia_finire = threading.Event()
+        stato = {"data_sync_today": True, "data_future_sync": True}
+        eseguiti = []
+        letture_prima_della_fine_sync = []
+
+        def fake_sync():
+            sync_iniziata.set()
+            self.assertTrue(lascia_finire.wait(timeout=5))
+            for job_id in stato:
+                stato[job_id] = False
+            return True
+
+        def fake_enabled(job_id):
+            if not lascia_finire.is_set():
+                letture_prima_della_fine_sync.append(job_id)
+            return stato[job_id]
+
+        def run(job_id):
+            scheduler_module._run_if_due(job_id, lambda: eseguiti.append(job_id), cfg=_cfg())
+
+        with mock.patch.object(scheduler_module, "sync_job_settings_with_quota", side_effect=fake_sync) as sync, \
+             mock.patch.object(scheduler_module, "is_job_enabled", side_effect=fake_enabled), \
+             mock.patch.object(scheduler_module, "_is_job_due", return_value=True):
+            primo = threading.Thread(target=run, args=("data_sync_today",))
+            primo.start()
+            self.assertTrue(sync_iniziata.wait(timeout=5))
+            secondo = threading.Thread(target=run, args=("data_future_sync",))
+            secondo.start()
+            secondo.join(timeout=0.3)
+            # Il secondo job e' fermo in attesa della sync del primo.
+            self.assertTrue(secondo.is_alive())
+            lascia_finire.set()
+            primo.join(timeout=5)
+            secondo.join(timeout=5)
+
+        self.assertEqual(sync.call_count, 1)
+        self.assertEqual(letture_prima_della_fine_sync, [])
+        self.assertEqual(eseguiti, [])
+
 
 if __name__ == "__main__":
     unittest.main()
