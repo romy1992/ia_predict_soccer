@@ -257,32 +257,37 @@ class DashboardService:
     ) -> dict[str, str]:
         """Per ogni mercato richiesto e SENZA previsione dice il motivo che
         si puo' verificare dai dati gia' in memoria (nessuna query, nessuna
-        chiamata esterna):
+        chiamata esterna). Un solo motivo per mercato, nell'ordine:
 
+        - `no_model_registered` / `model_retired` / `model_file_missing`: il
+          registry non offre un modello utilizzabile. Viene PRIMA di tutto il
+          resto perche' non dipende dalla partita: finche' non cambia, nessuna
+          quota e nessun dato faranno comparire la previsione;
         - `match_not_in_db`: la partita non e' ancora nel DB locale;
         - `no_odds_row`: la partita non ha alcuna riga quote;
         - `no_odds_for_market`: le quote ci sono ma non per questo mercato
           (stesso criterio di `_markets_without_odds`);
-        - `no_model_registered` / `model_retired` / `model_file_missing`: le
-          quote ci sono ma il registry non offre un modello utilizzabile;
-        - `not_computed`: modello presente, previsione no - feature
+        - `not_computed`: modello e quote presenti, previsione no - feature
           insufficienti, inferenza fallita o calcolo non ancora eseguito."""
         missing = [m for m in markets if m not in predictions]
         if not missing:
             return {}
-        if db_match is None:
-            return {m: self.REASON_MATCH_NOT_IN_DB for m in missing}
-        if not db_match.odds:
-            return {m: self.REASON_NO_ODDS_ROW for m in missing}
-        odds_obj = db_match.odds[0].to_dict()
-        return {
-            m: (
-                self._model_reason(m) or self.REASON_NOT_COMPUTED
-                if odds_obj.get(self._LINE_MARKET_ODDS_COLUMN.get(m, m))
-                else self.REASON_NO_ODDS_FOR_MARKET
-            )
-            for m in missing
-        }
+        odds_obj: Optional[dict[str, Any]] = None
+        reasons: dict[str, str] = {}
+        for market in missing:
+            model_reason = self._model_reason(market)
+            if model_reason:
+                reasons[market] = model_reason
+            elif db_match is None:
+                reasons[market] = self.REASON_MATCH_NOT_IN_DB
+            elif not db_match.odds:
+                reasons[market] = self.REASON_NO_ODDS_ROW
+            else:
+                if odds_obj is None:
+                    odds_obj = db_match.odds[0].to_dict()
+                has_odds = odds_obj.get(self._LINE_MARKET_ODDS_COLUMN.get(market, market))
+                reasons[market] = self.REASON_NOT_COMPUTED if has_odds else self.REASON_NO_ODDS_FOR_MARKET
+        return reasons
 
     _MODEL_REASON_TTL_SECONDS = 60.0
     _model_reason_cache: dict[str, tuple[float, Optional[str]]] = {}
@@ -300,6 +305,10 @@ class DashboardService:
         if hit is not None and now - hit[0] < self._MODEL_REASON_TTL_SECONDS:
             return hit[1]
         reason = explain(market)
+        # Solo una stringa non vuota e' un motivo: qualunque altro valore
+        # (registry illeggibile, servizio sostituito nei test) vale "nessun
+        # motivo dal lato modello".
+        reason = reason if isinstance(reason, str) and reason else None
         DashboardService._model_reason_cache[market] = (now, reason)
         return reason
 

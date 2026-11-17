@@ -304,8 +304,40 @@ class TestMotivoMancanzaModello(unittest.TestCase):
         service._snapshot_service.explain_missing_market = lambda m: "no_model_registered" if m == "goal_no_goal" else None
         match = _match(odds={"h2h": {"home_Bet365": "1.8"}, "goal_no_goal": {"yes": "1.7"}})
         reasons = service._markets_missing_reasons(match, ["h2h", "goal_no_goal"], {})
-        self.assertIn(reasons["goal_no_goal"], {"not_computed", "no_model_registered", "no_odds_for_market"})
-        self.assertEqual(reasons["h2h"], "not_computed")
+        self.assertEqual(reasons, {"h2h": "not_computed", "goal_no_goal": "no_model_registered"})
+
+    def test_il_motivo_del_modello_viene_prima_di_quote_e_partita(self):
+        """Senza un modello utilizzabile la previsione non puo' comparire,
+        qualunque cosa succeda a quote e dati: e' quello il motivo da dire,
+        anche quando mancano pure le quote o la partita non e' nel DB."""
+        service = _service()
+        service._snapshot_service = mock.Mock()
+        motivi = {"corners": "model_retired", "cards": "no_model_registered", "dc": "model_file_missing"}
+        service._snapshot_service.explain_missing_market = lambda m: motivi.get(m)
+        mercati = ["h2h", "corners", "cards", "dc"]
+        attesi_modello = {"corners": "model_retired", "cards": "no_model_registered", "dc": "model_file_missing"}
+
+        senza_quote_per_mercato = _match(odds={"h2h": {"home_Bet365": "1.8"}, "corners": None, "cards": {}, "dc": None})
+        self.assertEqual(
+            service._markets_missing_reasons(senza_quote_per_mercato, mercati, {}),
+            {"h2h": "not_computed", **attesi_modello},
+        )
+        self.assertEqual(
+            service._markets_missing_reasons(_match(odds=None), mercati, {}),
+            {"h2h": "no_odds_row", **attesi_modello},
+        )
+        self.assertEqual(
+            service._markets_missing_reasons(None, mercati, {}),
+            {"h2h": "match_not_in_db", **attesi_modello},
+        )
+
+    def test_markets_unavailable_resta_invariato_qualunque_sia_il_motivo(self):
+        """Il campo storico (badge "In coda") dipende solo dalle quote."""
+        service = _service()
+        service._snapshot_service = mock.Mock()
+        service._snapshot_service.explain_missing_market = lambda m: "model_retired"
+        match = _match(odds={"h2h": {"home_Bet365": "1.8"}, "cards": None})
+        self.assertEqual(service._markets_without_odds(match, ["h2h", "cards_line_4_5"], {}), ["cards_line_4_5"])
 
     def test_feature_riempite_con_zero_sono_dichiarate_e_probabilita_invariata(self):
         model_path = "best_models/h2h/trasparenza_feat_test.pkl"
