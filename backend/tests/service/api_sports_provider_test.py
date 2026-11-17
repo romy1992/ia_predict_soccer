@@ -287,5 +287,119 @@ class TestCircuitBreaker(unittest.TestCase):
         self.assertEqual(provider.circuit_state, "closed")
 
 
+class TestContrattoVersoIChiamanti(unittest.TestCase):
+    """Proprieta' su cui contano i job (verifica dell'audit 2026-11): quota
+    esaurita mai ritentata, 4xx senza effetto sul breaker, chiave mai nei log
+    ne' nei messaggi, attesa totale limitata."""
+
+    CHIAVE = "CHIAVE-SEGRETA-DI-PROVA-123"
+
+    def _provider(self, **overrides) -> ApiSportsProvider:
+        cfg = dict(
+            base_url="https://esempio.test",
+            api_key=self.CHIAVE,
+            max_retries=3,
+            retry_backoff_seconds=0,
+            circuit_failure_threshold=1,
+        )
+        cfg.update(overrides)
+        return ApiSportsProvider(config=ApiSportsProviderConfig(**cfg))
+
+    def test_quota_giornaliera_esaurita_non_viene_ritentata_e_viene_registrata(self):
+        quota = _risposta(payload={"errors": {"requests": "You have reached the request limit for the day"}})
+        with mock.patch("requests.get", return_value=quota) as get, \
+                mock.patch("src.service_ia.pre_processing.api_sports_provider.record_status_snapshot") as status, \
+                mock.patch("src.service_ia.pre_processing.api_sports_provider.record_quota_snapshot"), \
+                mock.patch("src.service_ia.pre_processing.api_sports_provider.time.sleep") as sleep:
+            with self.assertRaises(ApiSportsQuotaExceededError):
+                self._provider().request(path="fixtures")
+        self.assertEqual(get.call_count, 1)
+        sleep.assert_not_called()
+        # Lo stato condiviso (letto dalla pausa quota) viene marcato esaurito.
+        self.assertIn("request limit", status.call_args.kwargs["error_message"])
+
+    def test_quota_esaurita_non_e_una_unavailable(self):
+        """I chiamanti le trattano in modo diverso: quota -> stop del giro,
+        indisponibilita' -> lega segnata fallita e si continua."""
+        self.assertFalse(issubclass(ApiSportsQuotaExceededError, ApiSportsUnavailableError))
+        self.assertFalse(issubclass(ApiSportsUnavailableError, ApiSportsQuotaExceededError))
+
+    def test_4xx_senza_campo_errors_non_apre_il_breaker_e_non_viene_ritentato(self):
+        provider = self._provider()
+        for status_code in (400, 401, 403, 404):
+            with mock.patch("requests.get", return_value=_risposta(status_code=status_code, payload={})) as get, \
+                    mock.patch("src.service_ia.pre_processing.api_sports_provider.record_quota_snapshot"):
+                self.assertEqual(provider.request(path="fixtures"), [])
+            self.assertEqual(get.call_count, 1, status_code)
+            self.assertEqual(provider.circuit_state, "closed", status_code)
+
+    def test_la_chiave_non_compare_mai_in_log_ed_eccezioni(self):
+        casi = [
+            ("rete", dict(side_effect=requests.ConnectionError("Max retries exceeded with url: /fixtures?league=135")),
+             ApiSportsUnavailableError),
+            ("5xx", dict(return_value=_risposta(status_code=503)), ApiSportsUnavailableError),
+            ("rifiuto", dict(return_value=_risposta(payload={"errors": {"token": "Missing application key"}})),
+             ApiSportsUnavailableError),
+            ("quota", dict(return_value=_risposta(payload={"errors": {"requests": "request limit for the day"}})),
+             ApiSportsQuotaExceededError),
+        ]
+        for nome, get_kwargs, eccezione in casi:
+            provider = self._provider(circuit_failure_threshold=1)
+            with self.assertLogs(level="DEBUG") as logs, \
+                    mock.patch("requests.get", **get_kwargs) as get, \
+                    mock.patch("src.service_ia.pre_processing.api_sports_provider.record_status_snapshot"), \
+                    mock.patch("src.service_ia.pre_processing.api_sports_provider.record_quota_snapshot"):
+                with self.assertRaises(eccezione) as ctx:
+                    provider.request(path="fixtures", params={"league": 135})
+                # A breaker aperto: anche il messaggio di sospensione e' pulito.
+                try:
+                    provider.request(path="fixtures")
+                except Exception as exc:  # noqa: BLE001
+                    testo_secondo = str(exc)
+                else:
+                    testo_secondo = ""
+            testo = " ".join(record.getMessage() for record in logs.records) + str(ctx.exception) + testo_secondo
+            self.assertNotIn(self.CHIAVE, testo, nome)
+            # La chiave viaggia solo nell'header, mai nella query string.
+            self.assertEqual(get.call_args.kwargs["headers"], {"x-apisports-key": self.CHIAVE}, nome)
+            self.assertNotIn(self.CHIAVE, str(get.call_args.kwargs.get("params")), nome)
+            self.assertNotIn(self.CHIAVE, get.call_args.kwargs["url"], nome)
+
+    def test_attesa_massima_di_una_richiesta_con_i_default(self):
+        """Con i default del codice (3 tentativi, backoff 1.5s, tetto 30s)
+        una richiesta che fallisce sempre dorme al massimo 1.5 + 3.0 secondi
+        fra i tentativi, oltre ai 3 timeout HTTP da 20s."""
+        cfg = ApiSportsProviderConfig(base_url="https://esempio.test", api_key=self.CHIAVE)
+        self.assertEqual((cfg.max_retries, cfg.timeout_seconds), (3, 20))
+        self.assertEqual((cfg.retry_backoff_seconds, cfg.retry_backoff_max_seconds), (1.5, 30.0))
+        self.assertEqual((cfg.circuit_failure_threshold, cfg.circuit_recovery_seconds), (5, 60.0))
+        provider = ApiSportsProvider(config=cfg)
+        with mock.patch("requests.get", side_effect=requests.Timeout("timeout")) as get, \
+                mock.patch("src.service_ia.pre_processing.api_sports_provider.time.sleep") as sleep:
+            with self.assertRaises(ApiSportsUnavailableError):
+                provider.request(path="fixtures")
+        self.assertEqual(get.call_count, 3)
+        self.assertEqual(get.call_args.kwargs["timeout"], 20)
+        attese = [call.args[0] for call in sleep.call_args_list]
+        self.assertEqual(len(attese), 2)
+        self.assertLessEqual(sum(attese), 1.5 + 3.0)
+        self.assertGreaterEqual(sum(attese), 0.75 + 1.5)
+
+    def test_provider_giu_un_giro_di_molte_richieste_chiama_la_rete_poche_volte(self):
+        """Con il provider irraggiungibile, 50 richieste di un job costano al
+        massimo soglia * tentativi chiamate HTTP: le altre falliscono subito."""
+        provider = self._provider(circuit_failure_threshold=5)
+        with mock.patch("requests.get", side_effect=requests.ConnectionError("rete giu'")) as get:
+            esiti = []
+            for _ in range(50):
+                try:
+                    provider.request(path="fixtures")
+                except ApiSportsUnavailableError as exc:
+                    esiti.append(type(exc).__name__)
+        self.assertEqual(get.call_count, 5 * 3)
+        self.assertEqual(esiti.count("ApiSportsUnavailableError"), 5)
+        self.assertEqual(esiti.count("ApiSportsCircuitOpenError"), 45)
+
+
 if __name__ == "__main__":
     unittest.main()
