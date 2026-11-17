@@ -41,26 +41,7 @@ class OddsSnapshotRepository:
         if not snapshots:
             return
 
-        # Deduplica per PK mantenendo l'ultimo valore: PostgreSQL rifiuta un
-        # batch `ON CONFLICT DO UPDATE` che contenga la STESSA PK piu' volte
-        # ("ON CONFLICT DO UPDATE command cannot affect row a second time").
-        by_id: dict[str, OddsSnapshot] = {s.id_snapshot: s for s in snapshots}
-        rows = [
-            {
-                "id_snapshot": s.id_snapshot,
-                "id_match": s.id_match,
-                "fixture_id": s.fixture_id,
-                "bookmaker": s.bookmaker,
-                "market": s.market,
-                "period": s.period,
-                "line": s.line,
-                "outcome": s.outcome,
-                "odd": s.odd,
-                "captured_at": s.captured_at,
-                "source": s.source,
-            }
-            for s in by_id.values()
-        ]
+        rows = self._upsert_rows(snapshots)
 
         session = SessionLocal()
         try:
@@ -82,6 +63,38 @@ class OddsSnapshotRepository:
             raise
         finally:
             session.close()
+
+    @staticmethod
+    def _upsert_rows(snapshots: list[OddsSnapshot]) -> list[dict]:
+        """Righe per l'upsert, una per PK e in ordine di PK.
+
+        Deduplica per PK mantenendo l'ultimo valore: PostgreSQL rifiuta un
+        batch `ON CONFLICT DO UPDATE` che contenga la STESSA PK piu' volte
+        ("ON CONFLICT DO UPDATE command cannot affect row a second time").
+
+        L'ordine per `id_snapshot` serve quando due scritture girano in
+        parallelo sulle stesse righe (un import e la cattura delle quote di
+        chiusura, che non prende il lock degli import): ogni transazione
+        blocca le righe nello stesso ordine, quindi una aspetta l'altra
+        invece di andare in deadlock (che farebbe perdere all'import tutti
+        gli snapshot del giro)."""
+        by_id: dict[str, OddsSnapshot] = {s.id_snapshot: s for s in snapshots}
+        return [
+            {
+                "id_snapshot": s.id_snapshot,
+                "id_match": s.id_match,
+                "fixture_id": s.fixture_id,
+                "bookmaker": s.bookmaker,
+                "market": s.market,
+                "period": s.period,
+                "line": s.line,
+                "outcome": s.outcome,
+                "odd": s.odd,
+                "captured_at": s.captured_at,
+                "source": s.source,
+            }
+            for _, s in sorted(by_id.items())
+        ]
 
     def list_for_fixture(
         self,
