@@ -424,6 +424,43 @@ def map_odds_snapshots(id_match: str, id_fixture: int, fixture_bookmakers: list[
     return snapshots
 
 
+PROVIDER_IMPORT_OK = "ok"
+PROVIDER_IMPORT_QUOTA_EXHAUSTED = "quota_exhausted"
+PROVIDER_IMPORT_UNAVAILABLE = "unavailable"
+# `reason` del report quando l'import viene saltato PRIMA di chiamare il
+# provider perche' la quota risulta gia' esaurita oggi (vedi
+# `SettlementService.run_settlement`).
+IMPORT_SKIPPED_QUOTA_REASON = "api_sports_quota_exhausted_today"
+
+
+def provider_import_status(import_report: object) -> tuple[str, Optional[str]]:
+    """Esito dell'import visto dal provider, letto dal report di
+    `download_import_matches` (o dal report "saltato" del settlement).
+
+    `download_import_matches` NON solleva a quota esaurita o a provider non
+    raggiungibile: registra `quota_exceeded` / `failed_leagues` e ritorna,
+    quindi un import che non ha scaricato nulla sembra riuscito a chi guarda
+    solo l'esito del job. Ritorna `(stato, messaggio)` con stato `ok`,
+    `quota_exhausted` o `unavailable`; messaggio `None` se tutto e' andato bene."""
+    if not isinstance(import_report, dict):
+        return PROVIDER_IMPORT_OK, None
+    if import_report.get("quota_exceeded") or import_report.get("reason") == IMPORT_SKIPPED_QUOTA_REASON:
+        return (
+            PROVIDER_IMPORT_QUOTA_EXHAUSTED,
+            "API-Sports: quota giornaliera esaurita, dati NON aggiornati dal provider (import saltato o interrotto)",
+        )
+    try:
+        failed_leagues = int(import_report.get("failed_leagues") or 0)
+    except (TypeError, ValueError):
+        failed_leagues = 0
+    if failed_leagues > 0:
+        return (
+            PROVIDER_IMPORT_UNAVAILABLE,
+            "API-Sports non disponibile per almeno un campionato: import dal provider incompleto",
+        )
+    return PROVIDER_IMPORT_OK, None
+
+
 def download_import_matches(
     seasons=None,
     leagues=None,

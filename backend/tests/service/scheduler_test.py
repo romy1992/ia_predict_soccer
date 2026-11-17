@@ -628,5 +628,89 @@ class TestQuotaSyncInScheduler(unittest.TestCase):
         self.assertEqual(eseguiti, [])
 
 
+class TestSingleFixtureRefreshEQuota(unittest.TestCase):
+    """`run_single_fixture_refresh` (aggiornamento puntuale di una partita):
+    non passa da `_run_if_due`, quindi l'auto-pausa per quota non lo tocca. A
+    quota esaurita `download_import_matches` non solleva: l'esito va dichiarato
+    in chiaro, e le fasi locali devono girare lo stesso."""
+
+    def _run(self, import_report, *, lock=_no_lock):
+        sessione = mock.MagicMock()
+        riga = mock.Mock(current_league=135, season=2026, date_match="2026-11-15T19:45:00+00:00")
+        sessione.__enter__.return_value.query.return_value.filter.return_value.first.return_value = riga
+        chiamate = {"import": [], "sync": 0}
+
+        def fake_import(**kwargs):
+            chiamate["import"].append(kwargs)
+            return import_report
+
+        def conta_sync(*_a, **_k):
+            chiamate["sync"] += 1
+            return False
+
+        with mock.patch("src.repository.base.repository_db.SessionLocal", return_value=sessione), \
+             mock.patch.object(scheduler_module, "job_lock", lock), \
+             mock.patch.object(scheduler_module, "download_import_matches", side_effect=fake_import), \
+             mock.patch.object(scheduler_module, "sync_job_settings_with_quota", side_effect=conta_sync), \
+             mock.patch.object(scheduler_module, "PredictionLedgerService") as ledger, \
+             mock.patch.object(scheduler_module, "OfficialBetslipService") as betslip, \
+             mock.patch.object(scheduler_module, "BetslipProposalSnapshotService") as shadow, \
+             mock.patch("src.api.dashboard_service.DashboardService") as dashboard, \
+             mock.patch.object(scheduler_module, "run_scorer_predictions", return_value={"ok": True}), \
+             mock.patch.object(scheduler_module, "run_player_cards_predictions", return_value={"ok": True}):
+            ledger.return_value.settle_pending.return_value = {"ledger_settled": 2}
+            betslip.return_value.settle_pending.return_value = {"betslips_settled": 1}
+            shadow.return_value.settle_pending.return_value = {"settled": 0}
+            dashboard.return_value.recompute_predictions.return_value = {"found": True, "predictions": {"h2h": {}}}
+            result = scheduler_module.run_single_fixture_refresh(1234)
+        return result, chiamate, ledger, dashboard
+
+    def test_import_riuscito_dichiara_provider_ok(self):
+        result, chiamate, _, _ = self._run({"fixtures_seen": 1, "updated": 1, "quota_exceeded": False, "failed_leagues": 0})
+        self.assertTrue(result["found"])
+        self.assertEqual(result["provider_status"], "ok")
+        self.assertEqual(result["errors"], {})
+        self.assertEqual(chiamate["import"][0]["only_fixture_ids"], [1234])
+        self.assertEqual(chiamate["import"][0]["leagues"], [135])
+        # L'azione esplicita non passa dal riallineamento quota dello scheduler.
+        self.assertEqual(chiamate["sync"], 0)
+
+    def test_quota_esaurita_dichiarata_in_chiaro_e_fasi_locali_eseguite(self):
+        report = {
+            "fixtures_seen": 0,
+            "updated": 0,
+            "quota_exceeded": True,
+            "failed_leagues": 0,
+            "errors": [{"fixture_id": None, "error": "API-Sports quota esaurita (season=2026, league=135)"}],
+        }
+        result, _, ledger, dashboard = self._run(report)
+        self.assertTrue(result["found"])
+        self.assertEqual(result["provider_status"], "quota_exhausted")
+        self.assertIn("quota giornaliera esaurita", result["errors"]["import"])
+        # Il report originale dell'import resta invariato (campi solo aggiunti).
+        self.assertEqual(result["import"], report)
+        # Settlement e ricalcolo predizioni girano comunque sui dati gia' a DB.
+        ledger.return_value.settle_pending.assert_called_once()
+        dashboard.return_value.recompute_predictions.assert_called_once_with(fixture_id=1234)
+        self.assertEqual(result["settlement"]["ledger_settled"], 2)
+
+    def test_provider_non_disponibile_dichiarato_in_chiaro(self):
+        result, _, _, _ = self._run({"fixtures_seen": 0, "quota_exceeded": False, "failed_leagues": 1})
+        self.assertEqual(result["provider_status"], "unavailable")
+        self.assertIn("non disponibile", result["errors"]["import"])
+
+    def test_lock_occupato_resta_skipped_busy(self):
+        @contextlib.contextmanager
+        def occupato(*_a, **_k):
+            yield False
+
+        result, chiamate, _, _ = self._run({"quota_exceeded": False}, lock=occupato)
+        self.assertTrue(result["skipped_busy"])
+        self.assertEqual(chiamate["import"], [])
+
+    def test_esito_import_da_report_non_dizionario_e_ok(self):
+        self.assertEqual(scheduler_module.provider_import_status(None), ("ok", None))
+
+
 if __name__ == "__main__":
     unittest.main()

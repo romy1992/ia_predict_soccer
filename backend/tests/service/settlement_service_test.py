@@ -216,6 +216,29 @@ class TestSettlementConQuotaEsaurita(unittest.TestCase):
         self.assertEqual(len(import_calls), 1)
         self.assertFalse(report["provider_import_skipped"])
 
+    def test_provider_status_dichiarato_nel_report(self):
+        """`provider_status` (campo aggiuntivo): `quota_exhausted` sia quando
+        l'import e' saltato sia quando la quota finisce DURANTE l'import
+        (`download_import_matches` non solleva, segna `quota_exceeded`)."""
+        casi = [
+            (lambda: True, {"ok": True}, "quota_exhausted", True),
+            (lambda: False, {"ok": True}, "ok", False),
+            (lambda: False, {"quota_exceeded": True, "failed_leagues": 0}, "quota_exhausted", False),
+            (lambda: False, {"quota_exceeded": False, "failed_leagues": 2}, "unavailable", False),
+        ]
+        for exhausted, import_report, atteso, saltato in casi:
+            service = SettlementService(
+                match_repo=FakeMatchRepo(matches=[_complete_match()]),
+                snapshot_repo=FakeSnapshotRepo(counts_by_fixture={1001: 2}),
+                import_runner=lambda **kwargs: import_report,
+                quota_exhausted_check=exhausted,
+            )
+            report = service.run_settlement(from_date="2026-09-01", to_date="2026-09-01", provider=object())
+            self.assertEqual(report["provider_status"], atteso, import_report)
+            self.assertEqual(report["provider_import_skipped"], saltato)
+            # La riconciliazione locale gira in ogni caso.
+            self.assertEqual(report["final_matches_seen"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

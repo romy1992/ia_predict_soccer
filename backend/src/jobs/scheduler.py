@@ -39,7 +39,11 @@ from src.repository.model_consensus_snapshot_repository import ModelConsensusSna
 from src.repository.team_rating_repository import TeamRatingRepository
 from src.service_ia.config.app_config import AppConfig, load_app_config
 from src.service_ia.model.match import Match, Statistics
-from src.service_ia.pre_processing.download_match_service import calculate_mean, download_import_matches
+from src.service_ia.pre_processing.download_match_service import (
+    calculate_mean,
+    download_import_matches,
+    provider_import_status,
+)
 from src.service_ia.pre_processing.settlement_service import SettlementService
 from src.service_ia.training.model_registry import ModelRegistry
 from src.service_ia.training.train_multi_market import train_all_markets
@@ -477,7 +481,6 @@ def run_manual_settlement(
 # Stati con cui si importa UNA partita: qualunque, anche non ancora iniziata o in corso.
 _SINGLE_FIXTURE_STATUSES = "TBD-NS-1H-HT-2H-ET-BT-P-SUSP-INT-LIVE-FT-AET-PEN-PST-CANC-ABD-AWD-WO"
 
-
 def run_single_fixture_refresh(fixture_id: int) -> dict:
     """Aggiornamento PUNTUALE di una partita (bottone sulla card, super admin):
 
@@ -488,7 +491,12 @@ def run_single_fixture_refresh(fixture_id: int) -> dict:
     4) aggiorna formazioni, marcatori e cartellini giocatori: fasi "morbide" che lavorano sull'insieme delle
        partite imminenti (non solo questa), idempotenti.
     Le fasi 2-4 sono morbide: se falliscono, i dati importati restano e l'errore e' nel report.
-    Ritorna `{"found": False}` se la partita non e' nel database locale."""
+    Ritorna `{"found": False}` se la partita non e' nel database locale.
+
+    Non passa da `_run_if_due`: l'auto-pausa per quota non lo disattiva (e' un'azione esplicita). A quota
+    esaurita o provider non raggiungibile l'import non solleva: il report lo dichiara con `provider_status`
+    (`ok` / `quota_exhausted` / `unavailable`) e con `errors["import"]`, campi aggiuntivi; le fasi locali
+    (settlement, predizioni) girano comunque sui dati gia' a DB."""
     from src.api.dashboard_service import DashboardService
     from src.repository.base.repository_db import SessionLocal
     from src.service_ia.model.match import Match
@@ -523,6 +531,9 @@ def run_single_fixture_refresh(fixture_id: int) -> dict:
                 statuses=_SINGLE_FIXTURE_STATUSES,
                 only_fixture_ids=[int(fixture_id)],
             )
+            provider_status, provider_message = provider_import_status(import_report)
+            if provider_message:
+                errors["import"] = provider_message
             settlement: dict = {}
 
             def _settle() -> dict:
@@ -541,6 +552,7 @@ def run_single_fixture_refresh(fixture_id: int) -> dict:
             summary = {
                 "fixture_id": int(fixture_id),
                 "import": import_report,
+                "provider_status": provider_status,
                 "settlement": settlement,
                 "predictions": predictions,
                 "scorers": scorers,

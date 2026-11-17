@@ -8,7 +8,11 @@ from src.repository.match_repository import MatchRepository
 from src.repository.odds_snapshot_repository import OddsSnapshotRepository
 from src.service_ia.model.match import Match
 from src.service_ia.pre_processing.api_sports_provider import ApiSportsProvider
-from src.service_ia.pre_processing.download_match_service import download_import_matches
+from src.service_ia.pre_processing.download_match_service import (
+    IMPORT_SKIPPED_QUOTA_REASON,
+    download_import_matches,
+    provider_import_status,
+)
 from src.service_ia.utility.request_api import get_api_sports_provider
 
 FINAL_STATUSES = {"FT", "AET", "PEN", "ABD"}
@@ -160,7 +164,7 @@ class SettlementService:
             # job resta davvero "locale" quando il provider non e' usabile.
             import_report = {
                 "skipped": True,
-                "reason": "api_sports_quota_exhausted_today",
+                "reason": IMPORT_SKIPPED_QUOTA_REASON,
             }
         else:
             provider = provider or get_api_sports_provider()
@@ -195,6 +199,11 @@ class SettlementService:
             "to_date": to_day.isoformat(),
             "import_report": import_report,
             "provider_import_skipped": bool(import_report.get("skipped")) if isinstance(import_report, dict) else False,
+            # Additivo: `ok` / `quota_exhausted` (import saltato, oppure quota
+            # finita DURANTE l'import: `download_import_matches` non solleva) /
+            # `unavailable` (almeno un campionato non scaricato). In tutti i
+            # casi la riconciliazione locale qui sotto viene eseguita.
+            "provider_status": provider_import_status(import_report)[0],
             "final_matches_seen": 0,
             "updated": 0,
             "unchanged": 0,
