@@ -302,6 +302,43 @@ class TestBuildClvResult(unittest.TestCase):
         self.assertAlmostEqual(legacy.closing_odd, (2.00 + 1.70) / 2, places=9)
         self.assertEqual(legacy.closing_bookmakers, 2)
 
+    def test_double_chance_fair_closing_is_derived_from_h2h_like_the_capture(self):
+        closing_at = KICKOFF - timedelta(minutes=5)
+        repo = _FakeRepo(
+            [
+                _FakeSnapshot("bookA", "h2h", "Home", 2.00, closing_at),
+                _FakeSnapshot("bookA", "h2h", "Draw", 3.50, closing_at),
+                _FakeSnapshot("bookA", "h2h", "Away", 4.00, closing_at),
+                _FakeSnapshot("bookA", "dc", "Home/Draw", 1.25, closing_at),
+                _FakeSnapshot("bookA", "dc", "Home/Away", 1.30, closing_at),
+                _FakeSnapshot("bookA", "dc", "Draw/Away", 1.80, closing_at),
+            ]
+        )
+        result = build_clv_result(
+            market="dc", outcome="Home/Draw", odd_at_bet=1.30, p_fair_at_bet=0.75,
+            fixture_id=1, kickoff_at=KICKOFF, snapshot_repo=repo,
+        )
+        raw = [1 / 2.00, 1 / 3.50, 1 / 4.00]
+        expected_fair = (raw[0] + raw[1]) / sum(raw)
+        self.assertTrue(result.available)
+        self.assertAlmostEqual(result.closing_odd, 1.25, places=9)
+        self.assertAlmostEqual(result.clv_odd_pct, 1.30 / 1.25 - 1.0, places=9)
+        # Non 1/1.25 (= 0.80, implicita con margine): la fair dalla h2h.
+        self.assertAlmostEqual(result.p_fair_closing, expected_fair, places=9)
+        self.assertAlmostEqual(result.clv_prob, 0.75 - expected_fair, places=9)
+
+    def test_double_chance_without_h2h_closing_keeps_odd_clv_only(self):
+        closing_at = KICKOFF - timedelta(minutes=5)
+        repo = _FakeRepo([_FakeSnapshot("bookA", "dc", "Draw/Away", 1.80, closing_at)])
+        result = build_clv_result(
+            market="dc", outcome="Draw/Away", odd_at_bet=1.90, p_fair_at_bet=0.50,
+            fixture_id=1, kickoff_at=KICKOFF, snapshot_repo=repo,
+        )
+        self.assertTrue(result.available)
+        self.assertIsNone(result.p_fair_closing)
+        self.assertIsNone(result.clv_prob)
+        self.assertAlmostEqual(result.clv_odd_pct, 1.90 / 1.80 - 1.0, places=9)
+
     def test_bet_captured_at_is_the_reference_when_odds_time_missing(self):
         repo = _FakeRepo(
             [

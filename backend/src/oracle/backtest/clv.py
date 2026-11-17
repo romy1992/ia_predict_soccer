@@ -251,6 +251,36 @@ def fetch_closing_market_baseline(
     ).baseline
 
 
+# Doppia chance: la cattura ufficiale calcola `p_market_fair` come SOMMA
+# delle fair probability h2h dei due esiti (`_capture_true_1x2`), perche'
+# "dc" non e' un mercato a esiti esclusivi (`EXCLUSIVE_MARKETS`) e la sua
+# probabilita' implicita contiene ancora il margine. La fair di chiusura va
+# derivata allo stesso modo, altrimenti clv_prob confronta grandezze diverse.
+_DC_H2H_COMPONENTS: dict[str, tuple[str, str]] = {
+    "homedraw": ("Home", "Draw"),
+    "1x": ("Home", "Draw"),
+    "homeaway": ("Home", "Away"),
+    "12": ("Home", "Away"),
+    "drawaway": ("Draw", "Away"),
+    "x2": ("Draw", "Away"),
+}
+
+
+def _dc_fair_closing_from_h2h(h2h_baseline: Optional[dict[str, Any]], outcome: str) -> Optional[float]:
+    components = _DC_H2H_COMPONENTS.get(_normalize_text(outcome))
+    if components is None or h2h_baseline is None:
+        return None
+    fair_values = []
+    for component in components:
+        row = get_market_outcome_baseline(
+            fixture_baseline={"markets": {"h2h": h2h_baseline}}, market="h2h", outcome=component
+        )
+        if row is None or row.get("fair_probability") is None:
+            return None
+        fair_values.append(float(row["fair_probability"]))
+    return float(sum(fair_values))
+
+
 # Motivi (stabili, per i conteggi di copertura) per cui il CLV non e'
 # disponibile. `reason` resta il testo leggibile gia' esposto.
 REASON_MISSING_KICKOFF = "missing_kickoff"
@@ -379,6 +409,17 @@ def build_clv_result(
 
     closing_odd = closing_row.get("avg_odd")
     p_fair_closing = closing_row.get("fair_probability")
+    if pricing_market == "dc":
+        h2h_state = _closing_state(
+            fixture_id=fixture_id,
+            market="h2h",
+            kickoff_at=kickoff_at,
+            period=period,
+            line=None,
+            snapshot_repo=snapshot_repo,
+            bet_captured_at=bet_captured_at,
+        )
+        p_fair_closing = _dc_fair_closing_from_h2h(h2h_state.baseline, outcome)
     closing_captured = state.captured_at_by_outcome.get(_outcome_key(pricing_market, outcome))
     kickoff_utc = _as_utc(kickoff_at)
     closing_meta = {
