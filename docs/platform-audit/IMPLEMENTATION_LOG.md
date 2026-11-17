@@ -13,7 +13,7 @@ Questo file descrive lo stato **verificato il 2026-11-17**. I numeri dei test so
 | Data | Commit | Contenuto | Stato dopo la verifica del 2026-11-17 |
 |---|---|---|---|
 | 2026-11-11 | `226d03c` | Resilienza API-Sports (backoff esponenziale + jitter, circuit breaker), pausa quota collegata allo scheduler, settlement senza import a quota esaurita, trasparenza dashboard, benchmark 1X2, segnaposto in `config.env.example` | verificato, corretto dai commit sotto |
-| 2026-11-11 | `eff8175` | Primi documenti platform-audit | sostituiti da questa versione (citavano log in `/tmp/work` non esistenti) |
+| 2026-11-11 | `eff8175` | Primi documenti platform-audit | sostituiti da questa versione (citavano log locali non piu' disponibili) |
 | 2026-11-14 | `d395c34` | Pausa quota: baseline conservata, toggle dell'operatore ricordati | verificato, corretto da `fc0444d` |
 | 2026-11-14 | `3b9d7e5` | Campo additivo `partially_calls_api_sports` | verificato, OK |
 | 2026-11-14 | `39d7cf2` | The Odds API: errori di rete senza `apiKey` nel messaggio | verificato, completato da `4196864` |

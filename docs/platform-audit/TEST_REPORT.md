@@ -54,7 +54,7 @@ codice usa `list_active_markets`), `0 != 1` sui contatori di `download_import_ma
 Non verificato se alcuni richiedano un Postgres locale.
 
 I documenti dell'11/11 dichiaravano 17 falliti / 1.358 superati su main e 17 / 1.420 sul branch
-di allora (`226d03c`), citando log in `/tmp/work` che non esistono piu': il dato di main e'
+di allora (`226d03c`), citando log locali non piu' disponibili: il dato di main e'
 confermato; quello del branch e' superato (oggi 1.481 superati a `3d8ea22`).
 
 Test piu' lenti (identici su main e branch): `cards_market_test.py` e `corners_market_test.py`,
