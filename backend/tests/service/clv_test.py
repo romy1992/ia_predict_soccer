@@ -264,6 +264,44 @@ class TestBuildClvResult(unittest.TestCase):
         self.assertTrue(result.available)
         self.assertAlmostEqual(result.clv_odd_pct, 2.00 / 1.90 - 1.0, places=9)
 
+    def test_closing_uses_only_bookmakers_quoting_at_bet_time(self):
+        # Alla giocata quotava solo bookA (2.00, quota presa = 2.00). bookC
+        # arriva dopo con un margine diverso: non deve entrare nella media
+        # di chiusura, altrimenti il CLV si sposta anche a mercato fermo.
+        bet_odds_at = KICKOFF - timedelta(minutes=70)
+        bet_at = KICKOFF - timedelta(minutes=60)
+        closing_at = KICKOFF - timedelta(minutes=5)
+        repo = _FakeRepo(
+            [
+                _FakeSnapshot("bookA", "h2h", "Home", 2.00, bet_odds_at),
+                _FakeSnapshot("bookA", "h2h", "Draw", 3.40, bet_odds_at),
+                _FakeSnapshot("bookA", "h2h", "Away", 4.00, bet_odds_at),
+                _FakeSnapshot("bookA", "h2h", "Home", 2.00, closing_at),
+                _FakeSnapshot("bookA", "h2h", "Draw", 3.40, closing_at),
+                _FakeSnapshot("bookA", "h2h", "Away", 4.00, closing_at),
+                _FakeSnapshot("bookC", "h2h", "Home", 1.70, closing_at),
+                _FakeSnapshot("bookC", "h2h", "Draw", 3.00, closing_at),
+                _FakeSnapshot("bookC", "h2h", "Away", 3.60, closing_at),
+            ]
+        )
+        result = build_clv_result(
+            market="1x2", outcome="Home", odd_at_bet=2.00, p_fair_at_bet=0.48,
+            fixture_id=1, kickoff_at=KICKOFF, snapshot_repo=repo,
+            bet_captured_at=bet_at, bet_odds_captured_at=bet_odds_at,
+        )
+        self.assertTrue(result.available)
+        self.assertAlmostEqual(result.closing_odd, 2.00, places=9)
+        self.assertAlmostEqual(result.clv_odd_pct, 0.0, places=9)
+        self.assertEqual(result.closing_bookmakers, 1)
+
+        # Senza orario della giocata (backtest) la media resta su tutti.
+        legacy = build_clv_result(
+            market="1x2", outcome="Home", odd_at_bet=2.00, p_fair_at_bet=0.48,
+            fixture_id=1, kickoff_at=KICKOFF, snapshot_repo=repo,
+        )
+        self.assertAlmostEqual(legacy.closing_odd, (2.00 + 1.70) / 2, places=9)
+        self.assertEqual(legacy.closing_bookmakers, 2)
+
     def test_bet_captured_at_is_the_reference_when_odds_time_missing(self):
         repo = _FakeRepo(
             [

@@ -120,6 +120,38 @@ def _outcome_key(market: str, outcome: Any) -> str:
     return _normalize_text(_normalize_outcome_for_market(market=market, outcome=str(outcome or "")))
 
 
+def _restrict_to_bet_bookmakers(
+    per_bookmaker: list[dict[str, Any]],
+    snapshots: list[dict[str, Any]],
+    market: str,
+    bet_captured_at: Optional[datetime],
+) -> list[dict[str, Any]]:
+    """Tiene, per ogni esito, solo i bookmaker che lo quotavano gia' al
+    momento della giocata (`captured_at <= bet_captured_at`).
+
+    La quota presa e' la MEDIA dei bookmaker disponibili alla cattura
+    (`OfficialPredictionCaptureService._odds_summary`): confrontarla con una
+    media di chiusura che include bookmaker arrivati dopo (con margini
+    diversi) sposterebbe il CLV anche a mercato fermo. Se per un esito
+    nessun bookmaker era presente alla giocata, l'esito resta com'e'
+    (serve comunque alla normalizzazione della fair probability)."""
+    bet_at = _as_utc(bet_captured_at)
+    if bet_at is None:
+        return per_bookmaker
+    at_bet: set[tuple[str, str]] = set()
+    for snapshot in snapshots:
+        captured = _as_utc(snapshot.get("captured_at"))
+        if captured is not None and captured <= bet_at:
+            at_bet.add((str(snapshot.get("bookmaker") or "unknown"), _outcome_key(market, snapshot.get("outcome"))))
+    quoted_outcomes = {outcome for _, outcome in at_bet}
+    return [
+        row
+        for row in per_bookmaker
+        if _outcome_key(market, row.get("outcome")) not in quoted_outcomes
+        or (str(row.get("bookmaker") or "unknown"), _outcome_key(market, row.get("outcome"))) in at_bet
+    ]
+
+
 @dataclass
 class _ClosingState:
     """Baseline di chiusura piu' il motivo per cui manca e, per ogni esito
@@ -137,6 +169,7 @@ def _closing_state(
     period: str = "full_time",
     line: Optional[str] = None,
     snapshot_repo: Optional[OddsSnapshotRepository] = None,
+    bet_captured_at: Optional[datetime] = None,
 ) -> _ClosingState:
     if kickoff_at is None:
         return _ClosingState(baseline=None, reason_code=REASON_MISSING_KICKOFF)
@@ -158,6 +191,7 @@ def _closing_state(
     # qui SEMPRE vera per costruzione) — "closing" per ogni bookmaker/outcome
     # e' per costruzione l'ultimo snapshot con captured_at <= kickoff_at.
     per_bookmaker = build_opening_latest_closing(snapshots, as_of=kickoff_at, kickoff_at=kickoff_at)
+    per_bookmaker = _restrict_to_bet_bookmakers(per_bookmaker, snapshots, market, bet_captured_at)
 
     closing_odds_by_outcome: dict[str, list[float]] = {}
     captured_at_by_outcome: dict[str, datetime] = {}
@@ -294,8 +328,10 @@ def build_clv_result(
     snapshot di chiusura dell'esito e' PIU' RECENTE, la "chiusura" sarebbe
     la stessa quota della giocata (CLV = 0 per costruzione, nessuna
     informazione sul mercato): il CLV risulta non disponibile
-    (`closing_not_after_bet`) invece di un falso zero. Senza nessuno dei due
-    (backtest) il comportamento resta quello storico."""
+    (`closing_not_after_bet`) invece di un falso zero. Con
+    `bet_captured_at` la media di chiusura usa gli stessi bookmaker che
+    quotavano l'esito alla giocata (`_restrict_to_bet_bookmakers`). Senza
+    nessuno dei due (backtest) il comportamento resta quello storico."""
     pricing_market = pricing_market_for(market)
     base = {
         "market": market,
@@ -330,6 +366,7 @@ def build_clv_result(
         period=period,
         line=line,
         snapshot_repo=snapshot_repo,
+        bet_captured_at=bet_captured_at,
     )
     if state.baseline is None:
         return _unavailable(state.reason_code or REASON_NO_SNAPSHOTS)
