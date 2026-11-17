@@ -188,6 +188,22 @@ class PredictionSnapshotService:
         }
 
     @staticmethod
+    def _with_defaulted_features(entry: dict[str, Any], absent: list[str]) -> dict[str, Any]:
+        """Additivo: dichiara le feature attese dal modello e assenti dal frame,
+        riempite con 0.0 (le probabilita' non cambiano, il training nemmeno).
+
+        Presente ogni volta che il frame di feature viene costruito: calcolo
+        nuovo, oppure snapshot riusato di una partita NON conclusa (stesso
+        fingerprint = stesse colonne assenti). Assente quando lo snapshot e'
+        servito senza ricostruire il frame (partite concluse, liste storiche
+        con `allow_compute=False`): la tabella non conserva questa informazione
+        e non si dichiara cio' che non si e' verificato."""
+        if absent:
+            entry["features_defaulted"] = absent[:20]
+            entry["features_defaulted_count"] = len(absent)
+        return entry
+
+    @staticmethod
     def _iso_utc(value: Any) -> Optional[str]:
         if not isinstance(value, datetime):
             return None
@@ -315,7 +331,7 @@ class PredictionSnapshotService:
                     and existing.feature_fingerprint == fingerprint
                     and existing.model_run_id == model_run_id
                 ):
-                    payload[market] = self._entry_from_snapshot(existing)
+                    payload[market] = self._with_defaulted_features(self._entry_from_snapshot(existing), absent)
                     continue
 
             try:
@@ -333,13 +349,7 @@ class PredictionSnapshotService:
                 "run_id": model_run_id,
                 "computed_at": computed_at.isoformat(),
             }
-            if absent:
-                # Additivo: feature attese dal modello e assenti dal frame, riempite
-                # con 0.0 (le probabilita' non cambiano). Solo per i calcoli appena
-                # fatti: lo snapshot salvato non conserva questa informazione.
-                entry["features_defaulted"] = absent[:20]
-                entry["features_defaulted_count"] = len(absent)
-            payload[market] = entry
+            payload[market] = self._with_defaulted_features(entry, absent)
 
             self.repo.save(
                 MatchPredictionSnapshot(

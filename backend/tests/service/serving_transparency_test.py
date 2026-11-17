@@ -9,7 +9,9 @@
 Sono tutti campi in piu': `markets_unavailable` e le chiavi esistenti di ogni
 previsione non cambiano."""
 
+import json
 import unittest
+import uuid
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest import mock
@@ -21,7 +23,7 @@ from sqlalchemy.pool import StaticPool
 
 from src.api.dashboard_service import DashboardService
 from src.ml.serving.prediction_snapshot_service import PredictionSnapshotService
-from src.service_ia.model.match import Base, MatchPredictionSnapshot
+from src.service_ia.model.match import Base, Match, MatchPredictionSnapshot
 from src.storage import bucket_store
 
 
@@ -375,6 +377,177 @@ class TestMotivoMancanzaModello(unittest.TestCase):
         self.assertEqual(entry["features_defaulted_count"], 2)
         self.assertEqual(entry["probability"], 0.7)
         self.assertEqual(float(seen["X"]["mean_expected_goals_home_stat"].iloc[0]), 0.0)
+
+    def _servizio_con_feature_assenti(self, engine, chiamate):
+        model_path = "best_models/h2h/trasparenza_riuso_test.pkl"
+        bucket_store.put_json(model_path, {"placeholder": True})
+        frame = pd.DataFrame(
+            [{"id_fixture": 11, "season": 2026, "league": 39, "market": "h2h", "prediction_at": "2026-09-09", "odds_avg": 1.8}]
+        )
+
+        class _Model:
+            def predict_proba(self, X):
+                chiamate.append(1)
+                return [[0.3, 0.7]]
+
+        service = PredictionSnapshotService()
+        service.filter_service = _FakeFilterService({"h2h": frame})
+        service.registry = mock.Mock()
+        service.registry.get_production = lambda market: {
+            "model_path": model_path,
+            "model_name": "logistic",
+            "run_id": "r",
+            "feature_names": ["odds_avg", "mean_expected_goals_home_stat"],
+        }
+        service.registry.get_latest = lambda market: None
+        return service, _Model
+
+    def test_snapshot_riusato_di_partita_non_conclusa_dichiara_le_stesse_feature(self):
+        """Seconda lettura con le stesse feature: nessuna nuova inferenza, ma il
+        frame viene ricostruito e le colonne assenti sono note - la
+        dichiarazione non deve sparire solo perche' la riga e' riusata."""
+        engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+        Base.metadata.create_all(engine)
+        chiamate: list[int] = []
+        with mock.patch(
+            "src.repository.match_prediction_snapshot_repository.SessionLocal",
+            new=sessionmaker(bind=engine, expire_on_commit=False),
+        ):
+            service, modello = self._servizio_con_feature_assenti(engine, chiamate)
+            with mock.patch.object(PredictionSnapshotService, "_load_model", classmethod(lambda cls, path: modello())):
+                prima = service.resolve_predictions(fixture_id=11, markets=["h2h"], status="NS")["h2h"]
+                seconda = service.resolve_predictions(fixture_id=11, markets=["h2h"], status="NS")["h2h"]
+                # Partita conclusa: snapshot servito SENZA ricostruire il frame,
+                # quindi nessuna dichiarazione (non verificata in questa lettura).
+                conclusa = service.resolve_predictions(fixture_id=11, markets=["h2h"], status="FT")["h2h"]
+        self.assertEqual(len(chiamate), 1)
+        self.assertEqual(seconda["computed_at"], prima["computed_at"])
+        self.assertEqual(seconda["probability"], prima["probability"])
+        for entry in (prima, seconda):
+            self.assertEqual(entry["features_defaulted"], ["mean_expected_goals_home_stat"])
+            self.assertEqual(entry["features_defaulted_count"], 1)
+        self.assertNotIn("features_defaulted", conclusa)
+        self.assertEqual(conclusa["probability"], prima["probability"])
+
+    def test_nessuna_feature_assente_nessun_campo_in_piu(self):
+        engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+        Base.metadata.create_all(engine)
+        with mock.patch(
+            "src.repository.match_prediction_snapshot_repository.SessionLocal",
+            new=sessionmaker(bind=engine, expire_on_commit=False),
+        ):
+            service, modello = self._servizio_con_feature_assenti(engine, [])
+            service.registry.get_production = lambda market: {
+                "model_path": "best_models/h2h/trasparenza_riuso_test.pkl",
+                "model_name": "logistic",
+                "run_id": "r",
+                "feature_names": ["odds_avg"],
+            }
+            with mock.patch.object(PredictionSnapshotService, "_load_model", classmethod(lambda cls, path: modello())):
+                entry = service.resolve_predictions(fixture_id=11, markets=["h2h"], status="NS")["h2h"]
+        self.assertEqual(set(entry), {"prediction", "probability", "model_name", "run_id", "computed_at"})
+
+
+class TestCampiNelleRigheServite(unittest.TestCase):
+    """I campi aggiuntivi arrivano davvero nelle righe che gli endpoint
+    restituiscono (`/dashboard/day`, `/dashboard/live`, `/dashboard/bundle`:
+    `rows[]`; `/dashboard/match/{id}`: `fixture`) e passano gli schemi."""
+
+    def setUp(self):
+        DashboardService._model_reason_cache.clear()
+        self.addCleanup(DashboardService._model_reason_cache.clear)
+
+    def _db_match(self, **overrides):
+        base = dict(
+            id_match_fk=str(uuid.uuid4()),
+            id_fixture=501,
+            date_match="2099-09-01T18:00:00+00:00",
+            status="NS",
+            id_team_home=10,
+            id_team_away=20,
+            name_home="Inter",
+            name_away="Milan",
+            mean_statistics=[
+                {"id_team": 10, "mean_expected_goals": 1.6},
+                {"id_team": 20, "mean_expected_goals": 0.0},
+            ],
+        )
+        base.update(overrides)
+        match = Match(**base)
+        match.statistics = []
+        match.odds = []
+        return match
+
+    def test_riga_da_db_porta_motivi_e_qualita_dei_dati(self):
+        service = DashboardService()
+        service._predict_fixture = lambda **kwargs: {
+            "h2h": {"prediction": 1, "probability": 0.7, "computed_at": "2026-11-17T09:00:00+00:00"}
+        }
+        row = service._serialize_match(self._db_match(), with_predictions=True, markets=["h2h", "goal_no_goal"])
+
+        # Registry vuoto nel bucket di test: per goal_no_goal non esiste alcun modello.
+        self.assertEqual(row["markets_missing_reasons"], {"goal_no_goal": "no_model_registered"})
+        self.assertEqual(
+            row["data_quality"],
+            {"odds_available": False, "team_statistics_available": True, "xg_available": False},
+        )
+        # Campi storici invariati.
+        self.assertEqual(row["markets_unavailable"], [])
+        self.assertEqual(row["predictions"]["h2h"]["probability"], 0.7)
+        self.assertEqual(row["predictions"]["h2h"]["computed_at"], "2026-11-17T09:00:00+00:00")
+
+    def test_riga_senza_previsioni_ha_i_default(self):
+        service = DashboardService()
+        row = service._serialize_match(self._db_match(), with_predictions=False, markets=[])
+        self.assertEqual(row["markets_missing_reasons"], {})
+        self.assertEqual(row["markets_unavailable"], [])
+        self.assertIn("data_quality", row)
+
+    def test_riga_da_feed_api_senza_partita_nel_db(self):
+        service = DashboardService()
+        fixture = {
+            "fixture": {"id": 502, "date": "2099-09-01T18:45:00+00:00", "status": {"short": "NS"}},
+            "league": {"id": 135, "name": "Serie A"},
+            "teams": {"home": {"name": "Roma"}, "away": {"name": "Lazio"}},
+            "goals": {"home": None, "away": None},
+        }
+        service._predict_fixture = lambda **kwargs: {}
+        service._snapshot_service = mock.Mock()
+        service._snapshot_service.explain_missing_market = lambda market: None
+        row = service._serialize_api_fixture(fixture, with_predictions=True, markets=["h2h"], db_match=None)
+        self.assertEqual(row["markets_missing_reasons"], {"h2h": "match_not_in_db"})
+        self.assertIsNone(row["data_quality"])
+
+    def test_le_righe_passano_gli_schemi_e_sono_json(self):
+        from src.api.schemas import DashboardDayResponse, DashboardLiveResponse, DashboardMatchDetailResponse
+
+        service = DashboardService()
+        service._predict_fixture = lambda **kwargs: {
+            "h2h": {
+                "prediction": 1,
+                "probability": 0.7,
+                "model_name": "logistic",
+                "run_id": "r1",
+                "computed_at": "2026-11-17T09:00:00+00:00",
+                "features_defaulted": ["mean_expected_goals_home_stat"],
+                "features_defaulted_count": 1,
+            }
+        }
+        row = service._serialize_match(self._db_match(), with_predictions=True, markets=["h2h", "dc"])
+        for schema in (DashboardDayResponse, DashboardLiveResponse):
+            payload = schema(date="2099-09-01", total=1, returned=1, model_markets=["h2h", "dc"], rows=[row])
+            dumped = json.loads(payload.model_dump_json())["rows"][0]
+            self.assertEqual(dumped["markets_missing_reasons"], {"dc": "no_model_registered"})
+            self.assertEqual(dumped["data_quality"]["xg_available"], False)
+            self.assertEqual(dumped["predictions"]["h2h"]["features_defaulted_count"], 1)
+        detail = DashboardMatchDetailResponse(
+            fixture=row, timeline=[], odds_summary={}, decision_cards=[], predictions=row["predictions"],
+            model_markets=["h2h", "dc"],
+        )
+        dumped = json.loads(detail.model_dump_json())
+        self.assertEqual(dumped["fixture"]["markets_missing_reasons"], {"dc": "no_model_registered"})
+        self.assertEqual(dumped["predictions"]["h2h"]["computed_at"], "2026-11-17T09:00:00+00:00")
+        self.assertEqual(dumped["predictions"]["h2h"]["features_defaulted"], ["mean_expected_goals_home_stat"])
 
 
 if __name__ == "__main__":
