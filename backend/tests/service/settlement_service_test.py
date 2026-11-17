@@ -1,5 +1,6 @@
 import unittest
 from typing import Any
+from unittest import mock
 
 from src.service_ia.model.match import Match, Odds, Statistics
 from src.service_ia.pre_processing.settlement_service import (
@@ -138,6 +139,105 @@ class TestSettlementService(unittest.TestCase):
         self.assertEqual(report_1["updated"], 2)
         self.assertEqual(report_2["unchanged"], 2)
         self.assertEqual(hook.calls, 1)
+
+
+class TestSettlementConQuotaEsaurita(unittest.TestCase):
+    """`data_settlement` non viene messo in pausa a quota esaurita (deve
+    continuare a riconciliare ledger e schedine), ma il suo primo passo e' un
+    import da API-Sports. A quota esaurita OGGI quell'import va saltato: la
+    riconciliazione prosegue sui dati gia' a DB."""
+
+    def _service(self, *, exhausted, import_calls, match_repo=None):
+        def import_runner(**kwargs):
+            import_calls.append(kwargs)
+            return {"ok": True}
+
+        return SettlementService(
+            match_repo=match_repo or FakeMatchRepo(matches=[_complete_match(), _incomplete_match()]),
+            snapshot_repo=FakeSnapshotRepo(counts_by_fixture={1001: 2, 1002: 0}),
+            import_runner=import_runner,
+            quota_exhausted_check=exhausted,
+        )
+
+    def test_quota_esaurita_salta_import_ma_riconcilia_dal_db(self):
+        import_calls: list[dict[str, Any]] = []
+        match_repo = FakeMatchRepo(matches=[_complete_match(), _incomplete_match()])
+        service = self._service(exhausted=lambda: True, import_calls=import_calls, match_repo=match_repo)
+        hook = CountingHook()
+
+        report = service.run_settlement(
+            from_date="2026-09-01", to_date="2026-09-01", seasons=[2026], leagues=[135], hook=hook
+        )
+
+        self.assertEqual(import_calls, [])
+        self.assertTrue(report["provider_import_skipped"])
+        self.assertEqual(
+            report["import_report"], {"skipped": True, "reason": "api_sports_quota_exhausted_today"}
+        )
+        # La parte locale gira comunque: finestra interrogata, match aggiornati, hook chiamato.
+        self.assertEqual(len(match_repo.finestre), 1)
+        self.assertEqual(report["final_matches_seen"], 2)
+        self.assertEqual(report["updated"], 2)
+        self.assertEqual(hook.calls, 1)
+
+    def test_quota_esaurita_non_costruisce_il_provider(self):
+        import_calls: list[dict[str, Any]] = []
+        service = self._service(exhausted=lambda: True, import_calls=import_calls)
+        with mock.patch(
+            "src.service_ia.pre_processing.settlement_service.get_api_sports_provider"
+        ) as get_provider:
+            service.run_settlement(from_date="2026-09-01", to_date="2026-09-01")
+        get_provider.assert_not_called()
+
+    def test_quota_disponibile_importa_come_prima(self):
+        import_calls: list[dict[str, Any]] = []
+        service = self._service(exhausted=lambda: False, import_calls=import_calls)
+        provider = object()
+
+        report = service.run_settlement(
+            from_date="2026-09-01", to_date="2026-09-01", seasons=[2026], leagues=[135], provider=provider
+        )
+
+        self.assertEqual(len(import_calls), 1)
+        self.assertIs(import_calls[0]["provider"], provider)
+        self.assertEqual(import_calls[0]["statuses"], "FT-AET-PEN-ABD")
+        self.assertFalse(report["provider_import_skipped"])
+        self.assertEqual(report["import_report"], {"ok": True})
+
+    def test_stato_quota_illeggibile_non_blocca_il_settlement(self):
+        import_calls: list[dict[str, Any]] = []
+
+        def esplode():
+            raise RuntimeError("bucket non raggiungibile")
+
+        service = self._service(exhausted=esplode, import_calls=import_calls)
+        report = service.run_settlement(from_date="2026-09-01", to_date="2026-09-01", provider=object())
+
+        self.assertEqual(len(import_calls), 1)
+        self.assertFalse(report["provider_import_skipped"])
+
+    def test_provider_status_dichiarato_nel_report(self):
+        """`provider_status` (campo aggiuntivo): `quota_exhausted` sia quando
+        l'import e' saltato sia quando la quota finisce DURANTE l'import
+        (`download_import_matches` non solleva, segna `quota_exceeded`)."""
+        casi = [
+            (lambda: True, {"ok": True}, "quota_exhausted", True),
+            (lambda: False, {"ok": True}, "ok", False),
+            (lambda: False, {"quota_exceeded": True, "failed_leagues": 0}, "quota_exhausted", False),
+            (lambda: False, {"quota_exceeded": False, "failed_leagues": 2}, "unavailable", False),
+        ]
+        for exhausted, import_report, atteso, saltato in casi:
+            service = SettlementService(
+                match_repo=FakeMatchRepo(matches=[_complete_match()]),
+                snapshot_repo=FakeSnapshotRepo(counts_by_fixture={1001: 2}),
+                import_runner=lambda **kwargs: import_report,
+                quota_exhausted_check=exhausted,
+            )
+            report = service.run_settlement(from_date="2026-09-01", to_date="2026-09-01", provider=object())
+            self.assertEqual(report["provider_status"], atteso, import_report)
+            self.assertEqual(report["provider_import_skipped"], saltato)
+            # La riconciliazione locale gira in ogni caso.
+            self.assertEqual(report["final_matches_seen"], 1)
 
 
 if __name__ == "__main__":

@@ -7,6 +7,7 @@ import json
 import os
 import re
 import threading
+import time as _time
 from typing import Any, Optional
 from zoneinfo import ZoneInfo
 
@@ -242,6 +243,124 @@ class DashboardService:
             return []
         odds_obj = db_match.odds[0].to_dict()
         return [m for m in missing if not odds_obj.get(self._LINE_MARKET_ODDS_COLUMN.get(m, m))]
+
+    # Motivi per cui un mercato registrato non ha una previsione. Campo
+    # aggiuntivo (`markets_missing_reasons`): `markets_unavailable` resta
+    # com'era, perche' il frontend lo usa per il badge "In coda".
+    REASON_MATCH_NOT_IN_DB = "match_not_in_db"
+    REASON_NO_ODDS_ROW = "no_odds_row"
+    REASON_NO_ODDS_FOR_MARKET = "no_odds_for_market"
+    REASON_NOT_COMPUTED = "not_computed"
+
+    def _markets_missing_reasons(
+        self, db_match: Optional[Match], markets: list[str], predictions: dict[str, Any]
+    ) -> dict[str, str]:
+        """Per ogni mercato richiesto e SENZA previsione dice il motivo che
+        si puo' verificare dai dati gia' in memoria (nessuna query, nessuna
+        chiamata esterna). Un solo motivo per mercato, nell'ordine:
+
+        - `no_model_registered` / `model_retired` / `model_file_missing`: il
+          registry non offre un modello utilizzabile. Viene PRIMA di tutto il
+          resto perche' non dipende dalla partita: finche' non cambia, nessuna
+          quota e nessun dato faranno comparire la previsione;
+        - `match_not_in_db`: la partita non e' ancora nel DB locale;
+        - `no_odds_row`: la partita non ha alcuna riga quote;
+        - `no_odds_for_market`: le quote ci sono ma non per questo mercato
+          (stesso criterio di `_markets_without_odds`);
+        - `not_computed`: modello e quote presenti, previsione no - feature
+          insufficienti, inferenza fallita o calcolo non ancora eseguito."""
+        missing = [m for m in markets if m not in predictions]
+        if not missing:
+            return {}
+        odds_obj: Optional[dict[str, Any]] = None
+        reasons: dict[str, str] = {}
+        for market in missing:
+            model_reason = self._model_reason(market)
+            if model_reason:
+                reasons[market] = model_reason
+            elif db_match is None:
+                reasons[market] = self.REASON_MATCH_NOT_IN_DB
+            elif not db_match.odds:
+                reasons[market] = self.REASON_NO_ODDS_ROW
+            else:
+                if odds_obj is None:
+                    odds_obj = db_match.odds[0].to_dict()
+                has_odds = odds_obj.get(self._LINE_MARKET_ODDS_COLUMN.get(market, market))
+                reasons[market] = self.REASON_NOT_COMPUTED if has_odds else self.REASON_NO_ODDS_FOR_MARKET
+        return reasons
+
+    _MODEL_REASON_TTL_SECONDS = 60.0
+    _model_reason_cache: dict[str, tuple[float, Optional[str]]] = {}
+
+    def _model_reason(self, market: str) -> Optional[str]:
+        """`no_model_registered` / `model_retired` / `model_file_missing` se il
+        registry non offre un modello utilizzabile per `market`, altrimenti
+        `None`. Cache breve di classe: la lista giornata chiede lo stesso
+        mercato per decine di righe."""
+        explain = getattr(getattr(self, "_snapshot_service", None), "explain_missing_market", None)
+        if explain is None:
+            return None
+        now = _time.monotonic()
+        hit = DashboardService._model_reason_cache.get(market)
+        if hit is not None and now - hit[0] < self._MODEL_REASON_TTL_SECONDS:
+            return hit[1]
+        reason = explain(market)
+        # Solo una stringa non vuota e' un motivo: qualunque altro valore
+        # (registry illeggibile, servizio sostituito nei test) vale "nessun
+        # motivo dal lato modello".
+        reason = reason if isinstance(reason, str) and reason else None
+        DashboardService._model_reason_cache[market] = (now, reason)
+        return reason
+
+    @staticmethod
+    def _row_data_quality(db_match: Optional[Match]) -> Optional[dict[str, Any]]:
+        """Disponibilita' REALE degli input pre-partita, letta dalla riga del
+        match gia' caricata. `None` se la partita non e' nel DB: non si
+        dichiara nulla che non si possa verificare.
+
+        `team_statistics_available` usa la STESSA risoluzione del serving
+        (`FilterMarketService._resolve_mean_stats`: medie di entrambe le
+        squadre, trovate per `id_team`): quando e' falso il modello non riceve
+        alcuna feature `mean_*` e quelle attese valgono 0.0.
+
+        `xg_available` e' vero solo se la media xG pre-partita e' un numero
+        MAGGIORE DI ZERO per entrambe le squadre. Lo zero conta come dato
+        mancante: `calculate_mean` azzera l'xG assente PRIMA di fare la media
+        (`download_match_service.py`, `get_value`), quindi "xG mai rilevato"
+        arriva qui come `mean_expected_goals = 0.0`, non come `None` (export
+        `h2h_raw.csv`: zero per almeno una squadra in 7.163 righe su 15.749,
+        `None` in 200). Limite dichiarato: se l'xG manca solo in ALCUNE delle
+        partite precedenti la media e' positiva ma sottostimata, e da qui non
+        si puo' riconoscere. Il campo descrive i dati, non cambia la
+        previsione."""
+        if db_match is None:
+            return None
+        try:
+            mean_home, mean_away = FilterMarketService._resolve_mean_stats(
+                {
+                    "mean_statistics": getattr(db_match, "mean_statistics", None),
+                    "id_team_home": getattr(db_match, "id_team_home", None),
+                    "id_team_away": getattr(db_match, "id_team_away", None),
+                }
+            )
+        except Exception:  # noqa: BLE001 - JSON malformato: nessuna media utilizzabile
+            mean_home, mean_away = None, None
+        stats_available = isinstance(mean_home, dict) and isinstance(mean_away, dict) and bool(mean_home) and bool(mean_away)
+
+        def _positive_number(value: Any) -> bool:
+            try:
+                return value is not None and float(value) > 0.0
+            except (TypeError, ValueError):
+                return False
+
+        xg_available = stats_available and all(
+            _positive_number(team.get("mean_expected_goals")) for team in (mean_home, mean_away)
+        )
+        return {
+            "odds_available": bool(db_match.odds),
+            "team_statistics_available": bool(stats_available),
+            "xg_available": bool(xg_available),
+        }
 
     @classmethod
     def _cache_get(cls, key: str, ttl_seconds: Optional[int] = None) -> Optional[Any]:
@@ -1410,6 +1529,8 @@ class DashboardService:
             # (vedi `_markets_without_odds`) - default vuoto finche' non
             # calcolato, stesso pattern di `predictions`.
             "markets_unavailable": [],
+            "markets_missing_reasons": {},
+            "data_quality": self._row_data_quality(db_match),
             # MATCH-01: badge decision/edge/EV per la vista lista, vedi
             # `_decisions_for_row` - default vuoto finche' non calcolato.
             "decision_cards": [],
@@ -1430,6 +1551,7 @@ class DashboardService:
                 self._annotate_prediction_correctness(predictions, stat_home, stat_away, has_full_stats)
             row["predictions"] = predictions
             row["markets_unavailable"] = self._markets_without_odds(db_match, markets, predictions)
+            row["markets_missing_reasons"] = self._markets_missing_reasons(db_match, markets, predictions)
             row["decision_cards"], row["best_decision"] = self._decisions_for_row(
                 row=row, predictions=predictions, db_match=db_match
             )
@@ -1658,6 +1780,8 @@ class DashboardService:
             # (vedi `_markets_without_odds`) - default vuoto finche' non
             # calcolato, stesso pattern di `predictions`.
             "markets_unavailable": [],
+            "markets_missing_reasons": {},
+            "data_quality": self._row_data_quality(match),
             # MATCH-01: badge decision/edge/EV per la vista lista, vedi
             # `_decisions_for_row` - default vuoto finche' non calcolato.
             "decision_cards": [],
@@ -1678,6 +1802,7 @@ class DashboardService:
                 self._annotate_prediction_correctness(predictions, stat_home, stat_away, has_full_stats)
             row["predictions"] = predictions
             row["markets_unavailable"] = self._markets_without_odds(match, markets, predictions)
+            row["markets_missing_reasons"] = self._markets_missing_reasons(match, markets, predictions)
             # Riga gia' dal DB locale: `match.odds` e' gia' caricato via
             # `selectinload` dalla query unica di `_fetch_matches` (nessuna
             # nuova query/fetch per calcolare il badge decision).
@@ -2118,6 +2243,8 @@ class DashboardService:
             self._annotate_prediction_correctness(predictions, stat_home, stat_away, has_full_stats)
         fixture_row["predictions"] = predictions
         fixture_row["markets_unavailable"] = self._markets_without_odds(db_match, model_markets, predictions)
+        fixture_row["markets_missing_reasons"] = self._markets_missing_reasons(db_match, model_markets, predictions)
+        fixture_row["data_quality"] = self._row_data_quality(db_match)
 
         events = self._fetch_api_events(fixture_id, long_ttl=fixture_row.get("phase") == "finished")
         timeline = self._serialize_events(events)

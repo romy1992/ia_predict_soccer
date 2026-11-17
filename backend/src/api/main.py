@@ -123,6 +123,7 @@ from src.jobs.job_settings import (
     list_job_definitions,
     reset_job_schedule,
     resolve_job_schedule,
+    remember_operator_toggles_during_pause,
     sync_job_settings_with_quota,
     update_job_schedule,
     update_job_settings,
@@ -2015,6 +2016,7 @@ def post_settings_jobs(payload: JobSettingsUpdateRequest) -> JobSettingsResponse
         update_job_settings(payload.updates)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    remember_operator_toggles_during_pause(payload.updates)
     sync_job_settings_with_quota()
     pause_state = get_quota_pause_state()
     return JobSettingsResponse(

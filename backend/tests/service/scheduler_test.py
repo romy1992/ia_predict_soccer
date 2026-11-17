@@ -451,6 +451,12 @@ class TestRunIfDue(unittest.TestCase):
     """`_run_if_due` combina enabled (Impostazioni) + due (`_is_job_due`) -
     entrambi devono essere veri perche' la funzione reale venga chiamata."""
 
+    def setUp(self):
+        # Il riallineamento quota legge il bucket: qui non e' l'oggetto del test.
+        patcher = mock.patch.object(scheduler_module, "sync_job_settings_with_quota", return_value=False)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_skips_when_disabled_even_if_due(self):
         called = []
         with mock.patch.object(scheduler_module, "is_job_enabled", return_value=False), \
@@ -489,6 +495,221 @@ class TestRunIfDue(unittest.TestCase):
             result = scheduler_module._run_if_due("data_daily_refresh", fake, cfg=_cfg(), days_ahead=7)
         self.assertEqual(received["days_ahead"], 7)
         self.assertEqual(result, "done")
+
+
+class TestQuotaSyncInScheduler(unittest.TestCase):
+    """Lo scheduler riallinea l'auto-pausa per quota esaurita PRIMA di
+    valutare un job che chiama API-Sports. Prima succedeva solo aprendo la
+    pagina Impostazioni: a quota esaurita gli import continuavano a partire
+    e, dopo il reset UTC, i job restavano in pausa finche' qualcuno non
+    riapriva quella pagina."""
+
+    def setUp(self):
+        scheduler_module._last_quota_sync_monotonic = None
+        self.addCleanup(setattr, scheduler_module, "_last_quota_sync_monotonic", None)
+
+    def test_sync_chiamata_prima_del_controllo_enabled_per_job_sensibili(self):
+        ordine = []
+        with mock.patch.object(
+            scheduler_module, "sync_job_settings_with_quota", side_effect=lambda: ordine.append("sync") or True
+        ), mock.patch.object(
+            scheduler_module, "is_job_enabled", side_effect=lambda job_id: ordine.append("enabled") or False
+        ), mock.patch.object(scheduler_module, "_is_job_due", return_value=True):
+            result = scheduler_module._run_if_due("data_sync_today", lambda: {"ran": True}, cfg=_cfg())
+        self.assertIsNone(result)
+        self.assertEqual(ordine, ["sync", "enabled"])
+
+    def test_job_messo_in_pausa_dalla_sync_non_viene_eseguito(self):
+        """Scenario completo: la sync rileva quota esaurita e disattiva il
+        job; `is_job_enabled`, letto DOPO, lo vede disattivato."""
+        stato = {"data_sync_today": True}
+        chiamato = []
+
+        def fake_sync():
+            stato["data_sync_today"] = False
+            return True
+
+        with mock.patch.object(scheduler_module, "sync_job_settings_with_quota", side_effect=fake_sync), \
+             mock.patch.object(scheduler_module, "is_job_enabled", side_effect=lambda job_id: stato[job_id]), \
+             mock.patch.object(scheduler_module, "_is_job_due", return_value=True):
+            result = scheduler_module._run_if_due(
+                "data_sync_today", lambda: chiamato.append(True) or {"ran": True}, cfg=_cfg()
+            )
+        self.assertIsNone(result)
+        self.assertEqual(chiamato, [])
+
+    def test_job_ripristinato_dalla_sync_dopo_il_reset_riparte(self):
+        stato = {"data_sync_today": False}
+
+        def fake_sync():
+            stato["data_sync_today"] = True
+            return False
+
+        with mock.patch.object(scheduler_module, "sync_job_settings_with_quota", side_effect=fake_sync), \
+             mock.patch.object(scheduler_module, "is_job_enabled", side_effect=lambda job_id: stato[job_id]), \
+             mock.patch.object(scheduler_module, "_is_job_due", return_value=True):
+            result = scheduler_module._run_if_due("data_sync_today", lambda: {"ran": True}, cfg=_cfg())
+        self.assertEqual(result, {"ran": True})
+
+    def test_job_non_sensibili_alla_quota_non_innescano_la_sync(self):
+        self.assertNotIn("data_settlement", scheduler_module.QUOTA_SENSITIVE_JOB_IDS)
+        with mock.patch.object(scheduler_module, "sync_job_settings_with_quota") as sync, \
+             mock.patch.object(scheduler_module, "is_job_enabled", return_value=True), \
+             mock.patch.object(scheduler_module, "_is_job_due", return_value=True):
+            result = scheduler_module._run_if_due("data_settlement", lambda: {"ran": True}, cfg=_cfg())
+        sync.assert_not_called()
+        self.assertEqual(result, {"ran": True})
+
+    def test_sync_limitata_a_una_volta_per_intervallo(self):
+        orologio = [100.0]
+        with mock.patch.object(scheduler_module.time, "monotonic", side_effect=lambda: orologio[0]), \
+             mock.patch.object(scheduler_module, "sync_job_settings_with_quota") as sync, \
+             mock.patch.object(scheduler_module, "is_job_enabled", return_value=False):
+            scheduler_module._run_if_due("data_sync_today", lambda: None, cfg=_cfg())
+            scheduler_module._run_if_due("data_future_sync", lambda: None, cfg=_cfg())
+            self.assertEqual(sync.call_count, 1)
+            orologio[0] += scheduler_module._QUOTA_SYNC_MIN_INTERVAL_SECONDS + 1
+            scheduler_module._run_if_due("data_sync_today", lambda: None, cfg=_cfg())
+            self.assertEqual(sync.call_count, 2)
+
+    def test_errore_nella_sync_non_ferma_il_job(self):
+        with mock.patch.object(
+            scheduler_module, "sync_job_settings_with_quota", side_effect=RuntimeError("bucket giu'")
+        ), mock.patch.object(scheduler_module, "is_job_enabled", return_value=True), \
+             mock.patch.object(scheduler_module, "_is_job_due", return_value=True):
+            result = scheduler_module._run_if_due("data_sync_today", lambda: {"ran": True}, cfg=_cfg())
+        self.assertEqual(result, {"ran": True})
+
+    def test_job_dello_stesso_tick_aspetta_la_sync_in_corso(self):
+        """I job dello stesso heartbeat girano su thread diversi. Il secondo
+        job sensibile non deve leggere `is_job_enabled` mentre la sync del
+        primo e' ancora in corso (limitata a una per minuto, prima veniva
+        semplicemente SALTATA): altrimenti partirebbe con lo stato pre-pausa."""
+        import threading
+
+        sync_iniziata = threading.Event()
+        lascia_finire = threading.Event()
+        stato = {"data_sync_today": True, "data_future_sync": True}
+        eseguiti = []
+        letture_prima_della_fine_sync = []
+
+        def fake_sync():
+            sync_iniziata.set()
+            self.assertTrue(lascia_finire.wait(timeout=5))
+            for job_id in stato:
+                stato[job_id] = False
+            return True
+
+        def fake_enabled(job_id):
+            if not lascia_finire.is_set():
+                letture_prima_della_fine_sync.append(job_id)
+            return stato[job_id]
+
+        def run(job_id):
+            scheduler_module._run_if_due(job_id, lambda: eseguiti.append(job_id), cfg=_cfg())
+
+        with mock.patch.object(scheduler_module, "sync_job_settings_with_quota", side_effect=fake_sync) as sync, \
+             mock.patch.object(scheduler_module, "is_job_enabled", side_effect=fake_enabled), \
+             mock.patch.object(scheduler_module, "_is_job_due", return_value=True):
+            primo = threading.Thread(target=run, args=("data_sync_today",))
+            primo.start()
+            self.assertTrue(sync_iniziata.wait(timeout=5))
+            secondo = threading.Thread(target=run, args=("data_future_sync",))
+            secondo.start()
+            secondo.join(timeout=0.3)
+            # Il secondo job e' fermo in attesa della sync del primo.
+            self.assertTrue(secondo.is_alive())
+            lascia_finire.set()
+            primo.join(timeout=5)
+            secondo.join(timeout=5)
+
+        self.assertEqual(sync.call_count, 1)
+        self.assertEqual(letture_prima_della_fine_sync, [])
+        self.assertEqual(eseguiti, [])
+
+
+class TestSingleFixtureRefreshEQuota(unittest.TestCase):
+    """`run_single_fixture_refresh` (aggiornamento puntuale di una partita):
+    non passa da `_run_if_due`, quindi l'auto-pausa per quota non lo tocca. A
+    quota esaurita `download_import_matches` non solleva: l'esito va dichiarato
+    in chiaro, e le fasi locali devono girare lo stesso."""
+
+    def _run(self, import_report, *, lock=_no_lock):
+        sessione = mock.MagicMock()
+        riga = mock.Mock(current_league=135, season=2026, date_match="2026-11-15T19:45:00+00:00")
+        sessione.__enter__.return_value.query.return_value.filter.return_value.first.return_value = riga
+        chiamate = {"import": [], "sync": 0}
+
+        def fake_import(**kwargs):
+            chiamate["import"].append(kwargs)
+            return import_report
+
+        def conta_sync(*_a, **_k):
+            chiamate["sync"] += 1
+            return False
+
+        with mock.patch("src.repository.base.repository_db.SessionLocal", return_value=sessione), \
+             mock.patch.object(scheduler_module, "job_lock", lock), \
+             mock.patch.object(scheduler_module, "download_import_matches", side_effect=fake_import), \
+             mock.patch.object(scheduler_module, "sync_job_settings_with_quota", side_effect=conta_sync), \
+             mock.patch.object(scheduler_module, "PredictionLedgerService") as ledger, \
+             mock.patch.object(scheduler_module, "OfficialBetslipService") as betslip, \
+             mock.patch.object(scheduler_module, "BetslipProposalSnapshotService") as shadow, \
+             mock.patch("src.api.dashboard_service.DashboardService") as dashboard, \
+             mock.patch.object(scheduler_module, "run_scorer_predictions", return_value={"ok": True}), \
+             mock.patch.object(scheduler_module, "run_player_cards_predictions", return_value={"ok": True}):
+            ledger.return_value.settle_pending.return_value = {"ledger_settled": 2}
+            betslip.return_value.settle_pending.return_value = {"betslips_settled": 1}
+            shadow.return_value.settle_pending.return_value = {"settled": 0}
+            dashboard.return_value.recompute_predictions.return_value = {"found": True, "predictions": {"h2h": {}}}
+            result = scheduler_module.run_single_fixture_refresh(1234)
+        return result, chiamate, ledger, dashboard
+
+    def test_import_riuscito_dichiara_provider_ok(self):
+        result, chiamate, _, _ = self._run({"fixtures_seen": 1, "updated": 1, "quota_exceeded": False, "failed_leagues": 0})
+        self.assertTrue(result["found"])
+        self.assertEqual(result["provider_status"], "ok")
+        self.assertEqual(result["errors"], {})
+        self.assertEqual(chiamate["import"][0]["only_fixture_ids"], [1234])
+        self.assertEqual(chiamate["import"][0]["leagues"], [135])
+        # L'azione esplicita non passa dal riallineamento quota dello scheduler.
+        self.assertEqual(chiamate["sync"], 0)
+
+    def test_quota_esaurita_dichiarata_in_chiaro_e_fasi_locali_eseguite(self):
+        report = {
+            "fixtures_seen": 0,
+            "updated": 0,
+            "quota_exceeded": True,
+            "failed_leagues": 0,
+            "errors": [{"fixture_id": None, "error": "API-Sports quota esaurita (season=2026, league=135)"}],
+        }
+        result, _, ledger, dashboard = self._run(report)
+        self.assertTrue(result["found"])
+        self.assertEqual(result["provider_status"], "quota_exhausted")
+        self.assertIn("quota giornaliera esaurita", result["errors"]["import"])
+        # Il report originale dell'import resta invariato (campi solo aggiunti).
+        self.assertEqual(result["import"], report)
+        # Settlement e ricalcolo predizioni girano comunque sui dati gia' a DB.
+        ledger.return_value.settle_pending.assert_called_once()
+        dashboard.return_value.recompute_predictions.assert_called_once_with(fixture_id=1234)
+        self.assertEqual(result["settlement"]["ledger_settled"], 2)
+
+    def test_provider_non_disponibile_dichiarato_in_chiaro(self):
+        result, _, _, _ = self._run({"fixtures_seen": 0, "quota_exceeded": False, "failed_leagues": 1})
+        self.assertEqual(result["provider_status"], "unavailable")
+        self.assertIn("non disponibile", result["errors"]["import"])
+
+    def test_lock_occupato_resta_skipped_busy(self):
+        @contextlib.contextmanager
+        def occupato(*_a, **_k):
+            yield False
+
+        result, chiamate, _, _ = self._run({"quota_exceeded": False}, lock=occupato)
+        self.assertTrue(result["skipped_busy"])
+        self.assertEqual(chiamate["import"], [])
+
+    def test_esito_import_da_report_non_dizionario_e_ok(self):
+        self.assertEqual(scheduler_module.provider_import_status(None), ("ok", None))
 
 
 if __name__ == "__main__":

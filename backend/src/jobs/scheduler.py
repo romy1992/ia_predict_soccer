@@ -3,6 +3,7 @@ from __future__ import annotations
 import functools
 import logging
 import os
+import threading
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -17,7 +18,13 @@ from src.data.live.live_sync_job import run_manual_live_sync
 from src.data.quality_report_service import DataQualityService
 from src.jobs.job_history import JobHistory
 from src.jobs.job_lock import LOCK_IMPORT_MATCH, job_lock
-from src.jobs.job_settings import JOB_DEFINITIONS, is_job_enabled, resolve_job_schedule
+from src.jobs.job_settings import (
+    JOB_DEFINITIONS,
+    QUOTA_SENSITIVE_JOB_IDS,
+    is_job_enabled,
+    resolve_job_schedule,
+    sync_job_settings_with_quota,
+)
 from src.ml.datasets.point_in_time_builder import FINAL_STATUSES
 from src.ml.ensemble.model_consensus import build_model_consensus_for_fixture
 from src.ml.experts.team_strength.team_strength_expert import TeamStrengthExpert
@@ -32,7 +39,11 @@ from src.repository.model_consensus_snapshot_repository import ModelConsensusSna
 from src.repository.team_rating_repository import TeamRatingRepository
 from src.service_ia.config.app_config import AppConfig, load_app_config
 from src.service_ia.model.match import Match, Statistics
-from src.service_ia.pre_processing.download_match_service import calculate_mean, download_import_matches
+from src.service_ia.pre_processing.download_match_service import (
+    calculate_mean,
+    download_import_matches,
+    provider_import_status,
+)
 from src.service_ia.pre_processing.settlement_service import SettlementService
 from src.service_ia.training.model_registry import ModelRegistry
 from src.service_ia.training.train_multi_market import train_all_markets
@@ -470,7 +481,6 @@ def run_manual_settlement(
 # Stati con cui si importa UNA partita: qualunque, anche non ancora iniziata o in corso.
 _SINGLE_FIXTURE_STATUSES = "TBD-NS-1H-HT-2H-ET-BT-P-SUSP-INT-LIVE-FT-AET-PEN-PST-CANC-ABD-AWD-WO"
 
-
 def run_single_fixture_refresh(fixture_id: int) -> dict:
     """Aggiornamento PUNTUALE di una partita (bottone sulla card, super admin):
 
@@ -481,7 +491,12 @@ def run_single_fixture_refresh(fixture_id: int) -> dict:
     4) aggiorna formazioni, marcatori e cartellini giocatori: fasi "morbide" che lavorano sull'insieme delle
        partite imminenti (non solo questa), idempotenti.
     Le fasi 2-4 sono morbide: se falliscono, i dati importati restano e l'errore e' nel report.
-    Ritorna `{"found": False}` se la partita non e' nel database locale."""
+    Ritorna `{"found": False}` se la partita non e' nel database locale.
+
+    Non passa da `_run_if_due`: l'auto-pausa per quota non lo disattiva (e' un'azione esplicita). A quota
+    esaurita o provider non raggiungibile l'import non solleva: il report lo dichiara con `provider_status`
+    (`ok` / `quota_exhausted` / `unavailable`) e con `errors["import"]`, campi aggiuntivi; le fasi locali
+    (settlement, predizioni) girano comunque sui dati gia' a DB."""
     from src.api.dashboard_service import DashboardService
     from src.repository.base.repository_db import SessionLocal
     from src.service_ia.model.match import Match
@@ -516,6 +531,9 @@ def run_single_fixture_refresh(fixture_id: int) -> dict:
                 statuses=_SINGLE_FIXTURE_STATUSES,
                 only_fixture_ids=[int(fixture_id)],
             )
+            provider_status, provider_message = provider_import_status(import_report)
+            if provider_message:
+                errors["import"] = provider_message
             settlement: dict = {}
 
             def _settle() -> dict:
@@ -534,6 +552,7 @@ def run_single_fixture_refresh(fixture_id: int) -> dict:
             summary = {
                 "fixture_id": int(fixture_id),
                 "import": import_report,
+                "provider_status": provider_status,
                 "settlement": settlement,
                 "predictions": predictions,
                 "scorers": scorers,
@@ -1485,13 +1504,67 @@ def _is_job_due(job_id: str, cfg: AppConfig) -> bool:
     return elapsed >= interval_seconds
 
 
+# Intervallo minimo fra due riallineamenti quota/Impostazioni fatti dallo
+# scheduler. Ogni riallineamento legge due oggetti dal bucket
+# (`api_quota_state.json`, `quota_pause_state.json`; tre a quota esaurita,
+# anche `job_settings.json`) e NON chiama mai il provider. Con i 6 job
+# sensibili alla quota (`QUOTA_SENSITIVE_JOB_IDS`) su un heartbeat di 30s,
+# farlo ad ogni tick di ogni job sarebbero 24-36 letture al minuto per
+# un'informazione che cambia poche volte al giorno: cosi' sono 2-3. 60s
+# bastano perche' la pausa scatti entro due tick.
+_QUOTA_SYNC_MIN_INTERVAL_SECONDS = 60.0
+_last_quota_sync_monotonic: Optional[float] = None
+# I job dello stesso tick girano su thread diversi (executor di APScheduler):
+# chi arriva mentre un riallineamento e' in corso deve ASPETTARLO, non
+# saltarlo, altrimenti legge `is_job_enabled` prima che la pausa sia stata
+# scritta e parte comunque.
+_quota_sync_lock = threading.Lock()
+
+
+def _sync_quota_pause_if_needed(job_id: str) -> None:
+    """Riallinea le Impostazioni con lo stato della quota API-Sports PRIMA
+    di decidere se un job che chiama il provider va eseguito.
+
+    Prima di questa modifica `sync_job_settings_with_quota` veniva chiamata
+    solo dagli endpoint delle Impostazioni (`src/api/main.py`): a quota
+    esaurita lo scheduler continuava a lanciare gli import finche' qualcuno
+    non apriva quella pagina, e - peggio - dopo il reset UTC i job restavano
+    in pausa finche' qualcuno non la riapriva. Ora pausa e ripristino
+    avvengono anche senza alcun intervento.
+
+    Solo per i job in `QUOTA_SENSITIVE_JOB_IDS` (gli altri non sono toccati
+    dalla pausa) e al massimo una volta ogni
+    `_QUOTA_SYNC_MIN_INTERVAL_SECONDS` per processo. Mai un'eccezione
+    propagata: un problema qui non deve fermare il tick."""
+    global _last_quota_sync_monotonic
+    if job_id not in QUOTA_SENSITIVE_JOB_IDS:
+        return
+    with _quota_sync_lock:
+        now = time.monotonic()
+        if (
+            _last_quota_sync_monotonic is not None
+            and now - _last_quota_sync_monotonic < _QUOTA_SYNC_MIN_INTERVAL_SECONDS
+        ):
+            return
+        _last_quota_sync_monotonic = now
+        try:
+            sync_job_settings_with_quota()
+        except Exception as exc:  # la funzione gia' non solleva: difesa in piu'
+            logging.warning("Riallineamento quota/Impostazioni fallito (ignorato): %s", exc)
+
+
 def _run_if_due(job_id: str, func, *, cfg: AppConfig, **kwargs) -> Optional[dict]:
     """Esegue `func` SOLO se il job e' (1) abilitato in `job_settings.json`
     (pagina Impostazioni) E (2) dovuto secondo lo `schedule` corrente
     (`_is_job_due`) - entrambi controllati ad OGNI tick dell'heartbeat, non
     solo alla registrazione: un toggle o un cambio orario da frontend ha
     quindi effetto immediato, senza richiedere il restart del container
-    `scheduler`."""
+    `scheduler`.
+
+    Per i job che chiamano API-Sports, prima del controllo (1) viene
+    riallineata l'auto-pausa per quota esaurita
+    (`_sync_quota_pause_if_needed`)."""
+    _sync_quota_pause_if_needed(job_id)
     if not is_job_enabled(job_id):
         logging.debug("Job '%s' disabilitato da Impostazioni: skip.", job_id)
         return None

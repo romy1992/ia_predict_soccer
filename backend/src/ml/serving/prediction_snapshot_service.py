@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import hashlib
+import logging
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 import numpy as np
@@ -135,6 +137,28 @@ class PredictionSnapshotService:
             return None
         return latest
 
+    REASON_NO_MODEL = "no_model_registered"
+    REASON_MODEL_RETIRED = "model_retired"
+    REASON_MODEL_FILE_MISSING = "model_file_missing"
+
+    def explain_missing_market(self, market: str) -> Optional[str]:
+        """Motivo per cui `market` non puo' avere una previsione dal lato
+        modello, oppure `None` se un modello utilizzabile esiste (allora
+        l'assenza dipende dai dati o dal calcolo). Solo lettura del registry:
+        stessa risoluzione di `resolve_predictions`, nessun caricamento."""
+        try:
+            model_meta = self._latest_model_for_market(market)
+            if not model_meta:
+                latest = self.registry.get_latest(market=market)
+                if latest is not None and latest.get("current_stage") == "retired":
+                    return self.REASON_MODEL_RETIRED
+                return self.REASON_NO_MODEL
+            if not resolve_model_key(model_meta.get("model_path")):
+                return self.REASON_MODEL_FILE_MISSING
+        except Exception:
+            return None
+        return None
+
     @staticmethod
     def _extract_probability(model: Any, X: pd.DataFrame) -> tuple[int, float]:
         if hasattr(model, "predict_proba"):
@@ -158,7 +182,34 @@ class PredictionSnapshotService:
             "probability": float(snapshot.probability),
             "model_name": snapshot.model_name,
             "run_id": snapshot.model_run_id,
+            # Istante REALE in cui questa previsione e' stata calcolata
+            # (colonna `computed_at` dello snapshot), non l'ora della richiesta.
+            "computed_at": PredictionSnapshotService._iso_utc(getattr(snapshot, "computed_at", None)),
         }
+
+    @staticmethod
+    def _with_defaulted_features(entry: dict[str, Any], absent: list[str]) -> dict[str, Any]:
+        """Additivo: dichiara le feature attese dal modello e assenti dal frame,
+        riempite con 0.0 (le probabilita' non cambiano, il training nemmeno).
+
+        Presente ogni volta che il frame di feature viene costruito: calcolo
+        nuovo, oppure snapshot riusato di una partita NON conclusa (stesso
+        fingerprint = stesse colonne assenti). Assente quando lo snapshot e'
+        servito senza ricostruire il frame (partite concluse, liste storiche
+        con `allow_compute=False`): la tabella non conserva questa informazione
+        e non si dichiara cio' che non si e' verificato."""
+        if absent:
+            entry["features_defaulted"] = absent[:20]
+            entry["features_defaulted_count"] = len(absent)
+        return entry
+
+    @staticmethod
+    def _iso_utc(value: Any) -> Optional[str]:
+        if not isinstance(value, datetime):
+            return None
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc).isoformat()
 
     def resolve_predictions(
         self,
@@ -233,6 +284,7 @@ class PredictionSnapshotService:
         for market in markets_needing_compute:
             model_meta = self._latest_model_for_market(market)
             if not model_meta:
+                logging.info("Predizione fixture=%s mercato=%s saltata: nessun modello utilizzabile nel registry", fixture_id, market)
                 continue
 
             # Il percorso del registry viene RISOLTO, non usato alla cieca:
@@ -243,18 +295,30 @@ class PredictionSnapshotService:
             # quello che vince.
             model_key = resolve_model_key(model_meta.get("model_path"))
             if not model_key:
+                logging.warning("Predizione fixture=%s mercato=%s saltata: file modello non trovato (%s)", fixture_id, market, model_meta.get("model_path"))
                 continue
 
             frame = frames.get(market)
             if frame is None or frame.empty:
+                logging.info("Predizione fixture=%s mercato=%s saltata: nessuna riga di feature costruita", fixture_id, market)
                 continue
 
             X = frame.drop(columns=["market", "id_fixture", "season", "league", "prediction_at"], errors="ignore")
             selected_features = model_meta.get("feature_names") or []
+            absent: list[str] = []
             if selected_features:
-                for feature_name in selected_features:
-                    if feature_name not in X.columns:
-                        X[feature_name] = 0.0
+                absent = [name for name in selected_features if name not in X.columns]
+                if absent:
+                    # Una feature attesa dal modello ma assente dal frame vale 0.0:
+                    # in training lo stesso dato mancante puo' avere un altro
+                    # valore (imputazione). Il log rende misurabile quanto spesso
+                    # succede, prima di decidere se cambiare il riempimento.
+                    logging.info(
+                        "Predizione fixture=%s mercato=%s: %s feature su %s assenti dal frame, riempite con 0.0 (es. %s)",
+                        fixture_id, market, len(absent), len(selected_features), ", ".join(absent[:5]),
+                    )
+                for feature_name in absent:
+                    X[feature_name] = 0.0
                 X = X[selected_features]
 
             model_run_id = model_meta.get("run_id")
@@ -267,22 +331,25 @@ class PredictionSnapshotService:
                     and existing.feature_fingerprint == fingerprint
                     and existing.model_run_id == model_run_id
                 ):
-                    payload[market] = self._entry_from_snapshot(existing)
+                    payload[market] = self._with_defaulted_features(self._entry_from_snapshot(existing), absent)
                     continue
 
             try:
                 model = self._load_model(model_key)
                 prediction, probability = self._extract_probability(model=model, X=X)
-            except Exception:
+            except Exception as exc:
+                logging.warning("Predizione fixture=%s mercato=%s saltata: inferenza fallita (%s)", fixture_id, market, type(exc).__name__)
                 continue
 
+            computed_at = datetime.now(timezone.utc)
             entry = {
                 "prediction": int(prediction),
                 "probability": float(probability),
                 "model_name": model_meta.get("model_name"),
                 "run_id": model_run_id,
+                "computed_at": computed_at.isoformat(),
             }
-            payload[market] = entry
+            payload[market] = self._with_defaulted_features(entry, absent)
 
             self.repo.save(
                 MatchPredictionSnapshot(
@@ -293,6 +360,7 @@ class PredictionSnapshotService:
                     model_name=entry["model_name"],
                     model_run_id=model_run_id,
                     feature_fingerprint=fingerprint,
+                    computed_at=computed_at,
                 )
             )
 

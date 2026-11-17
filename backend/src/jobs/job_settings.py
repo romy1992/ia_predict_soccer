@@ -5,7 +5,7 @@ import threading
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from src.jobs.api_quota_state import get_quota_snapshot, is_quota_exhausted_today
+from src.jobs.api_quota_state import is_quota_exhausted_today, read_quota_snapshot_strict
 from src.service_ia.config.app_config import AppConfig, load_app_config
 from src.storage import bucket_store
 
@@ -13,6 +13,16 @@ logger = logging.getLogger(__name__)
 
 _LOCK = threading.Lock()
 _QUOTA_PAUSE_LOCK = threading.Lock()
+# Serializza, DENTRO il processo, l'intero ciclo "leggi quota + leggi pausa +
+# decidi + scrivi" di `sync_job_settings_with_quota` (e l'aggiornamento della
+# baseline fatto da `remember_operator_toggles_during_pause`). Lo scheduler
+# valuta i job su piu' thread nello stesso tick e l'API serve richieste in
+# parallelo: senza, due thread che rilevano insieme la quota esaurita possono
+# salvare come baseline lo stato GIA' disattivato dall'altro (e al reset non
+# si riaccende piu' nulla). Rientrante: non e' mai tenuto insieme a `_LOCK` o
+# `_QUOTA_PAUSE_LOCK` in ordine inverso. Fra processi diversi (`api` e
+# `scheduler`) non esiste un lock: resta una finestra di pochi istanti.
+_QUOTA_SYNC_LOCK = threading.RLock()
 _SCHEDULE_LOCK = threading.Lock()
 
 # Job registrati da `build_scheduler` (src/jobs/scheduler.py) - le chiavi
@@ -20,15 +30,21 @@ _SCHEDULE_LOCK = threading.Lock()
 # il toggle da questa pagina Impostazioni disattiva/riattiva ESATTAMENTE il
 # job schedulato corrispondente (nessun mapping duplicato altrove).
 #
-# `calls_api_sports` distingue i job che chiamano DAVVERO il provider
-# esterno (consumano quota) da quelli che lavorano SOLO sui dati gia' a DB
-# (`data_settlement`: riconciliazione locale; `ml_training`: training sui
-# dati gia' scaricati) - usato da `sync_job_settings_with_quota` per capire
-# QUALI job auto-mettere in pausa quando la quota e' esaurita: mettere in
-# pausa anche settlement/training non avrebbe alcun senso (non consumano
-# quota, quindi possono continuare a lavorare sui dati gia' presenti anche
-# a quota esaurita) - stessa distinzione gia' applicata lato frontend per
-# decidere quali bottoni disabilitare (Data Center/ML Lab).
+# `calls_api_sports` distingue i job che NON possono lavorare senza il
+# provider esterno da quelli che possono continuare sui dati gia' a DB
+# (`ml_training`: training sui dati gia' scaricati) - usato da
+# `sync_job_settings_with_quota` per capire QUALI job auto-mettere in pausa
+# quando la quota e' esaurita - stessa distinzione gia' applicata lato
+# frontend per decidere quali bottoni disabilitare (Data Center/ML Lab).
+#
+# `data_settlement` e' un caso a parte e resta `False` di proposito: in
+# condizioni normali INIZIA con un import da API-Sports delle partite
+# concluse nella finestra recente (`SettlementService.run_settlement` ->
+# `download_import_matches`, quindi consuma quota), ma la riconciliazione
+# vera e propria (completezza, ledger, schedine) lavora sul DB. Metterlo in
+# pausa a quota esaurita fermerebbe anche quella parte: invece resta attivo
+# e, quando `is_quota_exhausted_today()` e' vero, salta il solo import dal
+# provider (vedi `SettlementService.run_settlement`).
 #
 # `data_sync_live` di default DISABILITATO (richiesto esplicitamente
 # 2026-09-05): e' il job piu' "costoso" in termini di chiamate API-Sports
@@ -66,9 +82,16 @@ JOB_DEFINITIONS: dict[str, dict[str, Any]] = {
     },
     "data_settlement": {
         "label": "Settlement partite concluse",
-        "description": "Riconcilia le partite concluse per il settlement (dashboard/paper betting).",
+        "description": (
+            "Riconcilia le partite concluse per il settlement (dashboard/paper betting). "
+            "Prima aggiorna da API-Sports i risultati degli ultimi giorni; a quota esaurita "
+            "salta l'aggiornamento e lavora solo sui dati gia' presenti."
+        ),
         "default_enabled": True,
         "calls_api_sports": False,
+        # Additivo: il job consuma quota API-Sports solo nel passo iniziale di
+        # import (saltato a quota esaurita); non e' in pausa automatica.
+        "partially_calls_api_sports": True,
         "schedule_kind": "interval_minutes",
         "job_history_type": "settlement",
         "cfg_fields": {"interval_minutes": "settlement_interval_minutes"},
@@ -325,14 +348,23 @@ def get_job_settings() -> dict[str, bool]:
     note (anche se l'oggetto sul bucket e' vuoto/parziale/mancante): un job
     nuovo aggiunto in futuro a `JOB_DEFINITIONS` risultera' comunque
     presente con il suo default, mai un KeyError lato scheduler/frontend.
-    Chiamata PRIMA di ogni esecuzione schedulata (`_run_if_enabled`): un
+    Chiamata PRIMA di ogni esecuzione schedulata (`scheduler._run_if_due`): un
     fallimento di rete verso il bucket non deve mai bloccare il tick dello
     scheduler, uso i default come fallback."""
     try:
-        stored = bucket_store.get_json(_SETTINGS_KEY, default={})
+        return _read_job_settings_strict()
     except Exception as exc:
         logger.warning("job_settings.json illeggibile dal bucket (%s): uso i default", exc)
-        stored = {}
+        return dict(DEFAULT_JOB_SETTINGS)
+
+
+def _read_job_settings_strict() -> dict[str, bool]:
+    """Come `get_job_settings`, ma un errore di LETTURA del bucket viene
+    propagato. Usata da chi poi RISCRIVE l'oggetto (`update_job_settings`,
+    `sync_job_settings_with_quota`): ripiegare sui default e salvarli
+    cancellerebbe i toggle dell'operatore per un errore transitorio di rete.
+    Oggetto assente o non valido: default, come sempre."""
+    stored = bucket_store.get_json(_SETTINGS_KEY, default={})
     if not isinstance(stored, dict):
         stored = {}
 
@@ -349,13 +381,17 @@ def update_job_settings(updates: dict[str, bool]) -> dict[str, bool]:
     scrittura via file temporaneo + `os.replace` garantiva, qui per
     costruzione: S3 non ha scritture parziali). Chiavi non riconosciute
     sollevano `ValueError` esplicito (mai un job fantasma scritto per un
-    typo del chiamante)."""
+    typo del chiamante).
+
+    Se lo stato corrente NON e' leggibile (errore del bucket) l'eccezione
+    viene propagata e non si scrive nulla: prima si ripiegava sui default e
+    li si salvava, azzerando in silenzio tutti gli altri toggle."""
     unknown = [job_id for job_id in updates if job_id not in JOB_DEFINITIONS]
     if unknown:
         raise ValueError(f"Job id non riconosciuti: {unknown}")
 
     with _LOCK:
-        current = get_job_settings()
+        current = _read_job_settings_strict()
         current.update({job_id: bool(value) for job_id, value in updates.items()})
         bucket_store.put_json(_SETTINGS_KEY, current)
 
@@ -396,6 +432,7 @@ def list_job_definitions(cfg: Optional[AppConfig] = None) -> list[dict[str, Any]
                 "description": definition["description"],
                 "enabled": settings.get(job_id, definition["default_enabled"]),
                 "calls_api_sports": bool(definition.get("calls_api_sports")),
+                "partially_calls_api_sports": bool(definition.get("partially_calls_api_sports")),
                 "schedule_kind": definition["schedule_kind"],
                 "schedule": resolve_job_schedule(job_id, cfg=cfg),
                 "schedule_is_default": job_id not in get_job_schedule_overrides(),
@@ -533,11 +570,25 @@ def _read_quota_pause_state() -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
-def _write_quota_pause_state(state: dict[str, Any]) -> None:
+def _read_quota_pause_state_strict() -> dict[str, Any]:
+    """Come `_read_quota_pause_state`, ma un errore di LETTURA del bucket
+    viene propagato: `sync_job_settings_with_quota` non deve scambiare "non
+    riesco a leggere la pausa" per "nessuna pausa attiva" (salverebbe come
+    baseline lo stato gia' disattivato dalla pausa in corso)."""
+    payload = bucket_store.get_json(_QUOTA_PAUSE_KEY, default={})
+    return payload if isinstance(payload, dict) else {}
+
+
+def _write_quota_pause_state(state: dict[str, Any], *, strict: bool = False) -> None:
+    """`strict=True`: un errore di scrittura viene propagato (usato quando la
+    scrittura e' la PRECONDIZIONE di un passo successivo, es. salvare la
+    baseline prima di disattivare i job)."""
     try:
         with _QUOTA_PAUSE_LOCK:
             bucket_store.put_json(_QUOTA_PAUSE_KEY, state)
     except Exception as exc:
+        if strict:
+            raise
         logger.warning("Impossibile persistere quota_pause_state.json sul bucket: %s", exc)
 
 
@@ -548,10 +599,36 @@ def get_quota_pause_state() -> dict[str, Any]:
     return _read_quota_pause_state()
 
 
+def remember_operator_toggles_during_pause(updates: dict[str, bool]) -> bool:
+    """Se l'auto-pausa per quota e' attiva, memorizza nella baseline di
+    ripristino i toggle ESPLICITI dell'operatore sui job quota-sensitive.
+
+    Senza questo, un job spento a mano durante la pausa verrebbe riacceso
+    di nascosto al reset (si ripristina lo stato pre-pausa) e uno acceso a
+    mano verrebbe dimenticato. Ritorna True se la baseline e' stata
+    aggiornata. Mai un'eccezione propagata."""
+    try:
+        touched = {j: bool(v) for j, v in updates.items() if j in QUOTA_SENSITIVE_JOB_IDS}
+        if not touched:
+            return False
+        with _QUOTA_SYNC_LOCK:
+            state = _read_quota_pause_state_strict()
+            previous = state.get("previous_settings")
+            if not state.get("paused_date") or not isinstance(previous, dict):
+                return False
+            previous = {**previous, **touched}
+            _write_quota_pause_state({**state, "previous_settings": previous}, strict=True)
+        return True
+    except Exception as exc:
+        logger.warning("remember_operator_toggles_during_pause fallita (ignorata): %s", exc)
+        return False
+
+
 def sync_job_settings_with_quota(quota_snapshot: Optional[dict[str, Any]] = None) -> bool:
-    """Auto-pausa SOLO i job che chiamano davvero API-Sports
-    (`QUOTA_SENSITIVE_JOB_IDS` - MAI `data_settlement`/`ml_training`, che
-    lavorano solo su dati gia' a DB e possono continuare tranquillamente)
+    """Auto-pausa SOLO i job che non possono lavorare senza API-Sports
+    (`QUOTA_SENSITIVE_JOB_IDS` - MAI `ml_training`, che lavora solo su dati
+    gia' a DB, ne' `data_settlement`, che a quota esaurita salta da solo
+    l'import dal provider e continua con la riconciliazione locale)
     quando la quota giornaliera risulta esaurita da un check AUTORITATIVO
     di OGGI (`is_quota_exhausted_today`, MAI dalla sola stima passiva -
     vedi `api_quota_state.py`), e li riattiva automaticamente al reset del
@@ -569,48 +646,81 @@ def sync_job_settings_with_quota(quota_snapshot: Optional[dict[str, Any]] = None
     "acceso" fino al giorno dopo, inutilmente destinato a fallire di nuovo
     contro un provider che risponderebbe comunque "quota esaurita".
 
-    Chiamata ad OGNI tick dello scheduler (vedi
-    `src/jobs/scheduler.py::_run_if_enabled`) e ad ogni lettura/scrittura
-    delle Impostazioni (`src/api/main.py`) - mai un'eccezione propagata: un
-    fallimento qui non deve MAI bloccare l'esecuzione normale dei job.
+    Chiamata dallo scheduler prima di valutare un job che chiama API-Sports
+    (vedi `src/jobs/scheduler.py::_run_if_due` ->
+    `_sync_quota_pause_if_needed`, al massimo una volta al minuto per
+    processo) e ad ogni lettura/scrittura delle Impostazioni
+    (`src/api/main.py`) - mai un'eccezione propagata: un fallimento qui non
+    deve MAI bloccare l'esecuzione normale dei job.
     Ritorna True se una pausa e' (rimasta) attiva."""
     try:
-        snapshot = quota_snapshot if quota_snapshot is not None else get_quota_snapshot()
-        exhausted_today = is_quota_exhausted_today(snapshot)
-        pause_state = _read_quota_pause_state()
-        paused_date = pause_state.get("paused_date")
-        today_iso = datetime.now(timezone.utc).date().isoformat()
-
-        if exhausted_today:
-            current = get_job_settings()
-            if paused_date != today_iso:
-                # Prima rilevazione di oggi: salva la baseline (SOLO i job
-                # quota-sensitive) PRIMA di disattivarli, cosi' da poterla
-                # ripristinare esattamente al reset della quota.
-                previous = {job_id: current[job_id] for job_id in QUOTA_SENSITIVE_JOB_IDS}
-                _write_quota_pause_state({"paused_date": today_iso, "previous_settings": previous})
-                logger.warning(
-                    "Quota API-Sports esaurita (100%%): job che chiamano il provider esterno (%s) "
-                    "disattivati fino al reset di domani (UTC). data_settlement/ml_training restano attivi.",
-                    ", ".join(sorted(QUOTA_SENSITIVE_JOB_IDS)),
-                )
-            # Ri-applicata ad OGNI check (prima rilevazione o successiva):
-            # solo se serve davvero (evita scritture su disco a vuoto
-            # quando e' gia' tutto disattivato).
-            needs_disable = any(current.get(job_id, True) for job_id in QUOTA_SENSITIVE_JOB_IDS)
-            if needs_disable:
-                update_job_settings({job_id: False for job_id in QUOTA_SENSITIVE_JOB_IDS})
-            return True
-
-        if paused_date:
-            previous = pause_state.get("previous_settings") or {}
-            if previous:
-                update_job_settings(previous)
-            _write_quota_pause_state({})
-            logger.info("Quota API-Sports non piu' segnalata esaurita: job ripristinati allo stato pre-pausa.")
-        return False
-    except Exception as exc:  # pragma: no cover - mai bloccare lo scheduler/le Impostazioni
+        with _QUOTA_SYNC_LOCK:
+            return _sync_job_settings_with_quota_locked(quota_snapshot)
+    except Exception as exc:  # mai bloccare lo scheduler/le Impostazioni
         logger.warning("sync_job_settings_with_quota fallita (ignorata): %s", exc)
         return False
+
+
+def _sync_job_settings_with_quota_locked(quota_snapshot: Optional[dict[str, Any]]) -> bool:
+    """Corpo di `sync_job_settings_with_quota`, eseguito sotto
+    `_QUOTA_SYNC_LOCK`.
+
+    Tutte le letture sono STRETTE (un errore del bucket viene propagato e il
+    chiamante lo ignora fino al controllo successivo): ognuna delle tre, se
+    ripiegasse su un valore vuoto, porterebbe a una scrittura sbagliata -
+    quota illeggibile = "non esaurita" (pausa tolta), pausa illeggibile =
+    "nessuna pausa" (baseline sovrascritta con lo stato gia' disattivato),
+    Impostazioni illeggibili = default (toggle dell'operatore azzerati)."""
+    snapshot = quota_snapshot if quota_snapshot is not None else read_quota_snapshot_strict()
+    exhausted_today = is_quota_exhausted_today(snapshot)
+    pause_state = _read_quota_pause_state_strict()
+    paused_date = pause_state.get("paused_date")
+    today_iso = datetime.now(timezone.utc).date().isoformat()
+
+    if exhausted_today:
+        current = _read_job_settings_strict()
+        if paused_date != today_iso:
+            # Prima rilevazione di oggi: salva la baseline (SOLO i job
+            # quota-sensitive) PRIMA di disattivarli, cosi' da poterla
+            # ripristinare esattamente al reset della quota.
+            previous = {job_id: current[job_id] for job_id in QUOTA_SENSITIVE_JOB_IDS}
+            if paused_date and pause_state.get("previous_settings"):
+                # Pausa di un giorno precedente mai ripristinata (es. quota
+                # di nuovo esaurita prima del primo tick dopo il reset):
+                # `current` e' gia' tutto disattivato dalla pausa, NON e'
+                # la baseline. Si conserva quella originale.
+                previous = dict(pause_state["previous_settings"])
+            # Scrittura STRETTA: se la baseline non viene salvata i job non
+            # vanno disattivati, altrimenti al controllo successivo la
+            # "baseline" diventerebbe lo stato gia' spento.
+            _write_quota_pause_state({"paused_date": today_iso, "previous_settings": previous}, strict=True)
+            logger.warning(
+                "Quota API-Sports esaurita (100%%): job che chiamano il provider esterno (%s) "
+                "disattivati fino al reset di domani (UTC). data_settlement/ml_training restano attivi.",
+                ", ".join(sorted(QUOTA_SENSITIVE_JOB_IDS)),
+            )
+        # Ri-applicata ad OGNI check (prima rilevazione o successiva):
+        # solo se serve davvero (evita scritture su disco a vuoto
+        # quando e' gia' tutto disattivato).
+        needs_disable = any(current.get(job_id, True) for job_id in QUOTA_SENSITIVE_JOB_IDS)
+        if needs_disable:
+            update_job_settings({job_id: False for job_id in QUOTA_SENSITIVE_JOB_IDS})
+        return True
+
+    if paused_date:
+        previous = pause_state.get("previous_settings") or {}
+        # Solo job ancora esistenti: una baseline salvata prima di un deploy
+        # che ha rimosso un job farebbe fallire `update_job_settings` ad ogni
+        # controllo, lasciando gli altri job in pausa per sempre.
+        restorable = {
+            job_id: bool(value)
+            for job_id, value in previous.items()
+            if job_id in JOB_DEFINITIONS
+        } if isinstance(previous, dict) else {}
+        if restorable:
+            update_job_settings(restorable)
+        _write_quota_pause_state({})
+        logger.info("Quota API-Sports non piu' segnalata esaurita: job ripristinati allo stato pre-pausa.")
+    return False
 
 

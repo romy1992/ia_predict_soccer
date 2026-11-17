@@ -114,6 +114,19 @@ def record_status_snapshot(
     )
 
 
+def read_quota_snapshot_strict() -> dict[str, Any]:
+    """Come `get_quota_snapshot`, ma un errore di LETTURA del bucket viene
+    propagato invece di diventare "nessuno snapshot".
+
+    Serve a chi, in base allo snapshot, SCRIVE altro stato (auto-pausa dei
+    job, vedi `job_settings.sync_job_settings_with_quota`): li' "non riesco a
+    leggere" non deve essere scambiato per "quota non esaurita", altrimenti
+    un errore transitorio del bucket toglie la pausa. Chiave assente o
+    contenuto non valido restano `{}` (nessuna chiamata API-Sports mai fatta)."""
+    payload = bucket_store.get_json(_STATE_KEY, default={})
+    return payload if isinstance(payload, dict) else {}
+
+
 def get_quota_snapshot() -> Optional[dict[str, Any]]:
     """Ultimo snapshot noto (merge di eventuale check live `status_*` e/o
     stima passiva `daily_remaining`), oppure `None` se non e' ancora stata
