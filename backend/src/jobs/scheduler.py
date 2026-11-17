@@ -602,6 +602,42 @@ def run_official_prediction_capture(job_id: Optional[str] = None) -> dict:
         raise
 
 
+def run_closing_odds_capture(job_id: Optional[str] = None) -> dict:
+    """Quote di chiusura per le partite con giocate ufficiali (vedi
+    `ClosingOddsCaptureService`): al massimo 2 chiamate API-Sports per
+    partita. NON prende il lock degli import (`LOCK_IMPORT_MATCH`): con
+    `data_sync_today` ogni 30 minuti salterebbe proprio i giri vicini al
+    kickoff; le scritture sono un upsert idempotente. Gli errori del
+    provider sono contati nel report, non sollevati."""
+    from src.oracle.ledger.closing_odds_capture_service import (
+        HORIZON_MINUTES,
+        WINDOWS_MINUTES_BEFORE_KICKOFF,
+        ClosingOddsCaptureService,
+    )
+
+    history = JobHistory()
+    params = {"horizon_minutes": HORIZON_MINUTES, "windows_minutes_before_kickoff": WINDOWS_MINUTES_BEFORE_KICKOFF}
+    if job_id:
+        history.mark_running(job_id=job_id, params=params)
+    else:
+        started = history.create_job(
+            job_type="closing_odds_capture", status="running", params=params, started_at=JobHistory._now_iso()
+        )
+        job_id = started["job_id"]
+    start = time.perf_counter()
+    try:
+        report = ClosingOddsCaptureService().capture()
+        report["duration_seconds"] = time.perf_counter() - start
+        history.mark_success(job_id=job_id, summary=report)
+        return {"job_id": job_id, **report}
+    except Exception as exc:
+        history.mark_failed(
+            job_id=job_id,
+            error={"message": str(exc), "duration_seconds": time.perf_counter() - start, "params": params},
+        )
+        raise
+
+
 def run_scorer_predictions(job_id: Optional[str] = None) -> dict:
     """Formazioni ufficiali in arrivo + predizioni marcatori (vedi `service_ia/scorer/prediction_service`)."""
     from src.repository.base.repository_db import SessionLocal
@@ -1507,7 +1543,7 @@ def _is_job_due(job_id: str, cfg: AppConfig) -> bool:
 # Intervallo minimo fra due riallineamenti quota/Impostazioni fatti dallo
 # scheduler. Ogni riallineamento legge due oggetti dal bucket
 # (`api_quota_state.json`, `quota_pause_state.json`; tre a quota esaurita,
-# anche `job_settings.json`) e NON chiama mai il provider. Con i 6 job
+# anche `job_settings.json`) e NON chiama mai il provider. Con i 7 job
 # sensibili alla quota (`QUOTA_SENSITIVE_JOB_IDS`) su un heartbeat di 30s,
 # farlo ad ogni tick di ogni job sarebbero 24-36 letture al minuto per
 # un'informazione che cambia poche volte al giorno: cosi' sono 2-3. 60s
@@ -1758,6 +1794,13 @@ def build_scheduler(cfg: Optional[AppConfig] = None) -> BlockingScheduler:
         functools.partial(_run_if_due, "official_prediction_capture", run_official_prediction_capture, cfg=cfg),
         trigger=heartbeat,
         job_id="official_prediction_capture",
+        misfire_grace_time=_MISFIRE_GRACE_SECONDS,
+    )
+    _add_job(
+        scheduler,
+        functools.partial(_run_if_due, "closing_odds_capture", run_closing_odds_capture, cfg=cfg),
+        trigger=heartbeat,
+        job_id="closing_odds_capture",
         misfire_grace_time=_MISFIRE_GRACE_SECONDS,
     )
     _add_job(

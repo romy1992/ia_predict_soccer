@@ -364,6 +364,7 @@ const JOB_RUN_ENDPOINTS = {
   data_quality_report: "/jobs/data-quality-report",
   prediction_snapshot_refresh: "/jobs/prediction-snapshot-refresh",
   official_prediction_capture: "/jobs/official-capture",
+  closing_odds_capture: "/jobs/closing-odds-capture",
   team_rating_refresh: "/jobs/team-rating-refresh",
   model_consensus_refresh: "/jobs/model-consensus-refresh",
   scorer_predictions: "/jobs/scorer-predictions",

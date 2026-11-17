@@ -481,3 +481,151 @@ def test_senza_update_del_provider_vale_l_ora_del_download(session_factory):
     assert report["captures"][0]["captured_at_before_kickoff"] is True
     assert result.available is True
     assert 0 < result.closing_minutes_before_kickoff <= 3
+
+
+# --- Job: Impostazioni, pausa quota, scheduler, API -------------------------
+
+
+def _quota_esaurita_oggi() -> dict:
+    return {
+        "status_error_message": "You have reached the request limit for the day",
+        "status_updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def test_job_nelle_impostazioni_abilitato_e_sensibile_alla_quota():
+    from src.api.schemas import JobSettingRow
+    from src.jobs import job_settings as js
+
+    definition = js.JOB_DEFINITIONS["closing_odds_capture"]
+    assert definition["default_enabled"] is True
+    assert definition["calls_api_sports"] is True
+    assert "closing_odds_capture" in js.QUOTA_SENSITIVE_JOB_IDS
+    assert js.resolve_job_schedule("closing_odds_capture") == {"interval_minutes": 5}
+
+    row = {r["job_id"]: r for r in js.list_job_definitions()}["closing_odds_capture"]
+    assert row["enabled"] is True
+    assert row["calls_api_sports"] is True
+    assert row["schedule_kind"] == "interval_minutes"
+    JobSettingRow(**row)
+
+    js.update_job_schedule("closing_odds_capture", {"interval_minutes": 10})
+    assert js.resolve_job_schedule("closing_odds_capture") == {"interval_minutes": 10}
+    js.update_job_settings({"closing_odds_capture": False})
+    assert js.is_job_enabled("closing_odds_capture") is False
+
+
+def test_pausa_quota_lo_sospende_e_al_reset_lo_riattiva():
+    from src.jobs import job_settings as js
+
+    assert js.sync_job_settings_with_quota(_quota_esaurita_oggi()) is True
+    assert js.is_job_enabled("closing_odds_capture") is False
+    assert js.sync_job_settings_with_quota({}) is False
+    assert js.is_job_enabled("closing_odds_capture") is True
+
+
+def test_scheduler_non_lo_esegue_a_quota_esaurita():
+    from unittest import mock
+
+    from src.jobs import scheduler as scheduler_module
+    from src.service_ia.config.app_config import load_app_config
+
+    bucket_store.put_json("best_models/api_quota_state.json", _quota_esaurita_oggi())
+    target = mock.Mock()
+    with mock.patch.object(scheduler_module, "_last_quota_sync_monotonic", None):
+        result = scheduler_module._run_if_due("closing_odds_capture", target, cfg=load_app_config())
+
+    assert result is None
+    target.assert_not_called()
+
+
+class _LockTracker:
+    """Finto `job_lock` gia' preso da un import: chi lo usasse salterebbe il giro."""
+
+    def __init__(self):
+        self.entered = 0
+
+    def __call__(self, *_args, **_kwargs):
+        import contextlib
+
+        tracker = self
+
+        @contextlib.contextmanager
+        def _cm():
+            tracker.entered += 1
+            yield False
+
+        return _cm()
+
+
+def test_job_gira_anche_con_il_lock_degli_import_preso_e_registra_il_report(session_factory):
+    from unittest import mock
+
+    from src.jobs import job_lock as job_lock_module
+    from src.jobs import scheduler as scheduler_module
+    from src.jobs.job_history import JobHistory
+
+    _add_match(session_factory, 1, KICKOFF)
+    provider = FakeProvider()
+    service = _service(session_factory, Clock(KICKOFF).at(3), provider=provider)
+    tracker = _LockTracker()
+    with (
+        mock.patch.object(service_module, "ClosingOddsCaptureService", lambda: service),
+        mock.patch.object(scheduler_module, "job_lock", tracker),
+        mock.patch.object(job_lock_module, "job_lock", tracker),
+    ):
+        result = scheduler_module.run_closing_odds_capture()
+
+    assert tracker.entered == 0
+    assert provider.calls == [1]
+    row = JobHistory().get(result["job_id"])
+    assert row["status"] == "success"
+    assert row["job_type"] == "closing_odds_capture"
+    summary = row["summary"]
+    assert summary["candidates"] == 1
+    assert summary["calls"] == 1
+    assert summary["snapshots_saved"] == 3
+    assert set(summary["skipped"]) == {"already_captured", "outside_window", "quota_exhausted"}
+    assert "duration_seconds" in summary
+
+
+def test_errore_del_provider_non_fa_fallire_il_job(session_factory):
+    from unittest import mock
+
+    from src.jobs import scheduler as scheduler_module
+    from src.jobs.job_history import JobHistory
+
+    _add_match(session_factory, 1, KICKOFF)
+    provider = FakeProvider({1: ApiSportsUnavailableError("rete giu'")})
+    service = _service(session_factory, Clock(KICKOFF).at(3), provider=provider)
+    with mock.patch.object(service_module, "ClosingOddsCaptureService", lambda: service):
+        result = scheduler_module.run_closing_odds_capture()
+
+    row = JobHistory().get(result["job_id"])
+    assert row["status"] == "success"
+    assert row["summary"]["errors"]["provider"] == 1
+
+
+def test_endpoint_impostazioni_ed_esegui_ora():
+    from unittest import mock
+
+    from fastapi.testclient import TestClient
+
+    from src.api import main as api_main
+
+    with (
+        mock.patch.object(api_main.auth, "decode_valid_token", lambda _token: "tester"),
+        mock.patch.object(api_main, "run_closing_odds_capture", lambda: {"job_id": "j1", "calls": 0}),
+    ):
+        client = TestClient(api_main.app)
+        jobs = client.get("/settings/jobs")
+        toggled = client.post("/settings/jobs", json={"updates": {"closing_odds_capture": False}})
+        run = client.post("/jobs/closing-odds-capture", json={"async_run": False})
+
+    assert jobs.status_code == 200
+    row = {r["job_id"]: r for r in jobs.json()["jobs"]}["closing_odds_capture"]
+    assert row["calls_api_sports"] is True
+    assert row["enabled"] is True
+    assert {r["job_id"]: r for r in toggled.json()["jobs"]}["closing_odds_capture"]["enabled"] is False
+    assert run.status_code == 200
+    assert run.json()["details"]["job_id"] == "j1"

@@ -126,6 +126,11 @@ class AppConfig:
     # pre-kickoff configurata.
     official_capture_interval_minutes: int = 5
     official_capture_minutes_before_kickoff: int = 60
+    # Job "Quote di chiusura (CLV)": scarica le quote vicino al kickoff per le
+    # partite con giocate ufficiali (al massimo 2 chiamate API-Sports per
+    # partita, vedi `closing_odds_capture_service`). Le finestre sono di 5
+    # minuti: un intervallo piu' lungo le salterebbe.
+    closing_odds_capture_interval_minutes: int = 5
     # Job "Aggiorna rating squadre" (2026-09-24, tabella `team_rating`):
     # ricalcola in BACKGROUND lo stato corrente (EXP-01) per OGNI squadra
     # rileggendo lo storico UNA volta sola, cosi' "Oracle Match Detail" legge
@@ -186,6 +191,7 @@ def load_app_config() -> AppConfig:
     official_capture_minutes_before_kickoff = _int_env(
         "OFFICIAL_CAPTURE_MINUTES_BEFORE_KICKOFF", default=60
     )
+    closing_odds_capture_interval_minutes = _int_env("CLOSING_ODDS_CAPTURE_INTERVAL_MINUTES", default=5)
     scorer_predictions_interval_minutes = _int_env("SCORER_PREDICTIONS_INTERVAL_MINUTES", default=10)
     scorer_training_hour = _int_env("SCORER_TRAINING_HOUR", default=4)
     scorer_training_minute = _int_env("SCORER_TRAINING_MINUTE", default=30)
@@ -223,6 +229,7 @@ def load_app_config() -> AppConfig:
         prediction_snapshot_interval_minutes=prediction_snapshot_interval_minutes,
         official_capture_interval_minutes=official_capture_interval_minutes,
         official_capture_minutes_before_kickoff=official_capture_minutes_before_kickoff,
+        closing_odds_capture_interval_minutes=closing_odds_capture_interval_minutes,
         team_rating_refresh_interval_minutes=team_rating_refresh_interval_minutes,
         scorer_predictions_interval_minutes=scorer_predictions_interval_minutes,
         scorer_training_hour=scorer_training_hour,

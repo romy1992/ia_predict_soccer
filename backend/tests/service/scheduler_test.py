@@ -77,7 +77,7 @@ class TestBuildSchedulerJobsSeparation(unittest.TestCase):
     job SEPARATI per data sync (frequenti) e training (indipendente) - mai
     un job unico che incatena import+retrain."""
 
-    def test_registers_exactly_sixteen_independent_jobs(self):
+    def test_registers_exactly_seventeen_independent_jobs(self):
         sched = scheduler_module.build_scheduler(cfg=_cfg())
         job_ids = {job.id for job in sched.get_jobs()}
         self.assertEqual(
@@ -92,6 +92,7 @@ class TestBuildSchedulerJobsSeparation(unittest.TestCase):
                 "data_sync_live",
                 "prediction_snapshot_refresh",
                 "official_prediction_capture",
+                "closing_odds_capture",
                 "team_rating_refresh",
                 "model_consensus_refresh",
                 "scorer_predictions",
@@ -104,7 +105,7 @@ class TestBuildSchedulerJobsSeparation(unittest.TestCase):
 
     def test_build_scheduler_uses_default_config_when_none_given(self):
         sched = scheduler_module.build_scheduler()
-        self.assertEqual(len(sched.get_jobs()), 16)
+        self.assertEqual(len(sched.get_jobs()), 17)
 
 
 class TestMaxInstancesAndCoalesce(unittest.TestCase):
@@ -114,7 +115,7 @@ class TestMaxInstancesAndCoalesce(unittest.TestCase):
     def test_every_job_has_max_instances_one_and_coalesce_true(self):
         sched = scheduler_module.build_scheduler(cfg=_cfg())
         jobs = sched.get_jobs()
-        self.assertEqual(len(jobs), 16)
+        self.assertEqual(len(jobs), 17)
         for job in jobs:
             self.assertEqual(job.max_instances, 1, f"{job.id} deve avere max_instances=1")
             self.assertTrue(job.coalesce, f"{job.id} deve avere coalesce=True")
@@ -272,6 +273,10 @@ class TestJobTargetsAreCorrectAndIndependent(unittest.TestCase):
     def test_official_capture_job_targets_correct_function(self):
         job = scheduler_module.build_scheduler(cfg=_cfg()).get_job("official_prediction_capture")
         self.assertIs(_target_func(job), scheduler_module.run_official_prediction_capture)
+
+    def test_closing_odds_capture_job_targets_correct_function(self):
+        job = scheduler_module.build_scheduler(cfg=_cfg()).get_job("closing_odds_capture")
+        self.assertIs(_target_func(job), scheduler_module.run_closing_odds_capture)
 
     def test_no_single_job_bundles_import_and_retrain(self):
         # Nessuno dei job registrati deve puntare a `run_daily_pipeline`

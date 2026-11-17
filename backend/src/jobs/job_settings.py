@@ -226,6 +226,23 @@ JOB_DEFINITIONS: dict[str, dict[str, Any]] = {
         "run_all_priority": 60,
         "run_all_included": True,
     },
+    "closing_odds_capture": {
+        "label": "Quote di chiusura (CLV)",
+        "description": (
+            "Per le partite non ancora iniziate con almeno una giocata ufficiale (PLAY, BORDERLINE o "
+            "NO BET) scarica le quote da API-Sports vicino al calcio d'inizio: una volta fra 15 e 10 "
+            "minuti prima e una negli ultimi 5 minuti, al massimo 2 chiamate per partita. Rende "
+            "misurabile il CLV delle giocate ufficiali. Le partite sono scelte dal DB, senza chiamate."
+        ),
+        "default_enabled": True,
+        "calls_api_sports": True,
+        "schedule_kind": "interval_minutes",
+        "job_history_type": "closing_odds_capture",
+        "cfg_fields": {"interval_minutes": "closing_odds_capture_interval_minutes"},
+        # Dopo la cattura ufficiale (60): le giocate devono gia' essere nel ledger.
+        "run_all_priority": 65,
+        "run_all_included": True,
+    },
     "scorer_predictions": {
         "label": "Predizioni marcatori",
         "description": (

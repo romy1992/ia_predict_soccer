@@ -139,6 +139,7 @@ from src.jobs.scheduler import (
     run_manual_today_update,
     run_model_consensus_refresh,
     run_official_prediction_capture,
+    run_closing_odds_capture,
     run_fotmob_predicted_lineups,
     run_player_cards_predictions,
     run_player_cards_training,
@@ -1298,6 +1299,18 @@ def trigger_official_capture(payload: JobOfficialCaptureRequest, background_task
 
     report = run_official_prediction_capture()
     return JobResponse(queued=False, message="Official capture job completed", details=report)
+
+
+@app.post("/jobs/closing-odds-capture", response_model=JobResponse)
+def trigger_closing_odds_capture(payload: JobScorerRequest, background_tasks: BackgroundTasks) -> JobResponse:
+    """"Esegui ora" del job 'Quote di chiusura (CLV)' (`run_closing_odds_capture`): chiama
+    API-Sports solo per le partite con giocate ufficiali nelle finestre pre-kickoff non ancora
+    catturate, quindi un secondo lancio nella stessa finestra non ripete le chiamate."""
+    if payload.async_run:
+        row = JobHistory().queue_job(job_type="closing_odds_capture", params={})
+        background_tasks.add_task(run_closing_odds_capture, job_id=row["job_id"])
+        return JobResponse(queued=True, message="Closing odds capture job queued", details={"job_id": row["job_id"]})
+    return JobResponse(queued=False, message="Closing odds capture job completed", details=run_closing_odds_capture())
 
 
 @app.post("/jobs/scorer-predictions", response_model=JobResponse)
