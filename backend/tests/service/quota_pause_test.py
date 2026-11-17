@@ -102,6 +102,23 @@ class TestQuotaPause(unittest.TestCase):
         js.sync_job_settings_with_quota({})
         self.assertFalse(js.get_job_settings()[accesi[0]])
 
+    def test_job_aggiunto_durante_la_pausa_torna_al_default_al_reset(self):
+        """Deploy di un job sensibile mentre la pausa e' attiva: non e' nella
+        baseline, la pausa lo spegne e al reset deve tornare al suo default."""
+        js.sync_job_settings_with_quota(_esaurita())
+        stato = js.get_quota_pause_state()
+        for job_id in ("closing_odds_capture", "data_sync_live"):
+            stato["previous_settings"].pop(job_id)
+        js._write_quota_pause_state(stato)
+        js.update_job_settings({"closing_odds_capture": True, "data_sync_live": True})
+        js.sync_job_settings_with_quota(_esaurita())
+        self.assertFalse(js.get_job_settings()["closing_odds_capture"])
+
+        js.sync_job_settings_with_quota({})
+        after = js.get_job_settings()
+        self.assertTrue(after["closing_odds_capture"])
+        self.assertEqual(after["data_sync_live"], js.DEFAULT_JOB_SETTINGS["data_sync_live"])
+
     def test_toggle_fuori_pausa_non_scrive_baseline(self):
         self.assertFalse(js.remember_operator_toggles_during_pause({self.sensibili[0]: False}))
         self.assertEqual(js.get_quota_pause_state(), {})

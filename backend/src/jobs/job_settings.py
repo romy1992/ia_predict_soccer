@@ -734,6 +734,14 @@ def _sync_job_settings_with_quota_locked(quota_snapshot: Optional[dict[str, Any]
             for job_id, value in previous.items()
             if job_id in JOB_DEFINITIONS
         } if isinstance(previous, dict) else {}
+        # Job sensibili alla quota assenti dalla baseline: aggiunti da un
+        # deploy fatto mentre la pausa era attiva (es. `closing_odds_capture`).
+        # Non hanno uno stato pre-pausa e l'operatore non li ha toccati
+        # (altrimenti `remember_operator_toggles_during_pause` li avrebbe
+        # scritti nella baseline): tornano al default. Senza, la pausa li
+        # avrebbe spenti e nessuno li riaccenderebbe piu'.
+        for job_id in QUOTA_SENSITIVE_JOB_IDS:
+            restorable.setdefault(job_id, DEFAULT_JOB_SETTINGS[job_id])
         if restorable:
             update_job_settings(restorable)
         _write_quota_pause_state({})
