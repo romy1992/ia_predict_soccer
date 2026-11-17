@@ -203,6 +203,122 @@ class TestBuildClvResult(unittest.TestCase):
         self.assertAlmostEqual(result.closing_odd, 1.80, places=9)
         self.assertAlmostEqual(result.clv_odd_pct, 1.90 / 1.80 - 1.0, places=9)
 
+    def test_closing_metadata_reports_capture_time_and_lead(self):
+        repo = _FakeRepo(
+            [
+                _FakeSnapshot("bookA", "h2h", "Home", 1.90, KICKOFF - timedelta(minutes=12)),
+                _FakeSnapshot("bookB", "h2h", "Home", 1.94, KICKOFF - timedelta(minutes=40)),
+                _FakeSnapshot("bookA", "h2h", "Draw", 3.40, KICKOFF - timedelta(minutes=12)),
+                _FakeSnapshot("bookA", "h2h", "Away", 4.20, KICKOFF - timedelta(minutes=12)),
+            ]
+        )
+        result = build_clv_result(
+            market="h2h", outcome="Home", odd_at_bet=2.10, p_fair_at_bet=0.50,
+            fixture_id=1, kickoff_at=KICKOFF, snapshot_repo=repo,
+        )
+        self.assertTrue(result.available)
+        self.assertIsNone(result.reason_code)
+        self.assertEqual(result.pricing_market, "h2h")
+        self.assertEqual(result.closing_captured_at, (KICKOFF - timedelta(minutes=12)).isoformat())
+        self.assertAlmostEqual(result.closing_minutes_before_kickoff, 12.0, places=9)
+        self.assertEqual(result.closing_bookmakers, 2)
+
+    def test_closing_not_newer_than_bet_odds_is_not_a_zero_clv(self):
+        # Nessuno snapshot arrivato dopo la giocata: la "chiusura" sarebbe la
+        # stessa quota presa (CLV = 0 per costruzione) -> non disponibile.
+        bet_odds_at = KICKOFF - timedelta(minutes=70)
+        repo = _FakeRepo(
+            [
+                _FakeSnapshot("bookA", "h2h", "Home", 2.00, bet_odds_at),
+                _FakeSnapshot("bookA", "h2h", "Draw", 3.40, bet_odds_at),
+                _FakeSnapshot("bookA", "h2h", "Away", 4.20, bet_odds_at),
+            ]
+        )
+        result = build_clv_result(
+            market="h2h", outcome="Home", odd_at_bet=2.00, p_fair_at_bet=0.48,
+            fixture_id=1, kickoff_at=KICKOFF, snapshot_repo=repo,
+            bet_captured_at=KICKOFF - timedelta(minutes=60), bet_odds_captured_at=bet_odds_at,
+        )
+        self.assertFalse(result.available)
+        self.assertEqual(result.reason_code, "closing_not_after_bet")
+        self.assertIsNone(result.clv_odd_pct)
+        self.assertIsNone(result.clv_prob)
+        self.assertAlmostEqual(result.closing_odd, 2.00, places=9)
+        self.assertAlmostEqual(result.closing_minutes_before_kickoff, 70.0, places=9)
+
+    def test_closing_newer_than_bet_odds_is_available(self):
+        bet_odds_at = KICKOFF - timedelta(minutes=70)
+        repo = _FakeRepo(
+            [
+                _FakeSnapshot("bookA", "h2h", "Home", 2.00, bet_odds_at),
+                _FakeSnapshot("bookA", "h2h", "Home", 1.90, KICKOFF - timedelta(minutes=8)),
+                _FakeSnapshot("bookA", "h2h", "Draw", 3.40, KICKOFF - timedelta(minutes=8)),
+                _FakeSnapshot("bookA", "h2h", "Away", 4.20, KICKOFF - timedelta(minutes=8)),
+            ]
+        )
+        result = build_clv_result(
+            market="h2h", outcome="Home", odd_at_bet=2.00, p_fair_at_bet=0.48,
+            fixture_id=1, kickoff_at=KICKOFF, snapshot_repo=repo,
+            bet_captured_at=KICKOFF - timedelta(minutes=60), bet_odds_captured_at=bet_odds_at,
+        )
+        self.assertTrue(result.available)
+        self.assertAlmostEqual(result.clv_odd_pct, 2.00 / 1.90 - 1.0, places=9)
+
+    def test_bet_captured_at_is_the_reference_when_odds_time_missing(self):
+        repo = _FakeRepo(
+            [
+                _FakeSnapshot("bookA", "h2h", "Home", 2.00, KICKOFF - timedelta(minutes=90)),
+                _FakeSnapshot("bookA", "h2h", "Draw", 3.40, KICKOFF - timedelta(minutes=90)),
+                _FakeSnapshot("bookA", "h2h", "Away", 4.20, KICKOFF - timedelta(minutes=90)),
+            ]
+        )
+        result = build_clv_result(
+            market="h2h", outcome="Home", odd_at_bet=2.00, p_fair_at_bet=0.48,
+            fixture_id=1, kickoff_at=KICKOFF, snapshot_repo=repo,
+            bet_captured_at=KICKOFF - timedelta(minutes=60),
+        )
+        self.assertEqual(result.reason_code, "closing_not_after_bet")
+
+    def test_reason_codes_for_missing_closing(self):
+        no_rows = build_clv_result(
+            market="h2h", outcome="Home", odd_at_bet=2.10, p_fair_at_bet=0.50,
+            fixture_id=1, kickoff_at=KICKOFF, snapshot_repo=_FakeRepo([]),
+        )
+        self.assertEqual(no_rows.reason_code, "no_snapshots")
+        only_live = build_clv_result(
+            market="h2h", outcome="Home", odd_at_bet=2.10, p_fair_at_bet=0.50,
+            fixture_id=1, kickoff_at=KICKOFF,
+            snapshot_repo=_FakeRepo([_FakeSnapshot("bookA", "h2h", "Home", 1.5, KICKOFF + timedelta(minutes=1))]),
+        )
+        self.assertEqual(only_live.reason_code, "no_pre_kickoff_snapshot")
+        no_kickoff = build_clv_result(
+            market="h2h", outcome="Home", odd_at_bet=2.10, p_fair_at_bet=0.50,
+            fixture_id=1, kickoff_at=None, snapshot_repo=_FakeRepo([]),
+        )
+        self.assertEqual(no_kickoff.reason_code, "missing_kickoff")
+        not_quoted = build_clv_result(
+            market="h2h", outcome="Home", odd_at_bet=2.10, p_fair_at_bet=0.50,
+            fixture_id=1, kickoff_at=KICKOFF,
+            snapshot_repo=_FakeRepo([_FakeSnapshot("bookA", "h2h", "Draw", 3.4, KICKOFF - timedelta(minutes=5))]),
+        )
+        self.assertEqual(not_quoted.reason_code, "outcome_not_quoted_at_closing")
+
+    def test_snapshot_exactly_at_kickoff_is_closing_but_one_second_later_is_not(self):
+        repo = _FakeRepo(
+            [
+                _FakeSnapshot("bookA", "h2h", "Home", 1.95, KICKOFF),
+                _FakeSnapshot("bookA", "h2h", "Home", 1.40, KICKOFF + timedelta(seconds=1)),
+                _FakeSnapshot("bookA", "h2h", "Draw", 3.40, KICKOFF),
+                _FakeSnapshot("bookA", "h2h", "Away", 4.20, KICKOFF),
+            ]
+        )
+        result = build_clv_result(
+            market="h2h", outcome="Home", odd_at_bet=2.10, p_fair_at_bet=0.50,
+            fixture_id=1, kickoff_at=KICKOFF, snapshot_repo=repo,
+        )
+        self.assertAlmostEqual(result.closing_odd, 1.95, places=9)
+        self.assertAlmostEqual(result.closing_minutes_before_kickoff, 0.0, places=9)
+
     def test_never_raises_when_kickoff_missing(self):
         repo = _FakeRepo([_FakeSnapshot("bookA", "h2h", "Home", 1.9, KICKOFF - timedelta(days=1))])
         result = build_clv_result(

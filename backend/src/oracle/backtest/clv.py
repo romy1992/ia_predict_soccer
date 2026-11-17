@@ -44,7 +44,12 @@ from typing import Any, Optional
 
 import numpy as np
 
-from src.ml.baselines.bookmaker_baseline import compute_market_baseline, get_market_outcome_baseline
+from src.ml.baselines.bookmaker_baseline import (
+    _normalize_outcome_for_market,
+    _normalize_text,
+    compute_market_baseline,
+    get_market_outcome_baseline,
+)
 from src.ml.experts.market.market_odds_expert import build_opening_latest_closing
 from src.repository.odds_snapshot_repository import OddsSnapshotRepository
 
@@ -95,6 +100,97 @@ def compute_clv_prob(p_fair_at_bet: Optional[float], p_fair_closing: Optional[fl
     return float(p_fair_at_bet) - float(p_fair_closing)
 
 
+def _as_utc(value: Any) -> Optional[datetime]:
+    """`datetime` aware in UTC da datetime/ISO string. SQLite (test/locale)
+    perde il tzinfo dei DateTime(timezone=True): un valore naive e' UTC."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def _outcome_key(market: str, outcome: Any) -> str:
+    """Chiave di confronto di un esito (stessa normalizzazione di
+    `get_market_outcome_baseline`), per abbinare esiti scritti diversamente."""
+    return _normalize_text(_normalize_outcome_for_market(market=market, outcome=str(outcome or "")))
+
+
+@dataclass
+class _ClosingState:
+    """Baseline di chiusura piu' il motivo per cui manca e, per ogni esito
+    (chiave normalizzata), l'istante dello snapshot di chiusura piu' recente."""
+
+    baseline: Optional[dict[str, Any]]
+    reason_code: Optional[str]
+    captured_at_by_outcome: dict[str, datetime] = field(default_factory=dict)
+
+
+def _closing_state(
+    fixture_id: int,
+    market: str,
+    kickoff_at: Optional[datetime],
+    period: str = "full_time",
+    line: Optional[str] = None,
+    snapshot_repo: Optional[OddsSnapshotRepository] = None,
+) -> _ClosingState:
+    if kickoff_at is None:
+        return _ClosingState(baseline=None, reason_code=REASON_MISSING_KICKOFF)
+
+    repo = snapshot_repo or OddsSnapshotRepository()
+    rows = repo.list_for_fixture(fixture_id=fixture_id, market=market, period=period, line=line)
+    if not rows:
+        return _ClosingState(baseline=None, reason_code=REASON_NO_SNAPSHOTS)
+
+    snapshots = [row.to_dict() for row in rows]
+    # Entrambe le parti normalizzate a UTC prima del confronto point-in-time.
+    kickoff_at = _as_utc(kickoff_at)
+    for snapshot in snapshots:
+        captured = _as_utc(snapshot.get("captured_at"))
+        if captured is not None:
+            snapshot["captured_at"] = captured.isoformat()
+    # as_of=kickoff_at: riusa EXP-04 con la STESSA regola gia' validata
+    # (closing_allowed = kickoff_at is not None and as_of >= kickoff_at,
+    # qui SEMPRE vera per costruzione) — "closing" per ogni bookmaker/outcome
+    # e' per costruzione l'ultimo snapshot con captured_at <= kickoff_at.
+    per_bookmaker = build_opening_latest_closing(snapshots, as_of=kickoff_at, kickoff_at=kickoff_at)
+
+    closing_odds_by_outcome: dict[str, list[float]] = {}
+    captured_at_by_outcome: dict[str, datetime] = {}
+    for row in per_bookmaker:
+        closing = row.get("closing")
+        if not closing or closing.get("odd") is None:
+            continue
+        try:
+            odd_value = float(closing["odd"])
+        except (TypeError, ValueError):
+            continue
+        if odd_value <= 0.0:
+            continue
+        closing_odds_by_outcome.setdefault(row["outcome"], []).append(odd_value)
+        captured = _as_utc(closing.get("captured_at"))
+        key = _outcome_key(market, row["outcome"])
+        if captured is not None and (key not in captured_at_by_outcome or captured > captured_at_by_outcome[key]):
+            captured_at_by_outcome[key] = captured
+
+    if not closing_odds_by_outcome:
+        return _ClosingState(baseline=None, reason_code=REASON_NO_PRE_KICKOFF_SNAPSHOT)
+
+    odds_rows = [
+        {"outcome": outcome, "avg_odd": float(np.mean(odds)), "bookmakers": len(odds)}
+        for outcome, odds in closing_odds_by_outcome.items()
+    ]
+    return _ClosingState(
+        baseline=compute_market_baseline(market=market, odds_rows=odds_rows),
+        reason_code=None,
+        captured_at_by_outcome=captured_at_by_outcome,
+    )
+
+
 def fetch_closing_market_baseline(
     fixture_id: int,
     market: str,
@@ -111,60 +207,48 @@ def fetch_closing_market_baseline(
     "quando disponibile"): kickoff sconosciuto, nessuno snapshot registrato
     per questa fixture/mercato, o nessuno snapshot esiste PRIMA del
     kickoff (solo dati futuri/live, mai usabili come "chiusura")."""
-    if kickoff_at is None:
-        return None
+    return _closing_state(
+        fixture_id=fixture_id,
+        market=market,
+        kickoff_at=kickoff_at,
+        period=period,
+        line=line,
+        snapshot_repo=snapshot_repo,
+    ).baseline
 
-    repo = snapshot_repo or OddsSnapshotRepository()
-    rows = repo.list_for_fixture(fixture_id=fixture_id, market=market, period=period, line=line)
-    if not rows:
-        return None
 
-    snapshots = [row.to_dict() for row in rows]
-    # SQLite (test/locale) perde il tzinfo dei DateTime(timezone=True);
-    # normalizziamo entrambe le parti a UTC prima del confronto point-in-time.
-    kickoff_at = kickoff_at if kickoff_at.tzinfo else kickoff_at.replace(tzinfo=timezone.utc)
-    for snapshot in snapshots:
-        captured = snapshot.get("captured_at")
-        if isinstance(captured, str):
-            captured = datetime.fromisoformat(captured.replace("Z", "+00:00"))
-        if isinstance(captured, datetime) and captured.tzinfo is None:
-            captured = captured.replace(tzinfo=timezone.utc)
-        if isinstance(captured, datetime):
-            snapshot["captured_at"] = captured.isoformat()
-    # as_of=kickoff_at: riusa EXP-04 con la STESSA regola gia' validata
-    # (closing_allowed = kickoff_at is not None and as_of >= kickoff_at,
-    # qui SEMPRE vera per costruzione) — "closing" per ogni bookmaker/outcome
-    # e' per costruzione l'ultimo snapshot con captured_at <= kickoff_at.
-    per_bookmaker = build_opening_latest_closing(snapshots, as_of=kickoff_at, kickoff_at=kickoff_at)
+# Motivi (stabili, per i conteggi di copertura) per cui il CLV non e'
+# disponibile. `reason` resta il testo leggibile gia' esposto.
+REASON_MISSING_KICKOFF = "missing_kickoff"
+REASON_NO_SNAPSHOTS = "no_snapshots"
+REASON_NO_PRE_KICKOFF_SNAPSHOT = "no_pre_kickoff_snapshot"
+REASON_OUTCOME_NOT_QUOTED = "outcome_not_quoted_at_closing"
+REASON_CLOSING_NOT_AFTER_BET = "closing_not_after_bet"
+REASON_INSUFFICIENT_BET_DATA = "insufficient_bet_data"
 
-    closing_odds_by_outcome: dict[str, list[float]] = {}
-    for row in per_bookmaker:
-        closing = row.get("closing")
-        if not closing or closing.get("odd") is None:
-            continue
-        try:
-            odd_value = float(closing["odd"])
-        except (TypeError, ValueError):
-            continue
-        if odd_value <= 0.0:
-            continue
-        closing_odds_by_outcome.setdefault(row["outcome"], []).append(odd_value)
-
-    if not closing_odds_by_outcome:
-        return None
-
-    odds_rows = [
-        {"outcome": outcome, "avg_odd": float(np.mean(odds)), "bookmakers": len(odds)}
-        for outcome, odds in closing_odds_by_outcome.items()
-    ]
-    return compute_market_baseline(market=market, odds_rows=odds_rows)
+_REASON_TEXT = {
+    REASON_MISSING_KICKOFF: "Closing odd non disponibile (kickoff sconosciuto)",
+    REASON_NO_SNAPSHOTS: "Closing odd non disponibile (nessuno snapshot per questa fixture/mercato/linea)",
+    REASON_NO_PRE_KICKOFF_SNAPSHOT: "Closing odd non disponibile (nessuno snapshot pre-kickoff per questa fixture)",
+    REASON_CLOSING_NOT_AFTER_BET: (
+        "Closing odd non disponibile (nessuno snapshot successivo alla quota presa: "
+        "la chiusura coinciderebbe con la quota della giocata)"
+    ),
+    REASON_INSUFFICIENT_BET_DATA: "Dati insufficienti per calcolare il CLV (odd_at_bet/p_fair_at_bet mancanti)",
+}
 
 
 @dataclass
 class ClvResult:
     """Output STANDARD per una singola bet/prediction (stesso stile
     "sempre gli stessi campi, None se non disponibile" di `FairOddsOutcome`
-    BET-01 e `ValueDecision` BET-02)."""
+    BET-01 e `ValueDecision` BET-02).
+
+    Campi additivi (default None): `reason_code` (motivo stabile se non
+    disponibile), `pricing_market` (mercato degli snapshot usato),
+    `closing_captured_at` e `closing_minutes_before_kickoff` (istante dello
+    snapshot di chiusura piu' recente dell'esito e suo anticipo sul kickoff),
+    `closing_bookmakers` (bookmaker nella media di chiusura)."""
 
     market: str
     outcome: str
@@ -178,6 +262,11 @@ class ClvResult:
     clv_prob: Optional[float]
     available: bool
     reason: str
+    reason_code: Optional[str] = None
+    pricing_market: Optional[str] = None
+    closing_captured_at: Optional[str] = None
+    closing_minutes_before_kickoff: Optional[float] = None
+    closing_bookmakers: Optional[int] = None
 
 
 def build_clv_result(
@@ -191,14 +280,50 @@ def build_clv_result(
     line: Optional[str] = None,
     model_name: Optional[str] = None,
     snapshot_repo: Optional[OddsSnapshotRepository] = None,
+    bet_captured_at: Optional[datetime] = None,
+    bet_odds_captured_at: Optional[datetime] = None,
 ) -> ClvResult:
     """Costruisce il CLV per un singolo outcome, recuperando la closing
     odd/fair probability dagli `OddsSnapshot` (DATA-06). Non solleva mai
     un'eccezione per dati mancanti: `available=False` con `reason`
     esplicito (stesso pattern di fallback non silenzioso gia' in uso in
-    tutto il progetto)."""
+    tutto il progetto).
+
+    `bet_odds_captured_at` (istante delle quote usate per la giocata, nel
+    ledger `odds_captured_at`; se manca `bet_captured_at`): se nessuno
+    snapshot di chiusura dell'esito e' PIU' RECENTE, la "chiusura" sarebbe
+    la stessa quota della giocata (CLV = 0 per costruzione, nessuna
+    informazione sul mercato): il CLV risulta non disponibile
+    (`closing_not_after_bet`) invece di un falso zero. Senza nessuno dei due
+    (backtest) il comportamento resta quello storico."""
     pricing_market = pricing_market_for(market)
-    closing_baseline = fetch_closing_market_baseline(
+    base = {
+        "market": market,
+        "outcome": outcome,
+        "fixture_id": fixture_id,
+        "model_name": model_name,
+        "odd_at_bet": odd_at_bet,
+        "p_fair_at_bet": p_fair_at_bet,
+        "pricing_market": pricing_market,
+    }
+
+    def _unavailable(reason_code: str, reason: Optional[str] = None, **extra: Any) -> ClvResult:
+        payload = {
+            "closing_odd": None,
+            "p_fair_closing": None,
+            **extra,
+        }
+        return ClvResult(
+            **base,
+            **payload,
+            clv_odd_pct=None,
+            clv_prob=None,
+            available=False,
+            reason=reason or _REASON_TEXT[reason_code],
+            reason_code=reason_code,
+        )
+
+    state = _closing_state(
         fixture_id=fixture_id,
         market=pricing_market,
         kickoff_at=kickoff_at,
@@ -206,44 +331,52 @@ def build_clv_result(
         line=line,
         snapshot_repo=snapshot_repo,
     )
-    if closing_baseline is None:
-        return ClvResult(
-            market=market, outcome=outcome, fixture_id=fixture_id, model_name=model_name,
-            odd_at_bet=odd_at_bet, p_fair_at_bet=p_fair_at_bet,
-            closing_odd=None, p_fair_closing=None, clv_odd_pct=None, clv_prob=None,
-            available=False, reason="Closing odd non disponibile (nessuno snapshot pre-kickoff per questa fixture)",
-        )
+    if state.baseline is None:
+        return _unavailable(state.reason_code or REASON_NO_SNAPSHOTS)
 
     closing_row = get_market_outcome_baseline(
-        fixture_baseline={"markets": {pricing_market: closing_baseline}}, market=pricing_market, outcome=outcome
+        fixture_baseline={"markets": {pricing_market: state.baseline}}, market=pricing_market, outcome=outcome
     )
     if closing_row is None:
-        return ClvResult(
-            market=market, outcome=outcome, fixture_id=fixture_id, model_name=model_name,
-            odd_at_bet=odd_at_bet, p_fair_at_bet=p_fair_at_bet,
-            closing_odd=None, p_fair_closing=None, clv_odd_pct=None, clv_prob=None,
-            available=False, reason=f"Outcome '{outcome}' non quotato al closing",
-        )
+        return _unavailable(REASON_OUTCOME_NOT_QUOTED, reason=f"Outcome '{outcome}' non quotato al closing")
 
     closing_odd = closing_row.get("avg_odd")
     p_fair_closing = closing_row.get("fair_probability")
+    closing_captured = state.captured_at_by_outcome.get(_outcome_key(pricing_market, outcome))
+    kickoff_utc = _as_utc(kickoff_at)
+    closing_meta = {
+        "closing_captured_at": closing_captured.isoformat() if closing_captured else None,
+        "closing_minutes_before_kickoff": (
+            (kickoff_utc - closing_captured).total_seconds() / 60.0
+            if closing_captured is not None and kickoff_utc is not None
+            else None
+        ),
+        "closing_bookmakers": int(closing_row.get("bookmakers") or 0),
+    }
+
+    bet_reference = _as_utc(bet_odds_captured_at) or _as_utc(bet_captured_at)
+    if bet_reference is not None and (closing_captured is None or closing_captured <= bet_reference):
+        return _unavailable(
+            REASON_CLOSING_NOT_AFTER_BET,
+            closing_odd=closing_odd,
+            p_fair_closing=p_fair_closing,
+            **closing_meta,
+        )
+
     clv_odd_pct = compute_clv_odd_pct(odd_at_bet, closing_odd)
     clv_prob = compute_clv_prob(p_fair_at_bet, p_fair_closing)
     available = clv_odd_pct is not None or clv_prob is not None
 
     return ClvResult(
-        market=market,
-        outcome=outcome,
-        fixture_id=fixture_id,
-        model_name=model_name,
-        odd_at_bet=odd_at_bet,
-        p_fair_at_bet=p_fair_at_bet,
+        **base,
         closing_odd=closing_odd,
         p_fair_closing=p_fair_closing,
         clv_odd_pct=clv_odd_pct,
         clv_prob=clv_prob,
         available=available,
-        reason="" if available else "Dati insufficienti per calcolare il CLV (odd_at_bet/p_fair_at_bet mancanti)",
+        reason="" if available else _REASON_TEXT[REASON_INSUFFICIENT_BET_DATA],
+        reason_code=None if available else REASON_INSUFFICIENT_BET_DATA,
+        **closing_meta,
     )
 
 

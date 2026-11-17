@@ -34,6 +34,7 @@ def _serialize(result: ClvResult, id_prediction: Optional[str] = None) -> dict[s
     payload = dataclasses.asdict(result)
     payload["id_prediction"] = id_prediction
     payload["unavailable_reason"] = payload.pop("reason")
+    payload["unavailable_reason_code"] = payload.pop("reason_code")
     return payload
 
 
@@ -58,6 +59,10 @@ class OfficialClvService:
             line=row.line,
             model_name=row.model_name,
             snapshot_repo=self.snapshot_repo,
+            # Quote della giocata: la chiusura deve essere piu' recente,
+            # altrimenti coinciderebbe con la quota presa (falso CLV = 0).
+            bet_captured_at=row.captured_at,
+            bet_odds_captured_at=row.odds_captured_at,
         )
 
     def report(
