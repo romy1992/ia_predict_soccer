@@ -535,6 +535,10 @@ class OfficialClvResponse(BaseModel):
     overall: dict[str, Any]
     breakdowns: dict[str, Any]
     rows: list[dict[str, Any]]
+    # Additivo: stesso riepilogo CLV per decisione del motore (PLAY/
+    # BORDERLINE/"NO BET") + "ALL", ciascuno con `sample_size`, `overall` e
+    # `breakdowns.market`. overall/breakdowns/rows sopra restano SOLO-PLAY.
+    by_decision: dict[str, Any] = {}
 
 
 class BetslipPoolResponse(BaseModel):

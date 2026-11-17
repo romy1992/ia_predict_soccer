@@ -138,3 +138,6 @@ def test_official_capture_settlement_roi_and_clv_end_to_end():
     assert clv["overall"]["available_records"] == 1
     assert clv["overall"]["coverage"] == 1.0
     assert clv["overall"]["avg_clv_odd_pct"] > 0
+    assert clv["overall"]["median_closing_minutes_before_kickoff"] == 1.0
+    assert clv["by_decision"]["PLAY"]["overall"] == clv["overall"]
+    assert clv["rows"][0]["decision"] == "PLAY"

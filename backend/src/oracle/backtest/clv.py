@@ -467,6 +467,9 @@ class ClvReportRow:
     avg_clv_odd_pct: Optional[float]
     avg_clv_prob: Optional[float]
     positive_clv_rate: Optional[float]
+    # Additivo: mediana di clv_odd_pct (meno sensibile a poche quote estreme
+    # quando il campione e' ancora piccolo).
+    median_clv_odd_pct: Optional[float] = None
 
 
 def _report_row_from_results(results: list[ClvResult]) -> ClvReportRow:
@@ -481,6 +484,7 @@ def _report_row_from_results(results: list[ClvResult]) -> ClvReportRow:
         avg_clv_odd_pct=float(np.mean(odd_pct_values)) if odd_pct_values else None,
         avg_clv_prob=float(np.mean(prob_values)) if prob_values else None,
         positive_clv_rate=(sum(1 for v in odd_pct_values if v > 0) / len(odd_pct_values)) if odd_pct_values else None,
+        median_clv_odd_pct=float(np.median(odd_pct_values)) if odd_pct_values else None,
     )
 
 

@@ -1722,6 +1722,8 @@ def official_prediction_performance(
         league=league,
         model_name=model,
         policy_version=policy_version,
+        # Qui serve solo l'overall PLAY: niente CLV delle altre decisioni.
+        include_by_decision=False,
     )
     payload["overall"].update(
         {
@@ -1758,6 +1760,10 @@ def official_prediction_clv(
     model: Optional[str] = None,
     policy_version: Optional[str] = None,
 ) -> OfficialClvResponse:
+    """CLV (quota presa / quota di chiusura - 1) delle giocate ufficiali.
+    `overall`/`breakdowns`/`rows`: sole PLAY. `by_decision` (additivo):
+    PLAY/BORDERLINE/NO BET/ALL con `overall` e `breakdowns.market`
+    (n disponibili, media, mediana, % CLV>0, copertura e motivi)."""
     now = datetime.now(timezone.utc)
     since = _parse_iso_datetime_optional(from_at)
     if days is not None:

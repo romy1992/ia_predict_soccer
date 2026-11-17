@@ -119,6 +119,24 @@ class OddsSnapshotRepository:
                 query = query.filter(OddsSnapshot.line == line)
             return query.order_by(OddsSnapshot.captured_at.asc()).all()
 
+    def list_for_fixture_markets(
+        self,
+        fixture_id: int,
+        markets: list[str],
+        until: Optional[datetime] = None,
+    ) -> list[OddsSnapshot]:
+        """Snapshot di piu' mercati di una fixture in UNA query (sola
+        lettura), opzionalmente fino a `until` incluso: usato dal report CLV
+        per non fare una query per ogni riga del ledger."""
+        if not markets:
+            return []
+        with SessionLocal() as session:
+            query = session.query(OddsSnapshot).filter(OddsSnapshot.fixture_id == int(fixture_id))
+            query = query.filter(OddsSnapshot.market.in_(sorted(set(markets))))
+            if until is not None:
+                query = query.filter(OddsSnapshot.captured_at <= until)
+            return query.order_by(OddsSnapshot.captured_at.asc()).all()
+
     def list_all(self) -> list[OddsSnapshot]:
         with SessionLocal() as session:
             return session.query(OddsSnapshot).order_by(OddsSnapshot.captured_at.asc()).all()
