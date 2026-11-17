@@ -5,6 +5,8 @@ quando la risposta non porta gli header di utilizzo (`X-Requests-Used` /
 `X-Requests-Remaining` assenti o entrambi a zero) e doppio parsing del body.
 Il comportamento sui casi gia' gestiti resta identico."""
 
+import importlib
+import logging
 import unittest
 from unittest import mock
 
@@ -72,6 +74,76 @@ class TestBaseApiOdds(unittest.TestCase):
                 request_api.base_api_odds(path="sports")
         self.assertNotIn("SEGRETO-DI-PROVA", str(ctx.exception))
         self.assertNotIn("SEGRETO-DI-PROVA", repr(ctx.exception.__cause__))
+
+
+class _Raccoglitore(logging.Handler):
+    def __init__(self):
+        super().__init__(level=logging.DEBUG)
+        self.messaggi: list[str] = []
+
+    def emit(self, record):
+        self.messaggi.append(record.getMessage())
+
+
+class TestChiaveFuoriDaiLogDiUrllib3(unittest.TestCase):
+    """urllib3 logga a DEBUG la riga di richiesta con la query string, quindi
+    con `apiKey=<chiave>` (verificato su loopback il 2026-11-17); questo
+    modulo imposta il root logger a DEBUG. Il filtro installato all'import
+    maschera il valore. Nessuna rete: il record e' emesso a mano con lo stesso
+    formato di urllib3."""
+
+    FORMATO_URLLIB3 = '%s://%s:%s "%s %s %s" %s %s'
+
+    def _emetti(self, url: str) -> list[str]:
+        logger = logging.getLogger("urllib3.connectionpool")
+        raccoglitore = _Raccoglitore()
+        livello = logger.level
+        logger.addHandler(raccoglitore)
+        logger.setLevel(logging.DEBUG)
+        try:
+            logger.debug(self.FORMATO_URLLIB3, "https", "api.the-odds-api.com", 443, "GET", url, "HTTP/1.1", 200, None)
+        finally:
+            logger.removeHandler(raccoglitore)
+            logger.setLevel(livello)
+        return raccoglitore.messaggi
+
+    def test_la_chiave_viene_mascherata_e_il_resto_della_riga_resta(self):
+        messaggi = self._emetti("/v4/sports/soccer_epl/odds?regions=eu&apiKey=SEGRETO-DI-PROVA&markets=h2h")
+        self.assertEqual(len(messaggi), 1)
+        self.assertNotIn("SEGRETO-DI-PROVA", messaggi[0])
+        self.assertIn("apiKey=***", messaggi[0])
+        self.assertIn("regions=eu", messaggi[0])
+        self.assertIn("markets=h2h", messaggi[0])
+        self.assertIn('" 200', messaggi[0])
+
+    def test_le_righe_senza_chiave_restano_identiche(self):
+        messaggi = self._emetti("/fixtures?league=135&season=2026")
+        self.assertEqual(messaggi, ['https://api.the-odds-api.com:443 "GET /fixtures?league=135&season=2026 HTTP/1.1" 200 None'])
+
+    def test_il_filtro_viene_installato_una_volta_sola(self):
+        request_api._install_api_key_redaction()
+        request_api._install_api_key_redaction()
+        filtri = [f for f in logging.getLogger("urllib3.connectionpool").filters
+                  if type(f).__name__ == "_RedactApiKeyFilter" and type(f).__module__ == request_api.__name__]
+        self.assertEqual(len(filtri), 1)
+
+
+class TestHelperLegacy(unittest.TestCase):
+    """La copia storica `backend/service_ia/utility/request_api.py` aveva lo
+    stesso difetto: stessa correzione, stesso test."""
+
+    def test_errore_di_rete_non_espone_la_chiave_e_passa_il_timeout(self):
+        legacy = importlib.import_module("service_ia.utility.request_api")
+        errore = legacy.requests.ConnectionError("Max retries exceeded with url: /v4/sports?apiKey=SEGRETO-LEGACY")
+        with mock.patch.object(legacy, "API_ODDS_KEY", "SEGRETO-LEGACY"), \
+                mock.patch.object(legacy.requests, "get", side_effect=errore) as get:
+            with self.assertRaises(legacy.requests.RequestException) as ctx:
+                legacy.base_api_odds(path="sports")
+        self.assertNotIn("SEGRETO-LEGACY", str(ctx.exception))
+        self.assertIsNone(ctx.exception.__cause__)
+        self.assertEqual(get.call_args.kwargs["timeout"], legacy.API_ODDS_TIMEOUT_SECONDS)
+        self.assertTrue(any(type(f).__name__ == "_RedactApiKeyFilter"
+                            for f in logging.getLogger("urllib3.connectionpool").filters))
 
 
 if __name__ == "__main__":

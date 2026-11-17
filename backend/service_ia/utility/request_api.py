@@ -1,11 +1,42 @@
 import logging
 import os
+import re
 import time
 
 import requests
 from dotenv import load_dotenv
 
 logging.basicConfig(level=logging.DEBUG)
+
+
+class _RedactApiKeyFilter(logging.Filter):
+    """The Odds API vuole la chiave nella query string (`apiKey=...`) e
+    urllib3 logga a DEBUG la riga di richiesta completa, query inclusa
+    (`"GET /v4/sports?apiKey=<chiave> HTTP/1.1" 200`). Questo modulo imposta
+    il root logger a DEBUG: senza filtro la chiave finisce nei log ad ogni
+    chiamata. Il filtro sostituisce il valore con `***` (il resto della riga
+    resta)."""
+
+    _PATTERN = re.compile(r"(apiKey=)[^&\s\"']+", re.IGNORECASE)
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            message = record.getMessage()
+        except Exception:  # noqa: BLE001 - un record malformato non deve bloccare il log
+            return True
+        if "apikey=" in message.lower():
+            record.msg = self._PATTERN.sub(r"\1***", message)
+            record.args = ()
+        return True
+
+
+def _install_api_key_redaction() -> None:
+    target = logging.getLogger("urllib3.connectionpool")
+    if not any(isinstance(existing, _RedactApiKeyFilter) for existing in target.filters):
+        target.addFilter(_RedactApiKeyFilter())
+
+
+_install_api_key_redaction()
 
 # LOAD PROPERTIES
 load_dotenv(dotenv_path='../../properties/config.env')
@@ -51,9 +82,16 @@ def base_api_odds(type_api=None, path='', params=None):
         payload = response.json()
         return payload if payload else []
 
-    return check_response(
-        requests.get(url=f'{split_api()}/{path}', params=params, timeout=API_ODDS_TIMEOUT_SECONDS)
-    )
+    try:
+        response = requests.get(url=f'{split_api()}/{path}', params=params, timeout=API_ODDS_TIMEOUT_SECONDS)
+    except requests.RequestException as exc:
+        # Il messaggio originale di requests puo' contenere l'URL completo con
+        # `apiKey` nella query: si rilancia solo il tipo di errore (come in
+        # `src/service_ia/utility/request_api.py`).
+        raise requests.RequestException(
+            f'The Odds API non raggiungibile su {path!r}: {type(exc).__name__}'
+        ) from None
+    return check_response(response)
 
 
 def base_api_statistics(path='', params=None):
