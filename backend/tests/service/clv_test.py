@@ -184,6 +184,25 @@ class TestBuildClvResult(unittest.TestCase):
         self.assertFalse(result.available)
         self.assertIn("non quotato", result.reason)
 
+    def test_official_1x2_decision_is_priced_on_h2h_snapshots(self):
+        # La cattura ufficiale salva il vero 1X2 come market="1x2", ma le
+        # quote "Match Winner" stanno negli snapshot come "h2h".
+        repo = _FakeRepo(
+            [
+                _FakeSnapshot("bookA", "h2h", "Home", 1.80, KICKOFF - timedelta(minutes=5)),
+                _FakeSnapshot("bookA", "h2h", "Draw", 3.60, KICKOFF - timedelta(minutes=5)),
+                _FakeSnapshot("bookA", "h2h", "Away", 4.50, KICKOFF - timedelta(minutes=5)),
+            ]
+        )
+        result = build_clv_result(
+            market="1x2", outcome="Home", odd_at_bet=1.90, p_fair_at_bet=0.50,
+            fixture_id=1, kickoff_at=KICKOFF, snapshot_repo=repo,
+        )
+        self.assertTrue(result.available)
+        self.assertEqual(result.market, "1x2")
+        self.assertAlmostEqual(result.closing_odd, 1.80, places=9)
+        self.assertAlmostEqual(result.clv_odd_pct, 1.90 / 1.80 - 1.0, places=9)
+
     def test_never_raises_when_kickoff_missing(self):
         repo = _FakeRepo([_FakeSnapshot("bookA", "h2h", "Home", 1.9, KICKOFF - timedelta(days=1))])
         result = build_clv_result(

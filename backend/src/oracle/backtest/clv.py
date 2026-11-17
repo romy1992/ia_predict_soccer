@@ -48,6 +48,20 @@ from src.ml.baselines.bookmaker_baseline import compute_market_baseline, get_mar
 from src.ml.experts.market.market_odds_expert import build_opening_latest_closing
 from src.repository.odds_snapshot_repository import OddsSnapshotRepository
 
+# Mercato degli `OddsSnapshot` su cui e' prezzata una decisione del ledger,
+# quando il nome della decisione differisce da quello degli snapshot: la
+# cattura ufficiale salva il vero 1X2 come `market="1x2"`
+# (`official_capture_service._capture_true_1x2`), ma le quote "Match Winner"
+# sono salvate come `h2h` (`download_match_service._switch_market_name`).
+# Senza questa corrispondenza nessuna PLAY 1X2 avrebbe mai una chiusura.
+_PRICING_MARKET_ALIASES: dict[str, str] = {"1x2": "h2h"}
+
+
+def pricing_market_for(market: str) -> str:
+    """Nome del mercato negli `OddsSnapshot` per una decisione `market`."""
+    value = str(market or "")
+    return _PRICING_MARKET_ALIASES.get(value, value)
+
 
 def compute_clv_odd_pct(odd_at_bet: Optional[float], closing_odd: Optional[float]) -> Optional[float]:
     """CLV in termini di quota: `odd_at_bet/closing_odd - 1`.
@@ -183,8 +197,14 @@ def build_clv_result(
     un'eccezione per dati mancanti: `available=False` con `reason`
     esplicito (stesso pattern di fallback non silenzioso gia' in uso in
     tutto il progetto)."""
+    pricing_market = pricing_market_for(market)
     closing_baseline = fetch_closing_market_baseline(
-        fixture_id=fixture_id, market=market, kickoff_at=kickoff_at, period=period, line=line, snapshot_repo=snapshot_repo
+        fixture_id=fixture_id,
+        market=pricing_market,
+        kickoff_at=kickoff_at,
+        period=period,
+        line=line,
+        snapshot_repo=snapshot_repo,
     )
     if closing_baseline is None:
         return ClvResult(
@@ -195,7 +215,7 @@ def build_clv_result(
         )
 
     closing_row = get_market_outcome_baseline(
-        fixture_baseline={"markets": {market: closing_baseline}}, market=market, outcome=outcome
+        fixture_baseline={"markets": {pricing_market: closing_baseline}}, market=pricing_market, outcome=outcome
     )
     if closing_row is None:
         return ClvResult(
