@@ -132,6 +132,18 @@ Lo scheduler registra 6 job APScheduler COMPLETAMENTE separati e indipendenti (`
 
 Tutti i job che passano da `download_import_matches` (`data_daily_refresh`, `data_sync_today`, `data_future_sync`, `data_settlement`) e il bottone "Aggiorna tutto" condividono un advisory lock Postgres (`backend/src/jobs/job_lock.py`, 2026-09-15): `api` e `scheduler` sono container distinti e `max_instances=1` di APScheduler vale solo dentro il proprio processo, quindi senza lock il bottone premuto mentre girava il job schedulato produceva due import sovrapposti sulla stessa finestra di date — 116 partite finite a DB in doppia copia. Chi non ottiene il lock salta il giro e lo storico registra un `success` con `skipped_locked` (non un `failed`, che `_is_job_due` non potrebbe distinguere da un problema vero).
 
+### Quote di chiusura per il CLV (`closing_odds_capture`)
+
+Job "Quote di chiusura (CLV)" (`run_closing_odds_capture`, servizio `backend/src/oracle/ledger/closing_odds_capture_service.py`): rende misurabile il CLV ufficiale (`GET /predictions/official/clv`, campo `by_decision`) per PLAY, BORDERLINE e NO BET. Senza, l'ultimo snapshot quote prima del kickoff e' spesso quello usato per la giocata (catturata fino a 60 minuti prima) e il CLV resta `closing_not_after_bet`.
+
+- **Quando**: ogni 5 minuti (`interval_minutes`, modificabile da Impostazioni o con `CLOSING_ODDS_CAPTURE_INTERVAL_MINUTES`; minimo 5). Abilitato di default, `calls_api_sports=True`: sospeso dall'auto-pausa a quota esaurita e ripristinato al reset. "Esegui ora": `POST /jobs/closing-odds-capture`.
+- **Quali partite**: scelte dal DB, senza chiamate API: status `NS`, almeno una riga nel Prediction Ledger con cohort `official_paper` (qualunque decisione) e kickoff (`match.date_match`) nei prossimi 15 minuti.
+- **Quante chiamate**: al massimo una `GET /odds?fixture=<id>` per momento, quindi al massimo 2 per partita. `early` fra 15 e 10 minuti prima del kickoff (recuperato fra 10 e 5 se la cadenza, 5 minuti piu' il battito di 30 secondi, salta quella finestra); `late` negli ultimi 5 minuti. Il momento viene prenotato prima della chiamata in `best_models/closing_odds_capture_state.json` sul bucket (voci rimosse dopo 2 giorni), cosi' un secondo giro o un "Esegui ora" non lo ripete. A circuit breaker aperto (nessuna richiesta partita) il momento resta libero per il giro successivo; dopo una chiamata fallita (provider non disponibile, quota esaurita) no, cosi' il limite di 2 chiamate resta rispettato.
+- **Salvataggio**: `map_odds_snapshots` + `OddsSnapshotRepository.save_many` (upsert idempotente, righe in ordine di chiave). Non prende il lock degli import, che salterebbe ogni volta che gira `data_sync_today`: puo' girare in parallelo a un import.
+- **`captured_at`**: e' il campo `update` della risposta API-Sports (ora in cui il provider ha aggiornato le quote), o l'ora del download se manca. Il download avviene prima del kickoff, quindi lo snapshot e' una chiusura valida (`captured_at <= kickoff`). Se il provider non ha aggiornato le quote dopo la giocata, `update` non cambia: lo snapshot coincide con quello gia' salvato (nessuna riga nuova) e il CLV di quella giocata resta `closing_not_after_bet`, correttamente. Il report lo conta in `provider_update_unchanged`.
+- **Report** (storico job, `job_type=closing_odds_capture`): `candidates`, `calls`, `captured`, `snapshots_saved`, `empty_responses`, `provider_update_unchanged`, `skipped` (`already_captured`, `outside_window`, `quota_exhausted`), `errors` (`provider`, `quota_exhausted`, `save`, `registry`) con `error_details`, e `captures` per partita. Gli errori del provider non fanno fallire il job.
+- **Costo**: al massimo 2 chiamate API-Sports per partita con giocate ufficiali al giorno, contro un limite giornaliero di 7.500 (`API_SPORTS_DAILY_LIMIT` in `backend/src/service_ia/config/app_config.py`). Con 100 partite ufficiali in un giorno sono al massimo 200 chiamate (2,7% del limite). Ogni chiamata passa da `ApiSportsProvider`, che su 429/5xx/errori di rete ritenta fino a 3 volte: solo in quel caso le richieste HTTP possono superare 2 per partita.
+
 Ogni job logga il proprio esito in `backend/best_models/jobs_history.jsonl` (`job_type`: `today_update`/`settlement`/`future_sync`/`daily_refresh`/`retrain`/`live_sync`). `build_scheduler(cfg)` costruisce lo scheduler SENZA avviarlo (usato dai test); `start_scheduler()` lo avvia (entry point di `python -m src.jobs.scheduler`).
 
 ## Trigger manuale da API
@@ -142,6 +154,7 @@ Ogni job logga il proprio esito in `backend/best_models/jobs_history.jsonl` (`jo
 - `POST /jobs/settlement`
 - `POST /jobs/retrain`
 - `POST /jobs/live-sync` (LIVE-01)
+- `POST /jobs/closing-odds-capture` (quote di chiusura per il CLV, vedi sopra)
 
 Tutti supportano `async_run=true/false`.
 
