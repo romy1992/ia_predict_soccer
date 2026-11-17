@@ -150,6 +150,20 @@ class OddsSnapshotRepository:
                 query = query.filter(OddsSnapshot.captured_at <= until)
             return query.order_by(OddsSnapshot.captured_at.asc()).all()
 
+    def latest_captured_at(self, fixture_id: int) -> Optional[datetime]:
+        """`captured_at` piu' recente fra gli snapshot della fixture (sola
+        lettura, una query). Usato dalla cattura delle quote di chiusura per
+        dire se il provider ha davvero aggiornato le quote dall'ultimo
+        download."""
+        from sqlalchemy import func
+
+        with SessionLocal() as session:
+            return (
+                session.query(func.max(OddsSnapshot.captured_at))
+                .filter(OddsSnapshot.fixture_id == int(fixture_id))
+                .scalar()
+            )
+
     def list_all(self) -> list[OddsSnapshot]:
         with SessionLocal() as session:
             return session.query(OddsSnapshot).order_by(OddsSnapshot.captured_at.asc()).all()
