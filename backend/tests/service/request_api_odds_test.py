@@ -128,6 +128,21 @@ class TestChiaveFuoriDaiLogDiUrllib3(unittest.TestCase):
         self.assertEqual(len(filtri), 1)
 
 
+class TestTimeoutDaAmbiente(unittest.TestCase):
+    """`API_ODDS_TIMEOUT_SECONDS` viene letto all'import del modulo da cui passa
+    anche il provider API-Sports: un valore sbagliato non deve impedire
+    l'avvio di API e scheduler."""
+
+    def test_valori_validi_e_non_validi(self):
+        casi = {"45": 45.0, "2.5": 2.5, "": 30.0, "abc": 30.0, "0": 30.0, "-3": 30.0}
+        for raw, atteso in casi.items():
+            with mock.patch.dict("os.environ", {"API_ODDS_TIMEOUT_SECONDS": raw}):
+                self.assertEqual(request_api._timeout_from_env(), atteso, raw)
+        with mock.patch.dict("os.environ", {}, clear=False) as env:
+            env.pop("API_ODDS_TIMEOUT_SECONDS", None)
+            self.assertEqual(request_api._timeout_from_env(), 30.0)
+
+
 class TestHelperLegacy(unittest.TestCase):
     """La copia storica `backend/service_ia/utility/request_api.py` aveva lo
     stesso difetto: stessa correzione, stesso test."""

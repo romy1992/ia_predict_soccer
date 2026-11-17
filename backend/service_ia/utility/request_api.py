@@ -46,8 +46,22 @@ API_ODDS_KEY = os.environ.get('API_ODDS_KEY')
 API_ODDS_BASE = os.environ.get('API_ODDS_BASE')
 API_ODDS_ACTUAL_BASE = os.environ.get('API_ODDS_ACTUAL_BASE')
 API_ODDS_HISTORIACAL_BASE = os.environ.get('API_ODDS_HISTORIACAL_BASE')
+
+
+def _timeout_from_env(default: float = 30.0) -> float:
+    """Timeout HTTP verso The Odds API da `API_ODDS_TIMEOUT_SECONDS`. Un valore
+    non numerico o non positivo NON deve far fallire l'import di questo modulo
+    (da qui passa anche il provider API-Sports usato da API e scheduler): si
+    usa il default."""
+    try:
+        value = float(os.environ.get('API_ODDS_TIMEOUT_SECONDS') or default)
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
 # Timeout esplicito: senza, una connessione appesa blocca il job a tempo indefinito.
-API_ODDS_TIMEOUT_SECONDS = float(os.environ.get('API_ODDS_TIMEOUT_SECONDS') or 30)
+API_ODDS_TIMEOUT_SECONDS = _timeout_from_env()
 
 
 def base_api_odds(type_api=None, path='', params=None):
